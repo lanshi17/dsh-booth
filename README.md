@@ -149,6 +149,10 @@ What lands on disk:
 `booth provider` prints what the service will use, never the secret. Deleting those two files
 falls back to the profile's own default model.
 
+The console draws its own palette in absolute RGB, so it reads the same on a dark terminal
+background as on a light one, and the provider in the composer's top rail
+(`deepseek/deepseek-chat`, or `deepseek account`) is visible in dark mode too.
+
 ## Design notes
 
 - **One grammar, two front ends.** `commands::execute` returns transcript lines; the TUI
