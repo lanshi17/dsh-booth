@@ -10,6 +10,11 @@ pub const PALETTE: &[(&str, &str)] = &[
     ("/overview", "what needs a person, problems, executor load"),
     ("/status", "health entries, pause state, accounts"),
     ("/model", "switch the worker model, or add a provider"),
+    ("/provider", "which provider the agent runs with"),
+    (
+        "/setup [owner/repo]",
+        "name the repository and who may ask for work",
+    ),
     (
         "/login [provider]",
         "sign in: DeepSeek account, or an API-key provider",
@@ -23,7 +28,11 @@ pub const PALETTE: &[(&str, &str)] = &[
     ("/thread <key>", "timeline, decisions, subscribed tickets"),
     ("/decisions", "the last 50 decisions and why"),
     ("/sources", "each Source's state and problems"),
-    ("/search <text>", "also runs for bare text"),
+    (
+        "/send <text>",
+        "send an instruction; bare text does the same",
+    ),
+    ("/search <text>", "find tickets, threads and decisions"),
     ("/stop <id>", "withdraw a ticket's mandate"),
     ("/retry <id>", "start a fresh assignment"),
     ("/pause", "stop the executor from taking work"),
@@ -54,10 +63,9 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
     if raw.is_empty() {
         return Ok(format::help());
     }
-    // Bare text is a search: the console has no "create work" route, so typing a word should
-    // find the record that already exists instead of failing.
+    // Bare text is an instruction; the console hands it to the agent before reaching this grammar.
     if !raw.starts_with('/') {
-        return Ok(format::search(&api.search(raw)?));
+        return Err("bare text sends an instruction; use /search to look something up".into());
     }
     let mut split = raw.splitn(2, char::is_whitespace);
     let command = split.next().unwrap_or_default();
@@ -87,6 +95,21 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
         "/decisions" => format::decisions(&api.decisions()?),
         "/sources" => format::sources(&api.sources()?),
         "/search" => format::search(&api.search(need("/search", argument)?)?),
+        "/provider" => {
+            let cfg = crate::service::Config::from_env()?;
+            crate::intake::summary(&crate::provider::Store::load(&cfg))
+        }
+        "/send" => {
+            let cfg = crate::service::Config::from_env()?;
+            let id = crate::intake::send(&cfg, need("/send", argument)?)?;
+            vec![done(format!(
+                "sent {id} — the agent picks it up within a second"
+            ))]
+        }
+        "/setup" => {
+            let cfg = crate::service::Config::from_env()?;
+            crate::intake::setup(api, &cfg, argument)?
+        }
         "/stop" => {
             let id = need("/stop", argument)?;
             api.stop(id)?;

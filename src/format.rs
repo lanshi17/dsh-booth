@@ -89,6 +89,9 @@ pub fn reason(value: &Value) -> String {
     if let Some(text) = value.as_str() {
         return text.to_string();
     }
+    if let Some(items) = value.as_array() {
+        return items.iter().map(reason).collect::<Vec<_>>().join(" · ");
+    }
     let code = value
         .get("code")
         .and_then(Value::as_str)
@@ -423,7 +426,7 @@ pub fn ticket_detail(view: &TicketDetail) -> Vec<L> {
                 channel
                     .label
                     .as_ref()
-                    .map(|label| format!("  {label}"))
+                    .map(|label| format!("  {}", label.text()))
                     .unwrap_or_default()
             )));
         }
@@ -623,7 +626,7 @@ fn decision_line(decision: &Decision) -> L {
 }
 
 pub fn decisions(view: &DecisionList) -> Vec<L> {
-    let mut lines = vec![section(format!("decisions · {} total", view.total))];
+    let mut lines = vec![section(format!("decisions · {} shown", view.items.len()))];
     if view.items.is_empty() {
         lines.push(bullet("none"));
     }
@@ -737,7 +740,7 @@ pub fn help() -> Vec<L> {
     }
     lines.push(blank());
     lines.push(muted(
-        "Bare text searches. Enter runs, Tab completes, ↑↓ picks or walks history, Esc clears.",
+        "Bare text sends an instruction to the agent; /send does the same. Enter runs, Tab completes, ↑↓ walks history, Esc clears.",
     ));
     lines
 }

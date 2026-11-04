@@ -346,7 +346,7 @@ fn random_text(bytes: usize) -> Result<String, String> {
     Ok(URL_SAFE_NO_PAD.encode(buffer))
 }
 
-fn uuid_v4() -> String {
+pub(crate) fn uuid_v4() -> String {
     let mut bytes: [u8; 16] = [0; 16];
     if let Ok(mut file) = std::fs::File::open("/dev/urandom") {
         let _ = file.read_exact(&mut bytes);

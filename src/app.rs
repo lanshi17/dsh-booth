@@ -3,6 +3,7 @@
 use crate::api::Api;
 use crate::commands;
 use crate::format::{self, L};
+use crate::intake;
 use crate::oauth;
 use crate::provider::{self, Provider, Store};
 use crate::service;
@@ -53,10 +54,10 @@ const LOGO_COLORS: [Color; 6] = [
 ];
 
 const TIPS: [&str; 4] = [
-    "/login signs in with a DeepSeek account, or stores an API key.",
-    "/status shows health, pause state and the setup problem.",
+    "Bare text is an instruction: the agent turns it into a ticket.",
+    "/setup names the repository, once; then instructions just work.",
+    "/provider shows the model the agent runs with; /model switches it.",
     "Tab completes a command; ↑ ↓ walks the history.",
-    "`booth up` starts the service when the console cannot reach it.",
 ];
 
 /// `/login` starts here: the account sign-in first, then API-key providers.
@@ -72,6 +73,7 @@ enum Msg {
     Lines(Vec<L>),
     Error(String),
     Status(Status),
+    Replies(Vec<intake::Reply>),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
@@ -227,6 +229,10 @@ pub struct App {
     modal: Option<Modal>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
+    /// Agent messages already shown; the outbox is reread whole on each poll.
+    seen: std::collections::HashSet<String>,
+    /// When the transcript last polled the service for status and replies.
+    polled: Instant,
 }
 
 pub fn run(api: Api) -> Result<(), String> {
@@ -283,6 +289,8 @@ impl App {
             started: Instant::now(),
             tx,
             rx,
+            seen: std::collections::HashSet::new(),
+            polled: Instant::now(),
         }
     }
 
@@ -296,6 +304,10 @@ impl App {
             terminal.draw(|frame| self.draw(frame))?;
             if self.quit {
                 return Ok(());
+            }
+            if self.polled.elapsed() > Duration::from_secs(2) {
+                self.polled = Instant::now();
+                self.refresh_status();
             }
             if event::poll(Duration::from_millis(120))? {
                 if let Event::Key(key) = event::read()? {
@@ -323,6 +335,17 @@ impl App {
                     )));
                 }
                 Msg::Status(status) => self.status = status,
+                Msg::Replies(replies) => {
+                    let mut fresh = Vec::new();
+                    for reply in replies {
+                        if self.seen.insert(reply.id.clone()) {
+                            fresh.push(reply);
+                        }
+                    }
+                    for reply in fresh {
+                        self.push_agent(reply);
+                    }
+                }
                 Msg::OAuthReady(attempt) => {
                     if let Some(Modal::OAuth(state)) = &mut self.modal {
                         state.url = attempt.url.clone();
@@ -373,6 +396,35 @@ impl App {
         self.push_lines(vec![line]);
     }
 
+    /// Shows one message the agent wrote back: an acknowledgement, a reply, or a notice.
+    fn push_agent(&mut self, reply: intake::Reply) {
+        let label = match reply.kind.as_str() {
+            "acknowledgement" => "agent · accepted",
+            "notice" => "agent · notice",
+            _ => "agent",
+        };
+        let mut lines = Vec::new();
+        let head = vec![
+            Span::styled("  ◆ ", Style::default().fg(GREEN)),
+            Span::styled(label.to_owned(), Style::default().fg(FAINT)),
+            match &reply.ticket {
+                Some(ticket) => Span::styled(
+                    format!("  {}", &ticket[..ticket.len().min(8)]),
+                    Style::default().fg(FAINT),
+                ),
+                None => Span::raw(""),
+            },
+        ];
+        lines.push(Line::from(head));
+        for line in reply.text.lines() {
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(line.to_owned(), Style::default().fg(TEXT)),
+            ]));
+        }
+        self.push_lines(lines);
+    }
+
     fn push_lines(&mut self, lines: Vec<L>) {
         self.lines.extend(lines);
         let overflow = self.lines.len().saturating_sub(4000);
@@ -398,10 +450,65 @@ impl App {
         });
     }
 
+    /// Hands one instruction to the agent; the Source picks it up on its next poll.
+    fn instruct(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            self.push(warn_line(
+                "/send needs an instruction; bare text sends one too",
+            ));
+            return;
+        }
+        let Some(config) = self.config.clone() else {
+            self.push(warn_line(
+                "the console cannot find its state directory; set BOOTH_STATE_DIR",
+            ));
+            return;
+        };
+        match intake::send(&config, text) {
+            Ok(id) => {
+                self.push(Line::from(vec![
+                    Span::styled("  ↑ ", Style::default().fg(GREEN)),
+                    Span::styled("sent to the agent", Style::default().fg(GREEN)),
+                    Span::styled(
+                        format!("  {} · picks it up within a second", &id[..8]),
+                        Style::default().fg(FAINT),
+                    ),
+                ]));
+                self.refresh_status();
+            }
+            Err(error) => self.push(warn_line(&error)),
+        }
+    }
+
+    fn spawn_setup(&mut self, argument: String) {
+        self.busy = true;
+        let api = self.api.clone();
+        let config = self.config.clone();
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let message = match config {
+                Some(config) => match intake::setup(&api, &config, &argument) {
+                    Ok(lines) => Msg::Lines(lines),
+                    Err(error) => Msg::Error(error),
+                },
+                None => Msg::Error("the console cannot find its state directory".into()),
+            };
+            let _ = tx.send(message);
+        });
+    }
+
     fn refresh_status(&self) {
         let api = self.api.clone();
         let tx = self.tx.clone();
+        let config = self.config.clone();
         std::thread::spawn(move || {
+            if let Some(config) = &config {
+                let replies = intake::replies(config);
+                if !replies.is_empty() {
+                    let _ = tx.send(Msg::Replies(replies));
+                }
+            }
             let status = match api.state() {
                 Ok(state) => Status::from_state(&api, &state),
                 Err(error) => {
@@ -579,6 +686,34 @@ impl App {
             self.open_model();
             return;
         }
+        if line == "/provider" {
+            self.push(Line::from(vec![
+                Span::styled("  ❯ ", Style::default().fg(CYAN)),
+                Span::styled(line.clone(), Style::default().fg(TEXT)),
+            ]));
+            self.push_lines(intake::summary(&self.store));
+            return;
+        }
+        if let Some(rest) = line.strip_prefix("/send") {
+            if !rest.is_empty() && !rest.starts_with(' ') {
+                // `/sender` is not `/send`: fall through to the command grammar.
+            } else {
+                self.push(Line::from(vec![
+                    Span::styled("  ❯ ", Style::default().fg(CYAN)),
+                    Span::styled(line.clone(), Style::default().fg(TEXT)),
+                ]));
+                self.instruct(rest.trim());
+                return;
+            }
+        }
+        if line == "/setup" || line.starts_with("/setup ") {
+            self.push(Line::from(vec![
+                Span::styled("  ❯ ", Style::default().fg(CYAN)),
+                Span::styled(line.clone(), Style::default().fg(TEXT)),
+            ]));
+            self.spawn_setup(line.trim_start_matches("/setup").trim().to_owned());
+            return;
+        }
         if line == "/login" {
             self.modal = Some(Modal::LoginList { selected: 0 });
             return;
@@ -615,6 +750,11 @@ impl App {
         ]));
         if line == "/help" || line == "/?" {
             self.push_lines(format::help());
+            return;
+        }
+        // Bare text is an instruction for the agent; the commands above are the console's own.
+        if !line.starts_with('/') {
+            self.instruct(&line);
             return;
         }
         self.spawn(line);
@@ -1419,6 +1559,11 @@ fn clip_error(text: &str) -> String {
     format::clip(text, 70)
 }
 
+/// One red line for something the console refused or could not do.
+fn warn_line(text: &str) -> L {
+    Line::from(Span::styled(format!("! {text}"), Style::default().fg(RED)))
+}
+
 fn char_to_byte(text: &str, index: usize) -> usize {
     text.char_indices()
         .nth(index)
@@ -1501,7 +1646,10 @@ fn compose_bottom(input: &str, _cursor: usize, width: u16, hint: Option<Span<'st
     let empty = input.is_empty();
     let (text, style) = if empty {
         (
-            "type / for commands".chars().take(room).collect::<String>(),
+            "type an instruction, or / for commands"
+                .chars()
+                .take(room)
+                .collect::<String>(),
             Style::default().fg(FAINT),
         )
     } else {
@@ -1567,7 +1715,7 @@ fn draw_splash(frame: &mut Frame, area: Rect, status: &Status, elapsed: Duration
     ]));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "type / for commands, Enter runs",
+        "type an instruction, or / for commands",
         Style::default().fg(FAINT),
     )));
 

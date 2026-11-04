@@ -1,0 +1,6 @@
+# The booth console's own Source. It carries the instructions typed in the console into
+# dsh-superagent and writes the agent's replies back to the console. The profile supplies
+# `stateDir`, which names the inbox and outbox files.
+- insert:
+    - id: dsh-booth-local
+      name: dsh-booth-local

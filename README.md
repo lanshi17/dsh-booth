@@ -1,19 +1,20 @@
 # dsh-booth
 
 A terminal console for a running [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype).
-Type `booth` and you get one screen: what is waiting for a person, what the executor is doing,
-and a command palette that filters as you type — the frame, palette and composer of `omp`,
-not a web page.
+Type `booth` and you get one screen: type an instruction and the agent takes it as a ticket,
+watch what the executor is doing, and pick commands from a palette that filters as you type —
+the frame, palette and composer of `omp`, not a web page.
 
 ```text
-  ❯ /tickets
-tickets (open) · 3 total
-person  t-7f3a9c2e Fix the flaky retry test  11-04 10:12
-           waiting for your answer on the design
-working t-91c4e07a Add a --dry-run flag        11-04 10:08
+  ❯ 把 README 里 “booth up” 那句说明改成 “booth up starts the service”
+  ↑ sent to the agent  3eb84e6f · picks it up within a second
+  ◆ agent · accepted  3eb84e6f
+    收到：把 README 示例中 `booth up` 那句说明改成 `booth up` starts the service。
+  ◆ agent  3eb84e6f
+    PR #1 已把说明改为 “starts the service”，可审阅。
 
 ╭─ ◆ booth · deepseek/deepseek-chat · ready · 2/4 · 1q ────────── v0.1.0 ╮
-╰─ › /tickets ───────────────────────────── Enter run · / commands ╯
+╰─ › 把 README 里 “booth up” 那句说明改成 … ────── Enter run · / commands ╯
 ```
 
 The composer is one bordered block: the top rail carries the provider, runtime state and
@@ -24,8 +25,8 @@ the empty transcript, as they do in `omp`.
 
 `superagent/` is a git submodule pinned to one commit of
 [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). `booth init` builds
-it, creates a DSH profile around it and links it in; `booth up` runs that profile detached and
-waits for the management API. The console, the service and its deployment therefore ship as one
+it, creates a DSH profile around it and links it in, together with `local-source/`; `booth up`
+runs that profile detached and waits for the management API. The console, the service and its deployment therefore ship as one
 entry point — while the bundle stays an independent MIT-licensed project that knows nothing
 about booth.
 
@@ -91,6 +92,8 @@ booth search retry
 booth stop t-7f3a9c2e1b            # withdraw the mandate
 booth retry t-7f3a9c2e1b           # start a fresh assignment
 booth pause                        # / booth resume
+booth send "把 README 里的错字改掉"  # hand one instruction to the agent
+booth setup owner/name             # repository + allowed senders, from the shell
 ```
 
 Every read command takes `--json` and prints the view as served, for scripts and the hourly
@@ -110,7 +113,7 @@ check the deployment guide asks for.
 
 | Key | Does |
 | --- | --- |
-| `Enter` | Run the line; bare text searches tickets, threads and triggers |
+| `Enter` | Run the line; bare text sends the agent an instruction |
 | `Tab` | Complete the selected palette entry |
 | `↑` `↓` | Move in the palette, or walk the command history when it is closed |
 | `PgUp` `PgDn` | Scroll the transcript (new output snaps back to the bottom) |
@@ -121,7 +124,38 @@ check the deployment guide asks for.
 Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, plus
-`/model`, `/login`, `/clear` and `/quit`.
+`/send`, `/setup`, `/model`, `/provider`, `/login`, `/clear` and `/quit`.
+
+## Sending work
+
+dsh-superagent accepts work only from a Source: GitHub, Feishu, or a kind a bundle adds.
+Booth ships a third one, `local-source/`, so the console itself is a front door:
+
+- what you type without a slash (or `/send <text>`) is appended to
+  `booth-inbox.jsonl` under the state directory;
+- the Source reads it as one person's direct message, the Policy admits the sender, and the main
+  Session decides the ticket;
+- the agent's acknowledgements, replies and notices are appended to `booth-outbox.jsonl`, which
+  the console shows as `◆ agent` lines;
+- the GitHub and Feishu Sources keep working as before — booth adds a door, it does not replace
+  them.
+
+`/setup` names the repository and the people who may ask for work:
+
+```text
+  ❯ /setup lanshi17/dsh-booth
+✓ repository lanshi17/dsh-booth · agent @lanshi17
+✓ console instructions allowed · type an instruction, without a slash
+```
+
+It reads the signed-in `gh` account and writes three settings blocks through the management
+API: the GitHub Source (repository, CLI, new Issues on), the Policy (that account for GitHub,
+`operator` for the console), and the console Source itself. Run inside a checkout, the
+repository can be inferred: `/setup`. An optional second argument is the directory workers
+work in: `/setup owner/name ~/src/name`. `booth setup owner/name` does the same from a shell.
+
+The concurrency limit, the worker model and the prompts stay where they were: `/model` and the
+web panel.
 
 ## Providers
 
@@ -157,12 +191,14 @@ falls back to the profile's own default model.
 - **Decoding is tolerant on purpose.** The bundle is a research prototype whose views grow;
   fields this console does not render stay `serde_json::Value`, and unknown fields are
   ignored. A new view field does not break the console, only a renamed route does.
-- **No polling loop.** The header refreshes on start and after each command; the service is
-  not asked for state every second. A future `booth watch` can change that without touching the
-  command layer.
-- **It does not create work.** The API exposes stop, retry, requeue, dismiss and pause, but
-  no "submit a request" route. `booth` deliberately stays read-and-control; asking for new work
-  goes through GitHub or Feishu as a person would.
+- **Two-second poll.** The header refreshes on start and after each command, and a light timer
+  rereads `/state` and the outbox every two seconds so acknowledgements and replies arrive
+  while you watch. A future `booth watch` can push instead.
+- **Work enters through a Source, never a hidden route.** The management API has no "submit a
+  request" route, and booth does not invent one: `local-source/` is a real Source kind, loaded
+  by the profile next to `dsh-superagent/github-watch`, so instructions pass the same Policy
+  gate and Eval as a GitHub issue. Removing that bundle removes the console's door, not its
+  reads.
 
 ## Compatibility
 
@@ -171,8 +207,8 @@ built and tested against that commit. The console needs the service's loopback p
 routes listed above. If a route moves, `api.rs` is the only file to change; the wire types in
 `model.rs` are the second.
 
-Not implemented: work submission, live push (SSE/WebSocket), settings or prompt editing,
-Feishu-specific reads, attaching to a worker Session, Windows service control.
+Not implemented: live push (SSE/WebSocket), editing prompts or the policy rules from the
+console, Feishu-specific reads, attaching to a worker Session, Windows service control.
 
 ## License
 

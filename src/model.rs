@@ -61,7 +61,30 @@ pub struct StateView {
 pub struct Link {
     pub source: String,
     pub url: Option<String>,
-    pub label: Option<String>,
+    /// The bundle sends a localized label; older routes send a plain string.
+    #[serde(default, deserialize_with = "localized_or_text")]
+    pub label: Option<Localized>,
+}
+
+fn localized_or_text<'de, D>(deserializer: D) -> Result<Option<Localized>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Text(String),
+        Map(Localized),
+    }
+    Ok(
+        Option::<Raw>::deserialize(deserializer)?.map(|raw| match raw {
+            Raw::Text(text) => Localized {
+                zh: Some(text),
+                en: None,
+            },
+            Raw::Map(map) => map,
+        }),
+    )
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
