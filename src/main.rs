@@ -9,6 +9,7 @@ mod app;
 mod commands;
 mod format;
 mod model;
+mod oauth;
 mod provider;
 mod service;
 
@@ -147,6 +148,10 @@ fn show_provider() -> Result<(), String> {
             println!("api        {}", current.api);
             println!("key        stored as {}", provider::key_env(&current.id));
             println!("patch      {}", provider::overlay(&cfg).display());
+        }
+        None if oauth::account_signed_in() => {
+            println!("account    DeepSeek (OAuth token in ~/.dsh/.credentials.yaml)");
+            println!("model      profile default (deepseek-official)");
         }
         None => println!("no provider configured — run `booth`, then /login"),
     }

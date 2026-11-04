@@ -3,6 +3,7 @@
 use crate::api::Api;
 use crate::commands;
 use crate::format::{self, L};
+use crate::oauth;
 use crate::provider::{self, Provider, Store};
 use crate::service;
 use ratatui::backend::CrosstermBackend;
@@ -17,7 +18,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
 use std::io::{self, IsTerminal, Stdout};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::Duration;
 use unicode_width::UnicodeWidthStr;
 
@@ -26,15 +29,40 @@ const DIM: Color = Color::DarkGray;
 const RED: Color = Color::Red;
 const GREEN: Color = Color::Green;
 
+/// `/login` starts here: the account sign-in first, then API-key providers.
+const LOGIN_METHODS: &[(&str, &str)] = &[
+    ("DeepSeek account", "browser sign-in, no API key"),
+    ("DeepSeek API key", "platform.deepseek.com key"),
+    ("OpenAI API key", "api.openai.com"),
+    ("OpenRouter API key", "openrouter.ai"),
+    ("Custom endpoint", "any OpenAI-compatible base URL"),
+];
+
 enum Msg {
     Lines(Vec<L>),
     Error(String),
     Header(Line<'static>),
+    OAuthReady(Box<oauth::Attempt>),
+    OAuthCode(String),
+    OAuthResult(Result<(), String>),
 }
 
 enum Modal {
+    LoginList { selected: usize },
     Login(LoginForm),
+    OAuth(OAuthState),
     Model(ModelPick),
+}
+
+/// Browser sign-in state. `attempt` arrives once `auth_init` answers; `paste` accepts the
+/// callback URL for machines where the browser cannot reach the loopback port.
+struct OAuthState {
+    url: String,
+    status: String,
+    paste: String,
+    cursor: usize,
+    attempt: Option<oauth::Attempt>,
+    cancel: Option<Arc<AtomicBool>>,
 }
 
 /// The `/login` form: preset, id, base URL, model, api, key. `field` is the focused row.
@@ -224,6 +252,48 @@ impl App {
                     )));
                 }
                 Msg::Header(line) => self.header = line,
+                Msg::OAuthReady(attempt) => {
+                    if let Some(Modal::OAuth(state)) = &mut self.modal {
+                        state.url = attempt.url.clone();
+                        state.attempt = Some(*attempt);
+                        state.status = "waiting for the browser…".into();
+                    }
+                }
+                Msg::OAuthCode(code) => {
+                    let attempt = match &self.modal {
+                        Some(Modal::OAuth(state)) => state.attempt.clone(),
+                        _ => None,
+                    };
+                    if let Some(attempt) = attempt {
+                        self.exchange_oauth(attempt, code);
+                    }
+                }
+                Msg::OAuthResult(result) => match result {
+                    Ok(()) => {
+                        self.modal = None;
+                        self.push(Line::from(vec![
+                            Span::styled("signed in ", Style::default().fg(GREEN)),
+                            Span::styled(
+                                "DeepSeek account · restarting the service",
+                                Style::default().fg(DIM),
+                            ),
+                        ]));
+                        if let Some(cfg) = &self.config {
+                            let _ = std::fs::remove_file(provider::overlay(cfg));
+                        }
+                        self.restart_service();
+                    }
+                    Err(error) => {
+                        if let Some(Modal::OAuth(state)) = &mut self.modal {
+                            state.status = error;
+                        } else {
+                            self.push(Line::from(Span::styled(
+                                format!("! {error}"),
+                                Style::default().fg(RED),
+                            )));
+                        }
+                    }
+                },
             }
         }
     }
@@ -444,8 +514,17 @@ impl App {
             self.open_model();
             return;
         }
-        if line == "/login" || line.starts_with("/login ") {
-            self.open_login(line.trim_start_matches("/login").trim());
+        if line == "/login" {
+            self.modal = Some(Modal::LoginList { selected: 0 });
+            return;
+        }
+        if let Some(rest) = line.strip_prefix("/login ") {
+            let rest = rest.trim();
+            if rest == "oauth" || rest == "deepseek-account" {
+                self.start_oauth();
+            } else {
+                self.open_login(rest);
+            }
             return;
         }
         match line.as_str() {
@@ -496,10 +575,141 @@ impl App {
 
     fn modal_key(&mut self, key: KeyEvent) {
         match self.modal.take() {
+            Some(Modal::LoginList { selected }) => self.login_list_key(key, selected),
             Some(Modal::Login(form)) => self.login_key(key, form),
+            Some(Modal::OAuth(state)) => self.oauth_key(key, state),
             Some(Modal::Model(pick)) => self.model_key(key, pick),
             None => {}
         }
+    }
+
+    fn login_list_key(&mut self, key: KeyEvent, mut selected: usize) {
+        let count = LOGIN_METHODS.len();
+        match key.code {
+            KeyCode::Esc => return,
+            KeyCode::Up => selected = selected.saturating_sub(1),
+            KeyCode::Down => selected = (selected + 1).min(count - 1),
+            KeyCode::Enter => {
+                if selected == 0 {
+                    self.start_oauth();
+                } else {
+                    self.modal = Some(Modal::Login(LoginForm::new(selected - 1)));
+                }
+                return;
+            }
+            _ => {}
+        }
+        self.modal = Some(Modal::LoginList { selected });
+    }
+
+    fn start_oauth(&mut self) {
+        let port = std::env::var("BOOTH_OAUTH_PORT")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(37029);
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.modal = Some(Modal::OAuth(OAuthState {
+            url: String::new(),
+            status: "asking platform.deepseek.com…".into(),
+            paste: String::new(),
+            cursor: 0,
+            attempt: None,
+            cancel: Some(cancel.clone()),
+        }));
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            // A busy default port (say, another DSH web) falls back to an ephemeral one.
+            let started = oauth::begin(port).or_else(|first| {
+                if port == 0 {
+                    Err(first)
+                } else {
+                    oauth::begin(0).map_err(|second| format!("{first}; {second}"))
+                }
+            });
+            match started {
+                Ok((attempt, listener)) => {
+                    let _ = tx.send(Msg::OAuthReady(Box::new(attempt.clone())));
+                    match oauth::wait_code(
+                        &listener,
+                        &attempt.state,
+                        &cancel,
+                        Duration::from_secs(600),
+                    ) {
+                        Ok(code) => {
+                            let _ = tx.send(Msg::OAuthCode(code));
+                        }
+                        Err(error) => {
+                            let _ = tx.send(Msg::OAuthResult(Err(error)));
+                        }
+                    }
+                }
+                Err(error) => {
+                    let _ = tx.send(Msg::OAuthResult(Err(error)));
+                }
+            }
+        });
+    }
+
+    fn exchange_oauth(&mut self, attempt: oauth::Attempt, code: String) {
+        if let Some(Modal::OAuth(state)) = &mut self.modal {
+            state.status = "exchanging the code…".into();
+        }
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = oauth::exchange(&attempt, &code);
+            let _ = tx.send(Msg::OAuthResult(result));
+        });
+    }
+
+    fn oauth_key(&mut self, key: KeyEvent, mut state: OAuthState) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o') {
+            if !state.url.is_empty() {
+                let _ = std::process::Command::new("xdg-open")
+                    .arg(&state.url)
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn();
+            }
+            self.modal = Some(Modal::OAuth(state));
+            return;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                if let Some(cancel) = &state.cancel {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                return;
+            }
+            KeyCode::Enter => {
+                let url = state.paste.trim().to_owned();
+                let attempt = state.attempt.clone();
+                if let (Some(attempt), false) = (attempt, url.is_empty()) {
+                    match oauth::code_from_url(&url, &attempt.state) {
+                        Ok(code) => {
+                            self.exchange_oauth(attempt, code);
+                            return;
+                        }
+                        Err(error) => state.status = error,
+                    }
+                }
+                self.modal = Some(Modal::OAuth(state));
+                return;
+            }
+            KeyCode::Backspace => {
+                let cursor = state.cursor;
+                state.cursor = remove_before(&mut state.paste, cursor);
+            }
+            KeyCode::Left => state.cursor = state.cursor.saturating_sub(1),
+            KeyCode::Right => {
+                state.cursor = (state.cursor + 1).min(state.paste.chars().count());
+            }
+            KeyCode::Char(ch) => {
+                insert_char(&mut state.paste, state.cursor, ch);
+                state.cursor += 1;
+            }
+            _ => {}
+        }
+        self.modal = Some(Modal::OAuth(state));
     }
 
     fn login_key(&mut self, key: KeyEvent, mut form: LoginForm) {
@@ -924,7 +1134,9 @@ fn clip_text(text: &str, width: usize) -> String {
 
 fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, store: &Store) {
     match modal {
+        Modal::LoginList { selected } => draw_login_list(frame, area, *selected),
         Modal::Login(form) => draw_login(frame, area, form),
+        Modal::OAuth(state) => draw_oauth(frame, area, state),
         Modal::Model(pick) => draw_model(frame, area, pick, store),
     }
 }
@@ -1050,4 +1262,98 @@ fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, store: &Store) {
         Style::default().fg(DIM),
     )));
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
+    let width = area.width.saturating_sub(8).clamp(44, 72).min(area.width);
+    let height = (LOGIN_METHODS.len() as u16 + 4).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::bordered().title(" login ");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let mut lines: Vec<L> = Vec::new();
+    for (index, (label, description)) in LOGIN_METHODS.iter().enumerate() {
+        let active = index == selected;
+        lines.push(Line::from(vec![
+            Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+            Span::styled(
+                format!("{label:<20}"),
+                if active {
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::styled(*description, Style::default().fg(DIM)),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        " Enter select · Esc cancel",
+        Style::default().fg(DIM),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
+    let width = area.width.saturating_sub(8).clamp(48, 84).min(area.width);
+    let height = 12.min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::bordered().title(" deepseek account ");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let room = (inner.width as usize).saturating_sub(4);
+    // Wrapped, never truncated: the whole authorize URL has to stay selectable.
+    let url = if state.url.is_empty() {
+        "…".to_owned()
+    } else {
+        state.url.clone()
+    };
+    let paste = {
+        let count = state.paste.chars().count();
+        if count > room {
+            let tail: String = state.paste.chars().skip(count - room).collect();
+            format!("…{tail}")
+        } else {
+            state.paste.clone()
+        }
+    };
+    let lines: Vec<L> = vec![
+        Line::from(Span::styled(
+            "Open this URL and approve (Ctrl+O opens it):",
+            Style::default().fg(DIM),
+        )),
+        Line::from(Span::styled(url, Style::default().fg(CYAN))),
+        Line::from(Span::styled(
+            clip_text(&state.status, room),
+            Style::default().fg(Color::Yellow),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "or paste the callback URL:",
+            Style::default().fg(DIM),
+        )),
+        Line::from(vec![
+            Span::styled("› ", Style::default().fg(CYAN)),
+            Span::styled(paste, Style::default()),
+        ]),
+        Line::from(Span::styled(
+            " Enter finish · Esc cancel",
+            Style::default().fg(DIM),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
