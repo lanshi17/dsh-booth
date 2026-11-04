@@ -9,6 +9,7 @@ mod app;
 mod commands;
 mod format;
 mod model;
+mod service;
 
 use api::Api;
 use clap::{Parser, Subcommand};
@@ -22,9 +23,9 @@ const DEFAULT_URL: &str = "http://127.0.0.1:3082";
     name = "booth",
     version,
     about = "A terminal console for dsh-superagent",
-    long_about = "Reads the bundle's loopback management API. Run `booth` with no command for the \
-                  console; run `booth status` for one shot. The service must be started with \
-                  `scripts/dsh-superagent start`."
+    long_about = "Runs the bundled superagent service and reads its loopback management API. \
+                  `booth init` prepares the profile, `booth start` runs the service, `booth` with no \
+                  command opens the console."
 )]
 struct Cli {
     /// Base URL of the dsh-superagent management API.
@@ -42,6 +43,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Prepare the DSH profile and build the bundled superagent.
+    Init,
+    /// Start the service in the background.
+    Up,
+    /// Stop the service booth started.
+    Down,
+    /// Restart the service.
+    Restart,
+    /// Print the service log.
+    Logs {
+        #[arg(long, default_value_t = 40)]
+        lines: usize,
+    },
     /// Runtime health, pause state, setup problem and accounts.
     Status {
         #[arg(long)]
@@ -114,7 +128,7 @@ fn main() {
     if let Err(error) = result {
         eprintln!("booth: {error}");
         if error.contains("cannot reach") {
-            eprintln!("hint: start it with `scripts/dsh-superagent start`, then run `sa status`");
+            eprintln!("hint: `booth start` (and `booth init` the first time)");
         }
         std::process::exit(1);
     }
@@ -122,6 +136,11 @@ fn main() {
 
 fn run(api: Api, command: Command) -> Result<(), String> {
     match command {
+        Command::Init => service::init(&service::Config::from_env()?),
+        Command::Up => service::start(&service::Config::from_env()?),
+        Command::Down => service::stop(&service::Config::from_env()?),
+        Command::Restart => service::restart(&service::Config::from_env()?),
+        Command::Logs { lines } => service::logs(&service::Config::from_env()?, lines),
         Command::Status { json } => show(
             &api,
             json,

@@ -198,14 +198,21 @@ impl App {
         std::thread::spawn(move || {
             let line = match api.state() {
                 Ok(state) => header_line(&api, &state),
-                Err(error) => Line::from(vec![
-                    Span::styled(
-                        "booth",
-                        Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!(" · {} ", api.base()), Style::default().fg(DIM)),
-                    Span::styled(clip_error(&error.to_string()), Style::default().fg(RED)),
-                ]),
+                Err(error) => {
+                    let text = error.to_string();
+                    let mut spans = vec![
+                        Span::styled(
+                            "booth",
+                            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!(" · {} ", api.base()), Style::default().fg(DIM)),
+                        Span::styled(clip_error(&text), Style::default().fg(RED)),
+                    ];
+                    if text.contains("cannot reach") {
+                        spans.push(Span::styled(" · booth up", Style::default().fg(DIM)));
+                    }
+                    Line::from(spans)
+                }
             };
             let _ = tx.send(Msg::Header(line));
         });

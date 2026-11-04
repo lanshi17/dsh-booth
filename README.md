@@ -20,11 +20,17 @@ booth>
 Enter run · Tab complete · ↑↓ pick/history · PgUp/PgDn scroll · Esc clear · Ctrl+C quit
 ```
 
-## Why this is a separate repository
+## What is in the repository
 
-It depends on dsh-superagent; dsh-superagent does not depend on it. The console talks only
-to the bundle's loopback management API (`/orchestrator/api/*`), so it adds no plugin to the
-bundle, changes no DSH profile, and survives a DSH upgrade as long as the routes do.
+`superagent/` is a git submodule pinned to one commit of
+[dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). `booth init` builds
+it, creates a DSH profile around it and links it in; `booth up` runs that profile detached and
+waits for the management API. The console, the service and its deployment therefore ship as one
+entry point — while the bundle stays an independent MIT-licensed project that knows nothing
+about booth.
+
+The console itself talks only to the bundle's loopback management API (`/orchestrator/api/*`),
+so a DSH upgrade does not break it as long as the routes do.
 
 The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header must be
 `127.0.0.1:<port>` or `localhost:<port>`, and every request carries
@@ -33,15 +39,24 @@ The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header mus
 ## Install
 
 ```sh
-cargo install --path .          # installs `booth`
-# or
-cargo build --release           # ./target/release/booth
+git clone --recursive git@github.com:lanshi17/dsh-booth.git
+cd dsh-booth
+cargo install --path .          # installs `booth`; or cargo build --release
+booth init                      # pnpm install + build, profile `superagent`, link
+booth up                        # dsh --profile superagent --no-open
+booth                           # the console
 ```
 
-The service must already run — see the bundle's `docs/006-deployment.md`:
+`booth init` needs `dsh`, `pnpm` and Node. It skips what is already done, so it is safe to
+rerun. Clone with `--recursive`, or run `git submodule update --init` — otherwise `superagent/`
+is empty.
+
+Updating the bundle:
 
 ```sh
-scripts/dsh-superagent start
+git submodule update --remote superagent
+booth init        # rebuild
+booth restart
 ```
 
 ## Try it without a service
@@ -52,12 +67,17 @@ booth --url http://127.0.0.1:3899
 ```
 
 The fixture serves the same routes with the same same-origin guard, so the console can be
-developed and reviewed without a configured GitHub account.
+developed and reviewed without a configured GitHub account or a running service.
 
 ## Usage
 
 ```sh
 booth                              # the console
+booth init                         # prepare the profile and build (once)
+booth up                           # start the service in the background
+booth down                         # stop the service booth started
+booth restart
+booth logs --lines 40
 booth status                       # one shot: health, pause, setup, accounts
 booth overview                     # problems, people waiting, executor load, 24h flow
 booth tickets --state person       # open | person | working | idle | ended
@@ -79,6 +99,11 @@ check the deployment guide asks for.
 | --- | --- | --- |
 | `--url` | `http://127.0.0.1:3082` | The management API's base URL |
 | `DSH_SUPERAGENT_URL` | — | Same value from the environment |
+| `BOOTH_PORT` | `3082` | Port written into the profile and used by `up` |
+| `BOOTH_PROFILE` | `superagent` | DSH profile name |
+| `BOOTH_STATE_DIR` | `$DSH_HOME/state/superagent` | Database, `booth.pid`, `booth.log` |
+| `BOOTH_SUPERAGENT_DIR` | the repository's `superagent/` | Checkout to build and link |
+| `DSH_HOME` | `~/.dsh` | Where profiles and state live |
 
 ## Inside the console
 
@@ -114,13 +139,13 @@ Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tic
 
 ## Compatibility
 
-Built and tested against the management API of `dsh-superagent` `0.1.0`
-(`@deepseek-ai/dsh` `0.2.1-*`). The console needs the service's loopback port and the
+The submodule pins `dsh-superagent` `0.1.0` (`@deepseek-ai/dsh` `0.2.1-*`); the console was
+built and tested against that commit. The console needs the service's loopback port and the
 routes listed above. If a route moves, `api.rs` is the only file to change; the wire types in
 `model.rs` are the second.
 
 Not implemented: work submission, live push (SSE/WebSocket), settings or prompt editing,
-Feishu-specific reads, attaching to a worker Session.
+Feishu-specific reads, attaching to a worker Session, Windows service control.
 
 ## License
 
