@@ -1,0 +1,23 @@
+[package]
+name = "dsh-booth"
+version = "0.1.0"
+edition = "2021"
+description = "A terminal console for dsh-superagent: tickets, threads and the people who are waiting"
+license = "GPL-3.0-only"
+repository = "https://github.com/lanshi17/dsh-booth"
+
+[[bin]]
+name = "booth"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+unicode-width = "0.2"
+ureq = { version = "2.12", features = ["json"] }
+
+[profile.release]
+lto = true
+strip = true
