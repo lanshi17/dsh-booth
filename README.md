@@ -127,9 +127,16 @@ Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tic
 
 `/login` and `/model` follow Pi's shape.
 
-`/login` offers DeepSeek, OpenAI, OpenRouter or a custom OpenAI-compatible endpoint, prefills
-base URL and model, and asks for the key behind a masked field; every field stays editable
-(`preset`, `id`, `base`, `model`, `api`, `key`). `/model` lists the providers already stored
+`/login` starts with the DeepSeek account, then offers DeepSeek, OpenAI, OpenRouter or a custom
+OpenAI-compatible endpoint with the key behind a masked field; every field stays editable
+(`preset`, `id`, `base`, `model`, `api`, `key`).
+
+The account option runs the same PKCE flow as DSH's web panel: booth asks
+`platform.deepseek.com` for an authorize URL, listens on `127.0.0.1:37029/oauth/callback` for
+the redirect, and exchanges the code for the grant DSH's `deepseek-official` provider consumes.
+If the browser cannot reach the loopback port, paste the callback URL from the address bar into
+the same window and press Enter — the state is checked before the exchange. `BOOTH_OAUTH_PORT`
+picks another port. `/model` lists the providers already stored
 and switches the default model, or jumps to `/login` when there are none. Both save and
 restart the service in one step — no file editing, no second command.
 
