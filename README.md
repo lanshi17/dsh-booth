@@ -24,10 +24,10 @@ the empty transcript, as they do in `omp`.
 
 `superagent/` is a git submodule pinned to one commit of
 [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). `booth init` builds
-it, creates a DSH profile around it and links it in; `booth up` runs that profile detached and
-waits for the management API. The console, the service and its deployment therefore ship as one
-entry point — while the bundle stays an independent MIT-licensed project that knows nothing
-about booth.
+it, creates a DSH profile around it and links it in; `booth up` starts the service, runs that
+profile detached and waits for the management API. The console, the service and its deployment
+therefore ship as one entry point — while the bundle stays an independent MIT-licensed project
+that knows nothing about booth.
 
 The console itself talks only to the bundle's loopback management API (`/orchestrator/api/*`),
 so a DSH upgrade does not break it as long as the routes do.
