@@ -3,6 +3,8 @@
 use crate::api::Api;
 use crate::commands;
 use crate::format::{self, L};
+use crate::provider::{self, Provider, Store};
+use crate::service;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::crossterm::execute;
@@ -30,6 +32,61 @@ enum Msg {
     Header(Line<'static>),
 }
 
+enum Modal {
+    Login(LoginForm),
+    Model(ModelPick),
+}
+
+/// The `/login` form: preset, id, base URL, model, api, key. `field` is the focused row.
+struct LoginForm {
+    preset: usize,
+    id: String,
+    base: String,
+    model: String,
+    api: String,
+    key: String,
+    field: usize,
+    cursor: usize,
+    error: Option<String>,
+}
+
+struct ModelPick {
+    selected: usize,
+}
+
+impl LoginForm {
+    fn new(preset: usize) -> Self {
+        let item = &provider::PRESETS[preset.min(provider::PRESETS.len() - 1)];
+        Self {
+            preset,
+            id: item.id.to_owned(),
+            base: item.base.to_owned(),
+            model: item.model.to_owned(),
+            api: item.api.to_owned(),
+            key: String::new(),
+            field: 1,
+            cursor: 0,
+            error: None,
+        }
+    }
+
+    fn value(&self) -> &str {
+        match self.field {
+            1 => &self.id,
+            2 => &self.base,
+            3 => &self.model,
+            5 => &self.key,
+            _ => "",
+        }
+    }
+
+    fn focus(&mut self, field: usize) {
+        self.field = field;
+        let length = self.value().chars().count();
+        self.cursor = length;
+    }
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -44,6 +101,9 @@ pub struct App {
     scroll: u16,
     quit: bool,
     header: Line<'static>,
+    config: Option<service::Config>,
+    store: Store,
+    modal: Option<Modal>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
 }
@@ -90,8 +150,13 @@ impl App {
                 Style::default().fg(DIM),
             ),
         ]);
+        let config = service::Config::from_env().ok();
+        let store = config.as_ref().map(Store::load).unwrap_or_default();
         Self {
             api,
+            config,
+            store,
+            modal: None,
             lines: Vec::new(),
             input: String::new(),
             cursor: 0,
@@ -242,6 +307,10 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
+        if self.modal.is_some() {
+            self.modal_key(key);
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('c') => {
@@ -371,6 +440,14 @@ impl App {
         if self.history.len() > 200 {
             self.history.remove(0);
         }
+        if line == "/model" {
+            self.open_model();
+            return;
+        }
+        if line == "/login" || line.starts_with("/login ") {
+            self.open_login(line.trim_start_matches("/login").trim());
+            return;
+        }
         match line.as_str() {
             "/quit" | "/q" => {
                 self.quit = true;
@@ -397,6 +474,260 @@ impl App {
             return;
         }
         self.spawn(line);
+    }
+
+    fn open_login(&mut self, preset: &str) {
+        let index = provider::PRESETS
+            .iter()
+            .position(|item| item.id == preset || item.label.eq_ignore_ascii_case(preset))
+            .unwrap_or(0);
+        self.modal = Some(Modal::Login(LoginForm::new(index)));
+    }
+
+    fn open_model(&mut self) {
+        let selected = self
+            .store
+            .providers
+            .iter()
+            .position(|item| item.id == self.store.current)
+            .unwrap_or(0);
+        self.modal = Some(Modal::Model(ModelPick { selected }));
+    }
+
+    fn modal_key(&mut self, key: KeyEvent) {
+        match self.modal.take() {
+            Some(Modal::Login(form)) => self.login_key(key, form),
+            Some(Modal::Model(pick)) => self.model_key(key, pick),
+            None => {}
+        }
+    }
+
+    fn login_key(&mut self, key: KeyEvent, mut form: LoginForm) {
+        match key.code {
+            KeyCode::Esc => return,
+            KeyCode::Tab => {
+                let next = (form.field + 1) % 6;
+                form.focus(next);
+            }
+            KeyCode::BackTab => {
+                let next = (form.field + 5) % 6;
+                form.focus(next);
+            }
+            KeyCode::Enter => {
+                if form.field == 5 {
+                    self.commit_login(form);
+                    return;
+                }
+                let next = form.field + 1;
+                form.focus(next);
+            }
+            KeyCode::Left | KeyCode::Right => {
+                let step = if key.code == KeyCode::Left { -1 } else { 1 };
+                match form.field {
+                    0 => {
+                        let count = provider::PRESETS.len() as i32;
+                        let next = (form.preset as i32 + step).rem_euclid(count) as usize;
+                        form = LoginForm::new(next);
+                    }
+                    4 => {
+                        let count = provider::APIS.len() as i32;
+                        let at = provider::APIS
+                            .iter()
+                            .position(|item| *item == form.api)
+                            .unwrap_or(0) as i32;
+                        form.api =
+                            provider::APIS[(at + step).rem_euclid(count) as usize].to_owned();
+                    }
+                    _ => {
+                        let length = form.value().chars().count();
+                        form.cursor = if step < 0 {
+                            form.cursor.saturating_sub(1)
+                        } else {
+                            (form.cursor + 1).min(length)
+                        };
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                let cursor = form.cursor;
+                match form.field {
+                    1 => form.cursor = remove_before(&mut form.id, cursor),
+                    2 => form.cursor = remove_before(&mut form.base, cursor),
+                    3 => form.cursor = remove_before(&mut form.model, cursor),
+                    5 => form.cursor = remove_before(&mut form.key, cursor),
+                    _ => {}
+                }
+            }
+            KeyCode::Delete => {
+                let cursor = form.cursor;
+                match form.field {
+                    1 => form.cursor = remove_at(&mut form.id, cursor),
+                    2 => form.cursor = remove_at(&mut form.base, cursor),
+                    3 => form.cursor = remove_at(&mut form.model, cursor),
+                    5 => form.cursor = remove_at(&mut form.key, cursor),
+                    _ => {}
+                }
+            }
+            KeyCode::Char(ch) => match form.field {
+                1 => {
+                    insert_char(&mut form.id, form.cursor, ch);
+                    form.cursor += 1;
+                }
+                2 => {
+                    insert_char(&mut form.base, form.cursor, ch);
+                    form.cursor += 1;
+                }
+                3 => {
+                    insert_char(&mut form.model, form.cursor, ch);
+                    form.cursor += 1;
+                }
+                5 => {
+                    insert_char(&mut form.key, form.cursor, ch);
+                    form.cursor += 1;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+        self.modal = Some(Modal::Login(form));
+    }
+
+    fn model_key(&mut self, key: KeyEvent, mut pick: ModelPick) {
+        let count = self.store.providers.len() + 1;
+        match key.code {
+            KeyCode::Esc => return,
+            KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
+            KeyCode::Down => pick.selected = (pick.selected + 1).min(count - 1),
+            KeyCode::Enter => {
+                if pick.selected >= self.store.providers.len() {
+                    self.open_login("");
+                    return;
+                }
+                let chosen = self.store.providers[pick.selected].clone();
+                let Some(cfg) = self.config.clone() else {
+                    return;
+                };
+                let mut store = self.store.clone();
+                store.current = chosen.id.clone();
+                match store.save(&cfg) {
+                    Ok(()) => {
+                        self.store = store;
+                        self.push(Line::from(vec![
+                            Span::styled("model ", Style::default().fg(GREEN)),
+                            Span::styled(
+                                format!("{} · {}", chosen.id, chosen.model),
+                                Style::default(),
+                            ),
+                        ]));
+                        self.restart_service();
+                    }
+                    Err(error) => {
+                        self.push(Line::from(Span::styled(
+                            format!("! {error}"),
+                            Style::default().fg(RED),
+                        )));
+                        self.modal = Some(Modal::Model(pick));
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+        self.modal = Some(Modal::Model(pick));
+    }
+
+    fn commit_login(&mut self, mut form: LoginForm) {
+        let id = form.id.trim().to_lowercase().replace(' ', "-");
+        let base = form.base.trim().trim_end_matches('/').to_owned();
+        let model = form.model.trim().to_owned();
+        let key = form.key.trim().to_owned();
+        let problem = if id.is_empty() {
+            Some("provider id is empty")
+        } else if !id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            Some("provider id: letters, digits, - and _ only")
+        } else if !base.starts_with("http") {
+            Some("base URL must start with http")
+        } else if model.is_empty() {
+            Some("model is empty")
+        } else if key.is_empty() {
+            Some("API key is empty")
+        } else {
+            None
+        };
+        if let Some(problem) = problem {
+            form.error = Some(problem.to_owned());
+            self.modal = Some(Modal::Login(form));
+            return;
+        }
+        let Some(cfg) = self.config.clone() else {
+            form.error = Some("no DSH home found".to_owned());
+            self.modal = Some(Modal::Login(form));
+            return;
+        };
+        let mut store = self.store.clone();
+        store.upsert(Provider {
+            id,
+            base,
+            api: form.api.clone(),
+            model,
+            key,
+        });
+        match store.save(&cfg) {
+            Ok(()) => {
+                let saved = store.current().cloned().unwrap_or_default();
+                self.store = store;
+                self.modal = None;
+                self.push(Line::from(vec![
+                    Span::styled("provider ", Style::default().fg(GREEN)),
+                    Span::styled(format!("{} · {}", saved.id, saved.model), Style::default()),
+                ]));
+                self.restart_service();
+            }
+            Err(error) => {
+                form.error = Some(error);
+                self.modal = Some(Modal::Login(form));
+            }
+        }
+    }
+
+    fn restart_service(&mut self) {
+        self.busy = true;
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let mut lines = Vec::new();
+            let result = std::env::current_exe()
+                .map_err(|error| error.to_string())
+                .and_then(|exe| {
+                    std::process::Command::new(exe)
+                        .arg("restart")
+                        .output()
+                        .map_err(|error| error.to_string())
+                });
+            match result {
+                Ok(output) => {
+                    for line in String::from_utf8_lossy(&output.stdout).lines().take(6) {
+                        lines.push(Line::from(Span::styled(
+                            line.to_owned(),
+                            Style::default().fg(DIM),
+                        )));
+                    }
+                    if !output.status.success() {
+                        lines.push(Line::from(Span::styled(
+                            format!("! {}", String::from_utf8_lossy(&output.stderr).trim()),
+                            Style::default().fg(RED),
+                        )));
+                    }
+                }
+                Err(error) => lines.push(Line::from(Span::styled(
+                    format!("! {error}"),
+                    Style::default().fg(RED),
+                ))),
+            }
+            let _ = tx.send(Msg::Lines(lines));
+        });
     }
 
     fn draw(&mut self, frame: &mut Frame) {
@@ -471,6 +802,10 @@ impl App {
                 })
                 .collect();
             frame.render_widget(Paragraph::new(lines), inner);
+        }
+
+        if let Some(modal) = &self.modal {
+            draw_modal(frame, area, modal, &self.store);
         }
 
         let footer = if self.busy {
@@ -553,4 +888,166 @@ fn char_to_byte(text: &str, index: usize) -> usize {
         .nth(index)
         .map(|(byte, _)| byte)
         .unwrap_or(text.len())
+}
+
+fn insert_char(text: &mut String, cursor: usize, ch: char) {
+    let byte = char_to_byte(text, cursor);
+    text.insert(byte, ch);
+}
+
+fn remove_before(text: &mut String, cursor: usize) -> usize {
+    if cursor == 0 {
+        return 0;
+    }
+    let byte = char_to_byte(text, cursor - 1);
+    text.remove(byte);
+    cursor - 1
+}
+
+fn remove_at(text: &mut String, cursor: usize) -> usize {
+    if cursor >= text.chars().count() {
+        return cursor;
+    }
+    let byte = char_to_byte(text, cursor);
+    text.remove(byte);
+    cursor
+}
+
+fn clip_text(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, store: &Store) {
+    match modal {
+        Modal::Login(form) => draw_login(frame, area, form),
+        Modal::Model(pick) => draw_model(frame, area, pick, store),
+    }
+}
+
+fn draw_login(frame: &mut Frame, area: Rect, form: &LoginForm) {
+    let width = area.width.saturating_sub(8).clamp(44, 78).min(area.width);
+    let height = (10 + u16::from(form.error.is_some())).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::bordered().title(" login ");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let key_text = "•".repeat(form.key.chars().count());
+    let rows = [
+        (
+            "provider",
+            provider::PRESETS[form.preset].label.to_owned(),
+            true,
+        ),
+        ("id", form.id.clone(), false),
+        ("base", form.base.clone(), false),
+        ("model", form.model.clone(), false),
+        ("api", form.api.clone(), true),
+        ("key", key_text, false),
+    ];
+    let available = (inner.width as usize).saturating_sub(12);
+    let mut lines: Vec<L> = rows
+        .iter()
+        .enumerate()
+        .map(|(index, (label, value, cycle))| {
+            let active = index == form.field;
+            let mut spans = vec![
+                Span::styled(if active { "›" } else { " " }, Style::default().fg(CYAN)),
+                Span::styled(
+                    format!(" {:<9}", label),
+                    Style::default().fg(if active { CYAN } else { DIM }),
+                ),
+                Span::styled(
+                    clip_text(value, available),
+                    if active {
+                        Style::default()
+                            .fg(Color::White)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::White)
+                    },
+                ),
+            ];
+            if *cycle {
+                spans.push(Span::styled("  ← →", Style::default().fg(DIM)));
+            }
+            Line::from(spans)
+        })
+        .collect();
+    if let Some(error) = &form.error {
+        lines.push(Line::from(Span::styled(
+            format!(" {error}"),
+            Style::default().fg(RED),
+        )));
+    }
+    lines.push(Line::from(Span::styled(
+        " Tab next · ←→ move/cycle · Enter save · Esc cancel",
+        Style::default().fg(DIM),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, store: &Store) {
+    let rows = store.providers.len() + 1;
+    let width = area.width.saturating_sub(8).clamp(40, 72).min(area.width);
+    let height = (rows as u16 + 4).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::bordered().title(" model ");
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let mut lines: Vec<L> = Vec::new();
+    for (index, item) in store.providers.iter().enumerate() {
+        let active = index == pick.selected;
+        let current = item.id == store.current;
+        lines.push(Line::from(vec![
+            Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+            Span::styled(
+                format!("{}/{}", item.id, item.model),
+                if active {
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                },
+            ),
+            Span::styled(
+                if current { "  current" } else { "" },
+                Style::default().fg(DIM),
+            ),
+        ]));
+    }
+    let add = pick.selected >= store.providers.len();
+    lines.push(Line::from(vec![
+        Span::styled(if add { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+        Span::styled(
+            "＋ add provider…",
+            if add {
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(DIM)
+            },
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        " Enter select · Esc cancel",
+        Style::default().fg(DIM),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
 }

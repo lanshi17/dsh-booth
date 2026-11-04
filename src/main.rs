@@ -9,6 +9,7 @@ mod app;
 mod commands;
 mod format;
 mod model;
+mod provider;
 mod service;
 
 use api::Api;
@@ -56,6 +57,8 @@ enum Command {
         #[arg(long, default_value_t = 40)]
         lines: usize,
     },
+    /// Show the model provider booth starts the service with.
+    Provider,
     /// Runtime health, pause state, setup problem and accounts.
     Status {
         #[arg(long)]
@@ -134,6 +137,33 @@ fn main() {
     }
 }
 
+fn show_provider() -> Result<(), String> {
+    let cfg = service::Config::from_env()?;
+    let store = provider::Store::load(&cfg);
+    match store.current() {
+        Some(current) => {
+            println!("provider   {} · {}", current.id, current.model);
+            println!("base       {}", current.base);
+            println!("api        {}", current.api);
+            println!("key        stored as {}", provider::key_env(&current.id));
+            println!("patch      {}", provider::overlay(&cfg).display());
+        }
+        None => println!("no provider configured — run `booth`, then /login"),
+    }
+    if store.providers.len() > 1 {
+        println!(
+            "also       {}",
+            store
+                .providers
+                .iter()
+                .map(|item| format!("{}/{}", item.id, item.model))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    Ok(())
+}
+
 fn run(api: Api, command: Command) -> Result<(), String> {
     match command {
         Command::Init => service::init(&service::Config::from_env()?),
@@ -141,6 +171,7 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Down => service::stop(&service::Config::from_env()?),
         Command::Restart => service::restart(&service::Config::from_env()?),
         Command::Logs { lines } => service::logs(&service::Config::from_env()?, lines),
+        Command::Provider => show_provider(),
         Command::Status { json } => show(
             &api,
             json,

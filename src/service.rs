@@ -16,6 +16,7 @@ const DEFAULT_PORT: u16 = 3082;
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
 const STOP_TIMEOUT: Duration = Duration::from_secs(20);
 
+#[derive(Clone)]
 pub struct Config {
     pub profile: String,
     pub port: u16,
@@ -154,14 +155,31 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         .try_clone()
         .map_err(|error| format!("cannot open the log twice: {error}"))?;
 
-    let mut command = Command::new("nohup");
+    let store = crate::provider::Store::load(cfg);
+    // A session of its own: the service must outlive the terminal that started it, including
+    // a terminal that closes while `booth restart` is still running inside it.
+    let mut command = if which("setsid") {
+        let mut command = Command::new("setsid");
+        command.arg("dsh");
+        command
+    } else {
+        let mut command = Command::new("nohup");
+        command.arg("dsh");
+        command
+    };
+    command.args(["--profile", cfg.profile.as_str()]);
+    if !store.providers.is_empty() && crate::provider::overlay(cfg).is_file() {
+        command.arg("--patch").arg(crate::provider::overlay(cfg));
+    }
     command
-        .arg("dsh")
-        .args(["--profile", cfg.profile.as_str(), "--no-open"])
+        .arg("--no-open")
         .current_dir(&cfg.bundle)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors));
+    for (name, value) in store.environment() {
+        command.env(name, value);
+    }
     let child = command
         .spawn()
         .map_err(|error| format!("cannot start dsh: {error}"))?;
@@ -348,6 +366,12 @@ fn signal(pid: u32, name: &str) -> Result<(), String> {
     } else {
         Err(format!("kill -{name} {pid} failed ({status})"))
     }
+}
+
+fn which(program: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(program).is_file()))
+        .unwrap_or(false)
 }
 
 fn read_pid(cfg: &Config) -> Option<u32> {
