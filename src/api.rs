@@ -96,6 +96,28 @@ impl Api {
         serde_json::from_value(value).map_err(|error| ApiError::Protocol(error.to_string()))
     }
 
+    fn put(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
+        let response = self
+            .agent
+            .put(&self.url(path))
+            .set(HEADER, "1")
+            .set("accept", "application/json")
+            .send_json(body.clone());
+        finish(response)
+    }
+
+    /// Saves one settings block; the bundle answers `saved`, the new `revision` and whether it restarts.
+    pub fn save(&self, block: &str, value: &Value, revision: u64) -> Result<Value, ApiError> {
+        self.put(
+            &format!("/settings/{}", enc(block)),
+            &json!({ "value": value, "revision": revision }),
+        )
+    }
+
+    pub fn settings(&self) -> Result<Value, ApiError> {
+        self.get("/settings")
+    }
+
     pub fn state(&self) -> Result<StateView, ApiError> {
         self.get_as("/state")
     }

@@ -118,7 +118,7 @@ pub fn init(cfg: &Config) -> Result<(), String> {
 
     fs::create_dir_all(&cfg.state_dir)
         .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
-    println!("\nready — `booth up`, then finish the setup in the panel");
+    println!("\nready — `booth up`, then `/setup owner/repo` in the console or in the panel");
     Ok(())
 }
 
@@ -142,6 +142,9 @@ pub fn start(cfg: &Config) -> Result<(), String> {
     }
     if !cfg.patch().is_file() {
         return Err("the profile has no booth config yet; run `booth init` first".into());
+    }
+    if !linked(cfg, "dsh-booth-local") {
+        println!("the booth console Source is not linked into the profile; run `booth init` to install it");
     }
 
     fs::create_dir_all(&cfg.state_dir)
@@ -266,6 +269,7 @@ fn report(cfg: &Config) -> Result<(), String> {
     );
     if let Some(problem) = &state.setup.problem {
         println!("setup pending: {}", problem.detail);
+        println!("hint: /setup owner/repo in the console, or `booth setup owner/repo`");
     }
     Ok(())
 }
@@ -276,21 +280,53 @@ fn write_patch(cfg: &Config) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
+    let console = format!(
+        "- id: dsh-booth-local\n  config:\n    stateDir: {}\n",
+        cfg.state_dir.display()
+    );
     if path.exists() {
         let text = fs::read_to_string(&path)
             .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
         if text.contains("dsh-superagent") {
+            // A profile from an earlier booth lacks the console Source; add only that entry.
+            if !text.contains("dsh-booth-local") {
+                let separator = if text.ends_with('\n') { "" } else { "\n" };
+                let mut next = format!("{text}{separator}{console}");
+                if !next.ends_with('\n') {
+                    next.push('\n');
+                }
+                fs::write(&path, next)
+                    .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+            }
             return Ok(());
         }
-        if !text.trim().is_empty() && text.trim() != "[]" {
+        // A fresh profile ships a comment and an empty array; keep the comment, replace the array.
+        let kept: Vec<&str> = text
+            .lines()
+            .filter(|line| line.trim() != "[]" && !line.trim().is_empty())
+            .collect();
+        let custom = kept.iter().any(|line| !line.trim_start().starts_with('#'));
+        if custom {
             return Err(format!(
-                "{} already holds custom entries; add the webserver and dsh-superagent entries yourself",
+                "{} already holds custom entries; add the webserver, dsh-superagent and dsh-booth-local entries yourself",
                 path.display()
             ));
         }
+        let header = if kept.is_empty() {
+            String::new()
+        } else {
+            format!("{}\n", kept.join("\n"))
+        };
+        let yaml = format!(
+            "{header}- id: webserver\n  config:\n    host: 127.0.0.1\n    port: {}\n- id: dsh-superagent\n  config:\n    stateDir: {}\n{console}",
+            cfg.port,
+            cfg.state_dir.display()
+        );
+        return fs::write(&path, yaml)
+            .map_err(|error| format!("cannot write {}: {error}", path.display()));
     }
     let yaml = format!(
-        "- id: webserver\n  config:\n    host: 127.0.0.1\n    port: {}\n- id: dsh-superagent\n  config:\n    stateDir: {}\n",
+        "- id: webserver\n  config:\n    host: 127.0.0.1\n    port: {}\n- id: dsh-superagent\n  config:\n    stateDir: {}\n{console}",
         cfg.port,
         cfg.state_dir.display()
     );
@@ -307,21 +343,77 @@ fn build(cfg: &Config) -> Result<(), String> {
 }
 
 fn install(cfg: &Config) -> Result<(), String> {
+    link(cfg, "dsh-superagent", &cfg.bundle)?;
+    let console = cfg
+        .bundle
+        .parent()
+        .map(|repo| repo.join("local-source"))
+        .ok_or("cannot find local-source/ beside superagent/")?;
+    if !console.join("index.js").is_file() {
+        return Err(format!(
+            "cannot find the console Source at {}; it ships beside superagent/",
+            console.display()
+        ));
+    }
+    link(cfg, "dsh-booth-local", &console)?;
+    ensure_bundle(cfg, "dsh-booth-local")
+}
+
+/// Adds `package` to the profile's bundles so DSH applies its cordis patch layer.
+fn ensure_bundle(cfg: &Config, package: &str) -> Result<(), String> {
     let manifest = cfg.profile_dir().join("package.json");
     let text = fs::read_to_string(&manifest)
         .map_err(|error| format!("cannot read {}: {error}", manifest.display()))?;
-    let package: serde_json::Value = serde_json::from_str(&text)
+    let mut value: serde_json::Value = serde_json::from_str(&text)
         .map_err(|error| format!("cannot parse {}: {error}", manifest.display()))?;
-    let want = format!("link:{}", cfg.bundle.display());
-    let current = package
+    let bundles = value
+        .get_mut("dsh")
+        .and_then(|dsh| dsh.get_mut("profile"))
+        .and_then(|profile| profile.get_mut("bundles"))
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| format!("{} has no dsh.profile.bundles", manifest.display()))?;
+    if bundles.iter().any(|item| item == package) {
+        return Ok(());
+    }
+    bundles.push(serde_json::Value::String(package.to_owned()));
+    let mut next = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("cannot write {}: {error}", manifest.display()))?;
+    next.push('\n');
+    fs::write(&manifest, next)
+        .map_err(|error| format!("cannot write {}: {error}", manifest.display()))
+}
+
+/// Whether the profile lists `package`, so its bundle patch applies.
+fn linked(cfg: &Config, package: &str) -> bool {
+    fs::read_to_string(cfg.profile_dir().join("package.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .and_then(|value| {
+            value
+                .get("dependencies")
+                .and_then(|deps| deps.get(package))
+                .map(|_| true)
+        })
+        .unwrap_or(false)
+}
+
+/// Links one package into the profile with `dsh plugin add`, which runs pnpm in the profile.
+fn link(cfg: &Config, package: &str, path: &Path) -> Result<(), String> {
+    let manifest = cfg.profile_dir().join("package.json");
+    let text = fs::read_to_string(&manifest)
+        .map_err(|error| format!("cannot read {}: {error}", manifest.display()))?;
+    let package_json: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|error| format!("cannot parse {}: {error}", manifest.display()))?;
+    let want = format!("link:{}", path.display());
+    let current = package_json
         .get("dependencies")
-        .and_then(|deps| deps.get("dsh-superagent"))
+        .and_then(|deps| deps.get(package))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     if current == want {
         return Ok(());
     }
-    println!("\nlinking superagent into profile `{}`", cfg.profile);
+    println!("\nlinking {package} into profile `{}`", cfg.profile);
     run(
         "dsh",
         &["plugin", "--profile", cfg.profile.as_str(), "add", &want],

@@ -1,0 +1,21 @@
+{
+  "name": "dsh-booth-local",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local Source for dsh-superagent: the booth console's instructions enter the agent here, and its replies come back here.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

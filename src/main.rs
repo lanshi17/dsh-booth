@@ -8,6 +8,7 @@ mod api;
 mod app;
 mod commands;
 mod format;
+mod intake;
 mod model;
 mod oauth;
 mod provider;
@@ -60,6 +61,18 @@ enum Command {
     },
     /// Show the model provider booth starts the service with.
     Provider,
+    /// Hand one instruction to the agent, as typing it in the console does.
+    Send {
+        #[arg(required = true, trailing_var_arg = true)]
+        text: Vec<String>,
+    },
+    /// Name the repository and the people who may ask for work.
+    Setup {
+        /// owner/name; inferred from the checkout when omitted.
+        repository: Option<String>,
+        /// Directory workers work in.
+        directory: Option<String>,
+    },
     /// Runtime health, pause state, setup problem and accounts.
     Status {
         #[arg(long)]
@@ -177,6 +190,31 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Restart => service::restart(&service::Config::from_env()?),
         Command::Logs { lines } => service::logs(&service::Config::from_env()?, lines),
         Command::Provider => show_provider(),
+        Command::Send { text } => {
+            let cfg = service::Config::from_env()?;
+            let id = intake::send(&cfg, &text.join(" "))?;
+            println!("sent {id} — the agent picks it up within a second");
+            Ok(())
+        }
+        Command::Setup {
+            repository,
+            directory,
+        } => {
+            let cfg = service::Config::from_env()?;
+            let argument = match (repository, directory) {
+                (Some(repository), Some(directory)) => format!("{repository} {directory}"),
+                (Some(repository), None) => repository,
+                (None, Some(_)) => {
+                    return Err(
+                        "give the repository first: booth setup owner/name [directory]".into(),
+                    )
+                }
+                (None, None) => String::new(),
+            };
+            let lines = intake::setup(&api, &cfg, &argument)?;
+            print_lines(lines);
+            Ok(())
+        }
         Command::Status { json } => show(
             &api,
             json,
