@@ -47,9 +47,9 @@ booth up                        # dsh --profile superagent --no-open
 booth                           # the console
 ```
 
-`booth init` needs `dsh`, `pnpm` and Node. It skips what is already done, so it is safe to
-rerun. Clone with `--recursive`, or run `git submodule update --init` — otherwise `superagent/`
-is empty.
+`booth init` is idempotent: rerunning it is safe and breaks nothing, because it skips the
+profile, dependencies and link it already set up (it still rebuilds the bundle). Clone with
+`--recursive`, or run `git submodule update --init` — otherwise `superagent/` is empty.
 
 Updating the bundle:
 
