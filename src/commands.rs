@@ -9,6 +9,11 @@ use ratatui::text::{Line, Span};
 pub const PALETTE: &[(&str, &str)] = &[
     ("/overview", "what needs a person, problems, executor load"),
     ("/status", "health entries, pause state, accounts"),
+    ("/model", "switch the worker model, or add a provider"),
+    (
+        "/login [provider]",
+        "store a provider key (Pi-style /login)",
+    ),
     ("/tickets [state]", "open | person | working | idle | ended"),
     ("/ticket <id>", "mandate, assignments, inputs, threads"),
     (

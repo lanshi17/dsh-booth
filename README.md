@@ -78,6 +78,7 @@ booth up                           # start the service in the background
 booth down                         # stop the service booth started
 booth restart
 booth logs --lines 40
+booth provider                     # the model provider `up` starts with (no secret)
 booth status                       # one shot: health, pause, setup, accounts
 booth overview                     # problems, people waiting, executor load, 24h flow
 booth tickets --state person       # open | person | working | idle | ended
@@ -119,8 +120,27 @@ check the deployment guide asks for.
 
 Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
-`/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, `/clear`,
-`/quit`.
+`/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, plus
+`/model`, `/login`, `/clear` and `/quit`.
+
+## Providers
+
+`/login` and `/model` follow Pi's shape.
+
+`/login` offers DeepSeek, OpenAI, OpenRouter or a custom OpenAI-compatible endpoint, prefills
+base URL and model, and asks for the key behind a masked field; every field stays editable
+(`preset`, `id`, `base`, `model`, `api`, `key`). `/model` lists the providers already stored
+and switches the default model, or jumps to `/login` when there are none. Both save and
+restart the service in one step — no file editing, no second command.
+
+What lands on disk:
+
+- `provider.json` (mode 0600) under the state directory holds the keys;
+- `provider.yml` is a DSH patch overlay with `llm-pi-ai` and `agent-default-model`;
+- `booth up` passes `--patch provider.yml` and exports `BOOTH_KEY_<ID>` for each provider.
+
+`booth provider` prints what the service will use, never the secret. Deleting those two files
+falls back to the profile's own default model.
 
 ## Design notes
 
