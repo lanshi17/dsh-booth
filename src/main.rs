@@ -25,7 +25,7 @@ const DEFAULT_URL: &str = "http://127.0.0.1:3082";
     version,
     about = "A terminal console for dsh-superagent",
     long_about = "Runs the bundled superagent service and reads its loopback management API. \
-                  `booth init` prepares the profile, `booth start` runs the service, `booth` with no \
+                  `booth init` prepares the profile, `booth up` runs the service, `booth` with no \
                   command opens the console."
 )]
 struct Cli {
