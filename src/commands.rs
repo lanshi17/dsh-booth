@@ -12,7 +12,7 @@ pub const PALETTE: &[(&str, &str)] = &[
     ("/model", "switch the worker model, or add a provider"),
     (
         "/login [provider]",
-        "store a provider key (Pi-style /login)",
+        "sign in: DeepSeek account, or an API-key provider",
     ),
     ("/tickets [state]", "open | person | working | idle | ended"),
     ("/ticket <id>", "mandate, assignments, inputs, threads"),

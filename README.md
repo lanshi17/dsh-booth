@@ -2,23 +2,23 @@
 
 A terminal console for a running [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype).
 Type `booth` and you get one screen: what is waiting for a person, what the executor is doing,
-and a command palette that filters as you type — the entry shape of `omp` and `dst`, not a
-web page.
+and a command palette that filters as you type — the frame, palette and composer of `omp`,
+not a web page.
 
 ```text
-booth · http://127.0.0.1:3082 · ready · 2/4 running · 1 queued
-booth — a terminal console for dsh-superagent
-type / for commands, or a word to search. Enter runs, Tab completes.
-
-> /tickets
+  ❯ /tickets
 tickets (open) · 3 total
 person  t-7f3a9c2e Fix the flaky retry test  11-04 10:12
            waiting for your answer on the design
 working t-91c4e07a Add a --dry-run flag        11-04 10:08
 
-booth>
-Enter run · Tab complete · ↑↓ pick/history · PgUp/PgDn scroll · Esc clear · Ctrl+C quit
+╭─ ◆ booth · deepseek/deepseek-chat · ready · 2/4 · 1q ────────── v0.1.0 ╮
+╰─ › /tickets ───────────────────────────── Enter run · / commands ╯
 ```
+
+The composer is one bordered block: the top rail carries the provider, runtime state and
+executor load, the bottom rail the input and its hint. The wordmark and a rotating tip sit in
+the empty transcript, as they do in `omp`.
 
 ## What is in the repository
 

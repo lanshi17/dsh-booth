@@ -12,7 +12,7 @@ use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
-use ratatui::layout::{Constraint, Layout, Position, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
@@ -21,13 +21,43 @@ use std::io::{self, IsTerminal, Stdout};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-use std::time::Duration;
-use unicode_width::UnicodeWidthStr;
+use std::time::{Duration, Instant};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-const CYAN: Color = Color::Cyan;
-const DIM: Color = Color::DarkGray;
-const RED: Color = Color::Red;
-const GREEN: Color = Color::Green;
+// The omp palette: blue frame, white copy, muted hints, a pink-to-blue wordmark.
+const CYAN: Color = Color::Rgb(0x00, 0xaf, 0xff);
+const DIM: Color = Color::Rgb(0xa8, 0xa8, 0xa8);
+const MUTED: Color = Color::Rgb(0xa8, 0xa8, 0xa8);
+const FAINT: Color = Color::Rgb(0x76, 0x76, 0x76);
+const TEXT: Color = Color::Rgb(0xe4, 0xe4, 0xe4);
+const TIP: Color = Color::Rgb(0xd7, 0xaf, 0x87);
+const RED: Color = Color::Rgb(0xff, 0x5f, 0x5f);
+const GREEN: Color = Color::Rgb(0x5f, 0xd7, 0x87);
+
+const LOGO: [&str; 6] = [
+    "  ██████╗  ██████╗  ██████╗ ████████╗██╗  ██╗",
+    "  ██╔══██╗██╔═══██╗██╔═══██╗╚══██╔══╝██║  ██║",
+    "  ██████╔╝██║   ██║██║   ██║   ██║   ███████║",
+    "  ██╔══██╗██║   ██║██║   ██║   ██║   ██╔══██║",
+    "  ██████╔╝╚██████╔╝╚██████╔╝   ██║   ██║  ██║",
+    "  ╚═════╝  ╚═════╝  ╚═════╝    ╚═╝   ╚═╝  ╚═╝",
+];
+
+const LOGO_COLORS: [Color; 6] = [
+    Color::Rgb(0xff, 0x5f, 0xd7),
+    Color::Rgb(0xd7, 0x5f, 0xd7),
+    Color::Rgb(0xaf, 0x5f, 0xd7),
+    Color::Rgb(0x87, 0x5f, 0xff),
+    Color::Rgb(0x5f, 0x87, 0xff),
+    Color::Rgb(0x5f, 0xaf, 0xd7),
+];
+
+const TIPS: [&str; 4] = [
+    "/login signs in with a DeepSeek account, or stores an API key.",
+    "/status shows health, pause state and the setup problem.",
+    "Tab completes a command; ↑ ↓ walks the history.",
+    "`booth up` starts the service when the console cannot reach it.",
+];
 
 /// `/login` starts here: the account sign-in first, then API-key providers.
 const LOGIN_METHODS: &[(&str, &str)] = &[
@@ -41,7 +71,7 @@ const LOGIN_METHODS: &[(&str, &str)] = &[
 enum Msg {
     Lines(Vec<L>),
     Error(String),
-    Header(Line<'static>),
+    Status(Status),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
@@ -115,6 +145,68 @@ impl LoginForm {
     }
 }
 
+#[derive(Clone)]
+struct Status {
+    base: String,
+    runtime: String,
+    paused: bool,
+    running: u32,
+    workers: u32,
+    queued: u32,
+    errors: usize,
+    setup: bool,
+    note: Option<String>,
+    account: bool,
+}
+
+impl Status {
+    fn connecting(base: &str) -> Self {
+        Self {
+            base: base.to_owned(),
+            runtime: "connecting".into(),
+            paused: false,
+            running: 0,
+            workers: 0,
+            queued: 0,
+            errors: 0,
+            setup: false,
+            note: None,
+            account: false,
+        }
+    }
+
+    fn down(base: &str, note: String) -> Self {
+        Self {
+            runtime: "down".into(),
+            note: Some(note),
+            ..Self::connecting(base)
+        }
+    }
+
+    fn from_state(api: &Api, state: &crate::model::StateView) -> Self {
+        Self {
+            base: api.base().to_owned(),
+            runtime: state
+                .health
+                .get("runtime")
+                .map(|health| health.state.clone())
+                .unwrap_or_else(|| "?".into()),
+            paused: state.paused,
+            running: state.load.running,
+            workers: state.load.max_workers,
+            queued: state.load.queued,
+            errors: state
+                .health
+                .values()
+                .filter(|health| health.state == "error")
+                .count(),
+            setup: state.setup.problem.is_some(),
+            note: None,
+            account: oauth::account_signed_in(),
+        }
+    }
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -128,7 +220,8 @@ pub struct App {
     follow: bool,
     scroll: u16,
     quit: bool,
-    header: Line<'static>,
+    status: Status,
+    started: Instant,
     config: Option<service::Config>,
     store: Store,
     modal: Option<Modal>,
@@ -168,16 +261,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
 impl App {
     fn new(api: Api) -> Self {
         let (tx, rx) = mpsc::channel();
-        let header = Line::from(vec![
-            Span::styled(
-                "booth",
-                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" · {} · connecting…", api.base()),
-                Style::default().fg(DIM),
-            ),
-        ]);
+        let status = Status::connecting(api.base());
         let config = service::Config::from_env().ok();
         let store = config.as_ref().map(Store::load).unwrap_or_default();
         Self {
@@ -195,28 +279,15 @@ impl App {
             follow: true,
             scroll: 0,
             quit: false,
-            header,
+            status,
+            started: Instant::now(),
             tx,
             rx,
         }
     }
 
     fn bootstrap(&mut self) {
-        self.push(Line::from(vec![
-            Span::styled(
-                "booth",
-                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                " — a terminal console for dsh-superagent",
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]));
-        self.push(format::muted(
-            "type / for commands, or a word to search. Enter runs, Tab completes.",
-        ));
-        self.push(format::blank());
-        self.refresh_header();
+        self.refresh_status();
     }
 
     fn event_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
@@ -242,7 +313,7 @@ impl App {
                 Msg::Lines(lines) => {
                     self.busy = false;
                     self.push_lines(lines);
-                    self.refresh_header();
+                    self.refresh_status();
                 }
                 Msg::Error(error) => {
                     self.busy = false;
@@ -251,7 +322,7 @@ impl App {
                         Style::default().fg(RED),
                     )));
                 }
-                Msg::Header(line) => self.header = line,
+                Msg::Status(status) => self.status = status,
                 Msg::OAuthReady(attempt) => {
                     if let Some(Modal::OAuth(state)) = &mut self.modal {
                         state.url = attempt.url.clone();
@@ -327,29 +398,23 @@ impl App {
         });
     }
 
-    fn refresh_header(&self) {
+    fn refresh_status(&self) {
         let api = self.api.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            let line = match api.state() {
-                Ok(state) => header_line(&api, &state),
+            let status = match api.state() {
+                Ok(state) => Status::from_state(&api, &state),
                 Err(error) => {
                     let text = error.to_string();
-                    let mut spans = vec![
-                        Span::styled(
-                            "booth",
-                            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(format!(" · {} ", api.base()), Style::default().fg(DIM)),
-                        Span::styled(clip_error(&text), Style::default().fg(RED)),
-                    ];
-                    if text.contains("cannot reach") {
-                        spans.push(Span::styled(" · booth up", Style::default().fg(DIM)));
-                    }
-                    Line::from(spans)
+                    let note = if text.contains("cannot reach") {
+                        format!("{} · booth up", clip_error(&text))
+                    } else {
+                        clip_error(&text)
+                    };
+                    Status::down(api.base(), note)
                 }
             };
-            let _ = tx.send(Msg::Header(line));
+            let _ = tx.send(Msg::Status(status));
         });
     }
 
@@ -539,14 +604,14 @@ impl App {
                 return;
             }
             "/refresh" => {
-                self.refresh_header();
+                self.refresh_status();
                 return;
             }
             _ => {}
         }
         self.push(Line::from(vec![
-            Span::styled("> ", Style::default().fg(CYAN)),
-            Span::styled(line.clone(), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("  ❯ ", Style::default().fg(CYAN)),
+            Span::styled(line.clone(), Style::default().fg(TEXT)),
         ]));
         if line == "/help" || line == "/?" {
             self.push_lines(format::help());
@@ -940,17 +1005,113 @@ impl App {
         });
     }
 
+    fn model_label(&self) -> String {
+        if let Some(current) = self.store.current() {
+            format!("{}/{}", current.id, current.model)
+        } else if self.status.account {
+            "deepseek account".into()
+        } else {
+            "no provider".into()
+        }
+    }
+
+    fn alert_text(&self, width: u16) -> Option<String> {
+        let room = (width as usize).saturating_sub(4);
+        if let Some(note) = &self.status.note {
+            return Some(format::clip(note, room));
+        }
+        if self.status.setup {
+            return Some("setup pending — /status".into());
+        }
+        if self.status.errors > 0 {
+            return Some(format!("{} health error(s) — /status", self.status.errors));
+        }
+        None
+    }
+
+    fn draw_composer(&self, frame: &mut Frame, top: Rect, bottom: Rect) {
+        let runtime_color = match self.status.runtime.as_str() {
+            "ready" => GREEN,
+            "paused" => Color::Yellow,
+            "connecting" => DIM,
+            _ => RED,
+        };
+        let mut segments = vec![
+            Span::styled(
+                "◆ booth",
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(self.model_label(), Style::default().fg(TEXT)),
+            Span::styled(
+                self.status.runtime.clone(),
+                Style::default().fg(runtime_color),
+            ),
+            Span::styled(
+                format!(
+                    "{}/{} · {}q",
+                    self.status.running,
+                    self.status.workers.max(self.status.running),
+                    self.status.queued
+                ),
+                Style::default().fg(MUTED),
+            ),
+        ];
+        if self.status.paused {
+            segments.push(Span::styled("paused", Style::default().fg(Color::Yellow)));
+        }
+        let right = Span::styled(
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(FAINT),
+        );
+        frame.render_widget(
+            Paragraph::new(compose_top(segments, Some(right), top.width)),
+            top,
+        );
+
+        let hint = if self.busy {
+            Some(Span::styled("working…", Style::default().fg(Color::Yellow)))
+        } else if bottom.width >= 58 {
+            Some(Span::styled(
+                "Enter run · / commands",
+                Style::default().fg(FAINT),
+            ))
+        } else {
+            None
+        };
+        frame.render_widget(
+            Paragraph::new(compose_bottom(&self.input, self.cursor, bottom.width, hint)),
+            bottom,
+        );
+
+        if self.modal.is_none() {
+            let before: String = self.input.chars().take(self.cursor).collect();
+            let x = bottom.x + 5 + UnicodeWidthStr::width(before.as_str()) as u16;
+            let max = bottom.x + bottom.width.saturating_sub(2);
+            frame.set_cursor_position(Position::new(x.min(max), bottom.y));
+        }
+    }
+
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
-        let [header, body, input, footer_area] = Layout::vertical([
-            Constraint::Length(1),
+        let alert = self.alert_text(area.width);
+        let alert_height = u16::from(alert.is_some());
+        let [alert_area, body, top, bottom] = Layout::vertical([
+            Constraint::Length(alert_height),
             Constraint::Min(3),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
         .areas(area);
 
-        frame.render_widget(Paragraph::new(self.header.clone()), header);
+        if let Some(text) = alert {
+            frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled(" ! ", Style::default().fg(RED)),
+                    Span::styled(text, Style::default().fg(TIP)),
+                ])),
+                alert_area,
+            );
+        }
 
         let height = body.height.max(1);
         let total = self.lines.len() as u16;
@@ -960,36 +1121,28 @@ impl App {
         } else {
             self.scroll = self.scroll.min(max_scroll);
         }
-        let paragraph = Paragraph::new(self.lines.clone())
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll, 0));
-        frame.render_widget(paragraph, body);
-
-        let prompt = "booth> ";
-        let text = Line::from(vec![
-            Span::styled(prompt, Style::default().fg(CYAN)),
-            Span::raw(self.input.clone()),
-        ]);
-        frame.render_widget(Paragraph::new(text), input);
-        let before = &self.input[..char_to_byte(&self.input, self.cursor)];
-        let x =
-            input.x + UnicodeWidthStr::width(prompt) as u16 + UnicodeWidthStr::width(before) as u16;
-        frame.set_cursor_position(Position::new(x.min(area.width.saturating_sub(1)), input.y));
+        if self.lines.is_empty() && !self.busy {
+            draw_splash(frame, body, &self.status, self.started.elapsed());
+        } else {
+            frame.render_widget(
+                Paragraph::new(self.lines.clone())
+                    .wrap(Wrap { trim: false })
+                    .scroll((self.scroll, 0)),
+                body,
+            );
+        }
 
         if let Some(matches) = self.palette() {
             let shown = matches.len().min(8);
-            let width = area.width.saturating_sub(8).clamp(20, 70).min(area.width);
-            let height = shown as u16 + 2;
+            let width = area.width.saturating_sub(4).clamp(24, 82).min(area.width);
+            let height = shown as u16;
             let rect = Rect {
-                x: area.x + 4,
-                y: input.y.saturating_sub(height),
+                x: area.x + 2,
+                y: top.y.saturating_sub(height),
                 width,
                 height,
             };
             frame.render_widget(Clear, rect);
-            let block = Block::bordered().title(" commands ");
-            let inner = block.inner(rect);
-            frame.render_widget(block, rect);
             let selected = self.selection.min(shown.saturating_sub(1));
             let lines: Vec<L> = matches
                 .iter()
@@ -998,138 +1151,31 @@ impl App {
                 .map(|(index, (name, description))| {
                     let active = index == selected;
                     Line::from(vec![
-                        Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+                        Span::styled(if active { "❯ " } else { "  " }, Style::default().fg(CYAN)),
                         Span::styled(
-                            format!("{name:<20}"),
+                            format!("{name:<18}"),
                             if active {
-                                Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                                Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
                             } else {
-                                Style::default().fg(CYAN)
+                                Style::default().fg(MUTED)
                             },
                         ),
-                        Span::styled(*description, Style::default().fg(DIM)),
+                        Span::styled(
+                            *description,
+                            Style::default().fg(if active { MUTED } else { FAINT }),
+                        ),
                     ])
                 })
                 .collect();
-            frame.render_widget(Paragraph::new(lines), inner);
+            frame.render_widget(Paragraph::new(lines), rect);
         }
+
+        self.draw_composer(frame, top, bottom);
 
         if let Some(modal) = &self.modal {
             draw_modal(frame, area, modal, &self.store);
         }
-
-        let footer = if self.busy {
-            Line::from(Span::styled("working…", Style::default().fg(Color::Yellow)))
-        } else {
-            Line::from(Span::styled(
-                "Enter run · Tab complete · ↑↓ pick/history · PgUp/PgDn scroll · Esc clear · Ctrl+C quit",
-                Style::default().fg(DIM),
-            ))
-        };
-        frame.render_widget(Paragraph::new(footer), footer_area);
     }
-}
-
-fn header_line(api: &Api, state: &crate::model::StateView) -> Line<'static> {
-    let runtime = state
-        .health
-        .get("runtime")
-        .map(|health| health.state.as_str())
-        .unwrap_or("?");
-    let runtime_color = match runtime {
-        "ready" => GREEN,
-        "paused" => Color::Yellow,
-        _ => RED,
-    };
-    let mut spans = vec![
-        Span::styled(
-            "booth",
-            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(format!(" · {} · ", api.base()), Style::default().fg(DIM)),
-        Span::styled(runtime.to_string(), Style::default().fg(runtime_color)),
-        Span::styled(
-            if state.load.max_workers > 0 {
-                format!(
-                    " · {}/{} running · {} queued",
-                    state.load.running, state.load.max_workers, state.load.queued
-                )
-            } else {
-                format!(
-                    " · {} running · {} queued",
-                    state.load.running, state.load.queued
-                )
-            },
-            Style::default().fg(DIM),
-        ),
-    ];
-    if state.paused {
-        spans.push(Span::styled(
-            " · paused",
-            Style::default().fg(Color::Yellow),
-        ));
-    }
-    let errors = state
-        .health
-        .values()
-        .filter(|health| health.state == "error")
-        .count();
-    if errors > 0 {
-        spans.push(Span::styled(
-            format!(" · {errors} health error(s); /status"),
-            Style::default().fg(RED),
-        ));
-    }
-    if state.setup.problem.is_some() {
-        spans.push(Span::styled(
-            " · setup pending — /status",
-            Style::default().fg(RED),
-        ));
-    }
-    Line::from(spans)
-}
-
-fn clip_error(text: &str) -> String {
-    format::clip(text, 70)
-}
-
-fn char_to_byte(text: &str, index: usize) -> usize {
-    text.char_indices()
-        .nth(index)
-        .map(|(byte, _)| byte)
-        .unwrap_or(text.len())
-}
-
-fn insert_char(text: &mut String, cursor: usize, ch: char) {
-    let byte = char_to_byte(text, cursor);
-    text.insert(byte, ch);
-}
-
-fn remove_before(text: &mut String, cursor: usize) -> usize {
-    if cursor == 0 {
-        return 0;
-    }
-    let byte = char_to_byte(text, cursor - 1);
-    text.remove(byte);
-    cursor - 1
-}
-
-fn remove_at(text: &mut String, cursor: usize) -> usize {
-    if cursor >= text.chars().count() {
-        return cursor;
-    }
-    let byte = char_to_byte(text, cursor);
-    text.remove(byte);
-    cursor
-}
-
-fn clip_text(text: &str, width: usize) -> String {
-    if text.chars().count() <= width {
-        return text.to_owned();
-    }
-    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
-    out.push('…');
-    out
 }
 
 fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, store: &Store) {
@@ -1143,7 +1189,7 @@ fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, store: &Store) {
 
 fn draw_login(frame: &mut Frame, area: Rect, form: &LoginForm) {
     let width = area.width.saturating_sub(8).clamp(44, 78).min(area.width);
-    let height = (10 + u16::from(form.error.is_some())).min(area.height);
+    let height = (9 + u16::from(form.error.is_some())).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -1151,7 +1197,9 @@ fn draw_login(frame: &mut Frame, area: Rect, form: &LoginForm) {
         height,
     };
     frame.render_widget(Clear, rect);
-    let block = Block::bordered().title(" login ");
+    let block = Block::bordered()
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(" login ", Style::default().fg(MUTED)));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
@@ -1213,7 +1261,7 @@ fn draw_login(frame: &mut Frame, area: Rect, form: &LoginForm) {
 fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, store: &Store) {
     let rows = store.providers.len() + 1;
     let width = area.width.saturating_sub(8).clamp(40, 72).min(area.width);
-    let height = (rows as u16 + 4).min(area.height);
+    let height = (rows as u16 + 3).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -1221,7 +1269,9 @@ fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, store: &Store) {
         height,
     };
     frame.render_widget(Clear, rect);
-    let block = Block::bordered().title(" model ");
+    let block = Block::bordered()
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(" model ", Style::default().fg(MUTED)));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
@@ -1266,7 +1316,7 @@ fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, store: &Store) {
 
 fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
     let width = area.width.saturating_sub(8).clamp(44, 72).min(area.width);
-    let height = (LOGIN_METHODS.len() as u16 + 4).min(area.height);
+    let height = (LOGIN_METHODS.len() as u16 + 3).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -1274,7 +1324,9 @@ fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
         height,
     };
     frame.render_widget(Clear, rect);
-    let block = Block::bordered().title(" login ");
+    let block = Block::bordered()
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(" login ", Style::default().fg(MUTED)));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
@@ -1303,7 +1355,7 @@ fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
 
 fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
     let width = area.width.saturating_sub(8).clamp(48, 84).min(area.width);
-    let height = 12.min(area.height);
+    let height = 11.min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -1311,7 +1363,12 @@ fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
         height,
     };
     frame.render_widget(Clear, rect);
-    let block = Block::bordered().title(" deepseek account ");
+    let block = Block::bordered()
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(
+            " deepseek account ",
+            Style::default().fg(MUTED),
+        ));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
@@ -1356,4 +1413,176 @@ fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
         )),
     ];
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn clip_error(text: &str) -> String {
+    format::clip(text, 70)
+}
+
+fn char_to_byte(text: &str, index: usize) -> usize {
+    text.char_indices()
+        .nth(index)
+        .map(|(byte, _)| byte)
+        .unwrap_or(text.len())
+}
+
+fn insert_char(text: &mut String, cursor: usize, ch: char) {
+    let byte = char_to_byte(text, cursor);
+    text.insert(byte, ch);
+}
+
+fn remove_before(text: &mut String, cursor: usize) -> usize {
+    if cursor == 0 {
+        return 0;
+    }
+    let byte = char_to_byte(text, cursor - 1);
+    text.remove(byte);
+    cursor - 1
+}
+
+fn remove_at(text: &mut String, cursor: usize) -> usize {
+    if cursor >= text.chars().count() {
+        return cursor;
+    }
+    let byte = char_to_byte(text, cursor);
+    text.remove(byte);
+    cursor
+}
+
+fn clip_text(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let mut out: String = text.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn compose_top(segments: Vec<Span<'static>>, right: Option<Span<'static>>, width: u16) -> L {
+    let width = width as usize;
+    let right_w = right.as_ref().map(|span| span.width()).unwrap_or(0);
+    let tail = if right.is_some() { right_w + 2 } else { 0 };
+    let mut spans = vec![Span::styled("╭─", Style::default().fg(CYAN))];
+    let mut used = 2usize;
+    let limit = width.saturating_sub(tail + 2);
+    for (index, segment) in segments.into_iter().enumerate() {
+        let extra = if index == 0 { 1 } else { 3 };
+        if used + extra + segment.width() > limit {
+            break;
+        }
+        if index == 0 {
+            spans.push(Span::styled(" ", Style::default().fg(CYAN)));
+        } else {
+            spans.push(Span::styled(" · ", Style::default().fg(FAINT)));
+        }
+        used += extra + segment.width();
+        spans.push(segment);
+    }
+    let trailing = usize::from(used > 2);
+    let fill = width.saturating_sub(used + trailing + tail + 1);
+    if trailing == 1 {
+        spans.push(Span::styled(" ", Style::default()));
+    }
+    spans.push(Span::styled("─".repeat(fill), Style::default().fg(CYAN)));
+    if let Some(right) = right {
+        spans.push(Span::styled(" ", Style::default()));
+        spans.push(right);
+        spans.push(Span::styled(" ", Style::default()));
+    }
+    spans.push(Span::styled("╮", Style::default().fg(CYAN)));
+    Line::from(spans)
+}
+
+fn compose_bottom(input: &str, _cursor: usize, width: u16, hint: Option<Span<'static>>) -> L {
+    let width = width as usize;
+    let hint_w = hint.as_ref().map(|span| span.width()).unwrap_or(0);
+    let tail = if hint.is_some() { hint_w + 2 } else { 0 };
+    let room = width.saturating_sub(5 + tail + 1 + 1);
+    let empty = input.is_empty();
+    let (text, style) = if empty {
+        (
+            "type / for commands".chars().take(room).collect::<String>(),
+            Style::default().fg(FAINT),
+        )
+    } else {
+        let mut text = String::new();
+        let mut used = 0;
+        for ch in input.chars() {
+            let size = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used + size > room {
+                break;
+            }
+            text.push(ch);
+            used += size;
+        }
+        (text, Style::default().fg(TEXT))
+    };
+    let text_w = UnicodeWidthStr::width(text.as_str());
+    let fill = width.saturating_sub(5 + text_w + 1 + tail + 1);
+    let mut spans = vec![
+        Span::styled("╰─ ", Style::default().fg(CYAN)),
+        Span::styled("› ", Style::default().fg(CYAN)),
+        Span::styled(text, style),
+        Span::styled(" ", Style::default()),
+        Span::styled("─".repeat(fill), Style::default().fg(CYAN)),
+    ];
+    if let Some(hint) = hint {
+        spans.push(Span::styled(" ", Style::default()));
+        spans.push(hint);
+        spans.push(Span::styled(" ", Style::default()));
+    }
+    spans.push(Span::styled("╯", Style::default().fg(CYAN)));
+    Line::from(spans)
+}
+
+fn draw_splash(frame: &mut Frame, area: Rect, status: &Status, elapsed: Duration) {
+    let mut lines: Vec<L> = Vec::new();
+    if area.width >= 54 && area.height >= 14 {
+        for (row, text) in LOGO.iter().enumerate() {
+            lines.push(Line::from(Span::styled(
+                *text,
+                Style::default().fg(LOGO_COLORS[row]),
+            )));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            "booth",
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "a terminal console for dsh-superagent",
+        Style::default().fg(MUTED),
+    )));
+    lines.push(Line::from(Span::styled(
+        status.base.clone(),
+        Style::default().fg(FAINT),
+    )));
+    lines.push(Line::from(""));
+    let tip = TIPS[(elapsed.as_secs() / 10) as usize % TIPS.len()];
+    lines.push(Line::from(vec![
+        Span::styled("Tip: ", Style::default().fg(TIP)),
+        Span::styled(tip, Style::default().fg(MUTED)),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "type / for commands, Enter runs",
+        Style::default().fg(FAINT),
+    )));
+
+    let height = (lines.len() as u16).min(area.height);
+    let y = area.y + area.height.saturating_sub(height) / 3;
+    let rect = Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height,
+    };
+    frame.render_widget(
+        Paragraph::new(lines)
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true }),
+        rect,
+    );
 }
