@@ -163,6 +163,9 @@ falls back to the profile's own default model.
 - **It does not create work.** The API exposes stop, retry, requeue, dismiss and pause, but
   no "submit a request" route. `booth` deliberately stays read-and-control; asking for new work
   goes through GitHub or Feishu as a person would.
+- **指令从 Source 进来，不走隐藏接口。** New work arrives the way a person sends it — a GitHub
+  issue or review, a Feishu message — and the console only reads and controls the bundle; it
+  never injects a request through a side channel of its own.
 
 ## Compatibility
 
