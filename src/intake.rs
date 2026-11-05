@@ -587,28 +587,36 @@ fn repository_from_url(url: &str) -> Option<String> {
 }
 
 fn gh_login(program: &str) -> Result<String, String> {
-    // A CLI written moments ago can still be open for writing elsewhere in the process, and the
-    // kernel then refuses to execute it (`ETXTBSY`); one retry covers that window.
-    // A bounded counter: `attempt: u32` keeps the one-retry intent explicit, and the retry is
-    // observable in the elapsed time, which is what the test asserts.
-    let mut attempt: u32 = 0;
-    let output = loop {
+    // At most two attempts, as a range rather than a counter: the loop is bounded by its own
+    // shape, so no rewrite of a guard can make it spin.
+    let mut busy: Option<std::io::Error> = None;
+    for attempt in 0..2 {
         match Command::new(program)
             .args(["api", "user", "--jq", ".login"])
             .output()
         {
-            Ok(output) => break output,
+            Ok(output) => return account_of(output),
             Err(error)
-                if attempt == 0 && error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt == 0 =>
             {
-                attempt += 1;
+                // A CLI written moments ago can still be open elsewhere in the process, and the
+                // kernel then refuses to execute it; the pause covers that window.
+                busy = Some(error);
                 sleep(RETRY_PAUSE);
             }
             Err(error) => {
                 return Err(format!("cannot run gh: {error}; install the GitHub CLI"));
             }
         }
-    };
+    }
+    let error = busy
+        .map(|error| error.to_string())
+        .unwrap_or_else(|| "still busy".into());
+    Err(format!("cannot run gh: {error}; install the GitHub CLI"))
+}
+
+/// The account a successful `gh api user` printed, or why there is none.
+fn account_of(output: std::process::Output) -> Result<String, String> {
     if !output.status.success() {
         return Err(format!(
             "gh is not signed in: {}",

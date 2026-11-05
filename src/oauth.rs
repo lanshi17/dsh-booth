@@ -511,3 +511,39 @@ mod more_tests {
         assert!(error.contains("another login"), "{error}");
     }
 }
+
+#[cfg(test)]
+mod device_tests {
+    use super::*;
+
+    /// `device_id` is what the exchange sends as the device, so it must be stable and non-empty.
+    #[test]
+    fn device_id_is_created_once_and_then_reused() {
+        // DSH_HOME is process-wide, so this test takes its turn with the others that set it.
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-device-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+
+        let first = device_id().unwrap();
+        assert!(!first.is_empty(), "a device id is never empty");
+        assert!(first.len() >= 32, "a uuid, not a placeholder: {first}");
+
+        // A stored record wins over a fresh id: the same install keeps one device identity.
+        std::fs::write(
+            home.join(".credentials.yaml"),
+            format!(
+                "version: 1\nrecords:\n  {DEVICE_KEY}:\n    kind: device\n    payload:\n      id: kept-device\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(device_id().unwrap(), "kept-device");
+
+        match previous {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+}
