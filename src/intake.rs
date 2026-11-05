@@ -958,6 +958,8 @@ mod api_tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(text.contains("observe → auto"), "{text}");
+        // The hint belongs to the target mode, so switching to auto says what it admits.
+        assert!(text.contains("without a person"), "{text}");
         let (block, body) = api.last_put().unwrap();
         assert_eq!(block, "eval");
         assert_eq!(body["value"]["mode"], "auto");
@@ -1292,6 +1294,70 @@ mod api_tests {
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
         std::env::remove_var("BOOTH_WAIT_SECONDS");
+    }
+
+    #[test]
+    fn setup_warns_when_the_github_cli_is_too_old() {
+        let _env = env_lock();
+        let dir = scratch("setup-old-gh");
+        let gh = dir.join("gh");
+        // No `--slurp`: the Source's reads would fail, so the door stays shut.
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --paginate';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("GitHub Issues are off"), "{text}");
+        // The GitHub Source is saved disabled, so it does not poll with a CLI that cannot read.
+        let github = api
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| name.replace("source%3A", "source:") == "source:github")
+            .map(|(_, body)| body.clone())
+            .unwrap();
+        assert_eq!(github["value"]["enabled"], false);
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_stays_quiet_when_no_repository_was_set_before() {
+        let _env = env_lock();
+        let dir = scratch("setup-first");
+        let gh = dir.join("gh");
+        std::fs::write(&gh, "#!/bin/sh\necho tester\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        // A fresh deployment names no repository, so naming one is not a change.
+        api.set_sources(json!([
+            { "id": "github", "kind": "github", "installed": true, "revision": 0,
+              "value": { "enabled": true, "config": { "repository": "", "cli": "gh" } } },
+            { "id": "local", "kind": "local", "installed": true, "revision": 0,
+              "value": { "enabled": true, "config": {} } }
+        ]));
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!text.contains("repository changed"), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
     }
 
     #[test]
