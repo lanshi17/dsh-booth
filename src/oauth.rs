@@ -217,7 +217,7 @@ pub fn account_signed_in() -> bool {
     let Ok(text) = fs::read_to_string(path) else {
         return false;
     };
-    let Ok(root) = serde_yaml::from_str::<Value>(&text) else {
+    let Ok(root) = serde_norway::from_str::<Value>(&text) else {
         return false;
     };
     root.get("records")
@@ -231,7 +231,7 @@ pub fn account_signed_in() -> bool {
 fn store_grant(token: &str) -> Result<(), String> {
     let path = credentials_path()?;
     let mut root: Value = match fs::read_to_string(&path) {
-        Ok(text) => serde_yaml::from_str(&text)
+        Ok(text) => serde_norway::from_str(&text)
             .map_err(|error| format!("cannot parse {}: {error}", path.display()))?,
         Err(_) => json!({ "version": 1, "refs": {}, "records": {} }),
     };
@@ -261,7 +261,7 @@ fn store_grant(token: &str) -> Result<(), String> {
         }),
     );
 
-    let text = serde_yaml::to_string(&root)
+    let text = serde_norway::to_string(&root)
         .map_err(|error| format!("cannot encode credentials: {error}"))?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
@@ -284,7 +284,7 @@ fn store_grant(token: &str) -> Result<(), String> {
 fn device_id() -> Result<String, String> {
     let path = credentials_path()?;
     if let Ok(text) = fs::read_to_string(&path) {
-        if let Ok(root) = serde_yaml::from_str::<Value>(&text) {
+        if let Ok(root) = serde_norway::from_str::<Value>(&text) {
             if let Some(id) = root
                 .get("records")
                 .and_then(|records| records.get(DEVICE_KEY))
@@ -474,7 +474,7 @@ mod tests {
         std::env::set_var("DSH_HOME", &home);
         store_grant("tok-123").unwrap();
         let path = home.join(".credentials.yaml");
-        let root: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");
         assert_eq!(root["records"][GRANT_KEY]["payload"]["issuer"], ORIGIN);
         assert!(root["records"][DEVICE_KEY]["payload"]["id"].is_string());

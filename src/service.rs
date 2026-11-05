@@ -628,6 +628,21 @@ mod tests {
     }
 
     #[test]
+    fn start_defers_to_a_service_it_did_not_start() {
+        // The port already answers: booth reports that service instead of launching a second.
+        let mut cfg = config("start-foreign");
+        let api = crate::testkit::FakeApi::start();
+        cfg.port = api.base.rsplit(':').next().unwrap().parse().unwrap();
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        // A stale pid file must not stop the check either.
+        fs::write(cfg.pid(), std::process::id().to_string()).unwrap();
+        assert!(start(&cfg).is_ok());
+        // The stale pid file is cleared first, then the answering service is reported.
+        assert!(!cfg.pid().exists(), "a stale pid file is removed");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
     fn a_failed_signal_names_the_pid_and_the_signal() {
         // SPEC scenario "目标进程已消失": the OS message alone does not say which process.
         let error = signal(0x7fff_fffe, "TERM").unwrap_err();

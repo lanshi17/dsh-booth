@@ -159,7 +159,7 @@ impl Store {
                 }));
             }
         }
-        let text = serde_yaml::to_string(&entries)
+        let text = serde_norway::to_string(&entries)
             .map_err(|error| format!("cannot render the provider overlay: {error}"))?;
         fs::write(overlay(cfg), text)
             .map_err(|error| format!("cannot write {}: {error}", overlay(cfg).display()))

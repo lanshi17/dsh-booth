@@ -1,0 +1,15 @@
+# Changed lines that cannot run in a test, with the reason. One `<file>:<line> <reason>` per line.
+# `tools/changed_lines.py` fails on any miss that is NOT listed here, and fails again when a
+# listed line stops being a miss, so this file cannot rot into a blanket exemption.
+#
+# Excluding a line is a visible, reviewable act: prefer a test whenever one is possible.
+
+src/app.rs:353 poisoned-mutex arm: reachable only if another thread panicked while holding the tail lock
+src/app.rs:884 poisoned-mutex arm in the poll thread: same reason
+src/app.rs:1826 composer segment drawn into a terminal frame; needs a pty, exercised by the pty run in EVIDENCE
+src/app.rs:2762 assertion failure message: evaluated only when that assertion fails
+src/app.rs:2909 assertion failure message: evaluated only when that assertion fails
+src/intake.rs:137 seek-failure arm: `seek` on a regular file does not fail, so this is defensive only
+src/intake.rs:740 assertion message behind a root-only branch: unprivileged runs skip it
+src/intake.rs:1113 test-only restore: the `None` arm runs when DSH_HOME was unset before the test
+src/service.rs:237 llvm-cov attributes a continuation line of a multi-line `format!` to a later region; the enclosing error is asserted by stop_refuses_a_pid_file_pointing_at_another_program

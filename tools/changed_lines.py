@@ -13,6 +13,8 @@ import subprocess
 import sys
 
 # Source files whose changed lines this branch means to cover.
+EXCLUDES = "tools/coverage_excludes.txt"
+
 WATCHED = ("src/intake.rs", "src/service.rs", "src/app.rs", "src/commands.rs", "src/provider.rs",
            "src/oauth.rs", "src/gh.rs", "src/format.rs", "src/main.rs", "src/api.rs", "src/model.rs")
 
@@ -41,42 +43,105 @@ def changed_lines(base: str) -> dict[str, set[int]]:
     return {name: lines for name, lines in changed.items() if lines and name.endswith(".rs")}
 
 
-def covered_lines(report_path: str) -> dict[tuple[str, int], bool]:
+def executable_and_covered(report_path: str) -> tuple[set, set]:
+    """Line -> ran in a test, keyed by the repo-relative path.
+
+    The report names files absolutely while a diff names them relatively, so the suffix is what
+    both can agree on. A segment is `[line, col, count, has_count, is_region_entry, is_gap]`;
+    only a region entry is executable code, and a gap region on the same line is not.
+    """
     with open(report_path) as handle:
         report = json.load(handle)
-    covered: dict[tuple[str, int], bool] = {}
+    executable: set[tuple[str, int]] = set()
+    covered: set[tuple[str, int]] = set()
     for export in report.get("data", []):
         for entry in export.get("files", []):
             name = entry.get("filename", "")
             for segment in entry["segments"]:
                 line, count = segment[0], segment[2]
-                key = (name, line)
-                covered[key] = covered.get(key, False) or bool(count)
-    return covered
+                # A segment is a region of code; `is_region_entry` marks its start, and a gap
+                # region is the space between code, not code itself.
+                if len(segment) > 5 and segment[5]:
+                    continue
+                if len(segment) > 4 and not segment[4]:
+                    continue
+                executable.add((name, line))
+                if count:
+                    covered.add((name, line))
+    return executable, covered
+
+
+def relative(name: str) -> str:
+    """`/repo/src/intake.rs` -> `src/intake.rs`, so a report path matches a diff path."""
+    marker = "/src/"
+    return "src/" + name.split(marker, 1)[1] if marker in name else name
+
+
+def excludes() -> dict[str, str]:
+    """Listed misses and their reasons, read from the exclusion file."""
+    listed: dict[str, str] = {}
+    try:
+        with open(EXCLUDES) as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                key, _, reason = line.partition(" ")
+                listed[key] = reason.strip() or "(no reason given)"
+    except OSError as error:
+        print(f"cannot read {EXCLUDES}: {error}")
+        sys.exit(1)
+    return listed
 
 
 def main() -> int:
-    base = sys.argv[1] if len(sys.argv) > 1 else "origin/master"
+    base = sys.argv[1] if len(sys.argv) > 1 else "master"
+    # Compare against where this branch left the trunk, so a long branch does not count the
+    # trunk's own commits as its changes.
+    merge_base = subprocess.run(
+        ["git", "merge-base", "HEAD", base], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    if merge_base:
+        base = merge_base
     report = sys.argv[2] if len(sys.argv) > 2 else "target/cov.json"
     changed = changed_lines(base)
     if not changed:
         print(f"no changed source lines against {base}")
         return 0
-    covered = covered_lines(report)
+    executable, covered = executable_and_covered(report)
+    executable = {(relative(path), line) for path, line in executable}
+    covered = {(relative(path), line) for path, line in covered}
 
-    total = hit = 0
+    total = hit = plain = 0
     misses: list[str] = []
     for name, lines in sorted(changed.items()):
-        missing = [line for line in sorted(lines) if not covered.get((name, line), False)]
-        hit += len(lines) - len(missing)
-        total += len(lines)
-        for line in missing:
-            misses.append(f"{name}:{line}")
-    print(f"changed lines: {hit}/{total} covered")
+        for line in sorted(lines):
+            key = (name, line)
+            # A changed line with no executable region — a comment, a blank line, a struct
+            # field, a closing brace — cannot be covered and is not a miss.
+            if key not in executable:
+                plain += 1
+                continue
+            total += 1
+            if key in covered:
+                hit += 1
+            else:
+                misses.append(f"{name}:{line}")
+    listed = excludes()
+    unexplained = [miss for miss in misses if miss not in listed]
+    stale = [key for key in listed if key not in misses]
+
+    print(f"changed executable lines: {hit}/{total} covered "
+          f"({plain} changed lines carry no executable code, {len(listed)} listed exclusions)")
     for miss in misses:
-        print(f"  uncovered {miss}")
-    if miss_count := len(misses):
-        print(f"{miss_count} changed line(s) no test runs")
+        if miss in listed:
+            print(f"  excluded  {miss} — {listed[miss]}")
+        else:
+            print(f"  UNCOVERED {miss}")
+    for key in stale:
+        print(f"  STALE EXCLUSION {key} — this line is covered or gone; remove it from {EXCLUDES}")
+    if unexplained or stale:
+        print(f"{len(unexplained)} unexplained line(s), {len(stale)} stale exclusion(s)")
         return 1
     return 0
 
