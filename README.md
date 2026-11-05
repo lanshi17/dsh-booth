@@ -99,9 +99,6 @@ booth setup owner/name             # repository + allowed senders, from the shel
 booth gh                           # the GitHub CLI the Source would use
 ```
 
-Every read command takes `--json` and prints the view as served, for scripts and the hourly
-check the deployment guide asks for.
-
 | Global flag | Default | Meaning |
 | --- | --- | --- |
 | `--url` | `http://127.0.0.1:3082` | The management API's base URL |
@@ -111,6 +108,9 @@ check the deployment guide asks for.
 | `BOOTH_STATE_DIR` | `$DSH_HOME/state/superagent` | Database, `booth.pid`, `booth.log` |
 | `BOOTH_SUPERAGENT_DIR` | the repository's `superagent/` | Checkout to build and link |
 | `DSH_HOME` | `~/.dsh` | Where profiles and state live |
+
+Every read command takes `--json` and prints the view as served, for scripts and the hourly
+check the deployment guide asks for.
 
 ## Inside the console
 
