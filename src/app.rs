@@ -3170,6 +3170,35 @@ mod editor_tests {
     }
 
     #[test]
+    fn refresh_status_reports_what_the_service_answered() {
+        // The poll runs on its own thread and answers with a message; a mutant that makes the
+        // method do nothing leaves the console on "connecting" forever.
+        let (mut app, dir, _env) = editor("refresh");
+        app.status = Status::connecting(&app.api.base().to_owned());
+        app.refresh_status();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match app.rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(Msg::Status(status)) => {
+                    app.status = status;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) if std::time::Instant::now() < deadline => continue,
+                Err(error) => panic!("the poll never answered: {error}"),
+            }
+        }
+        assert_eq!(app.status.runtime, "ready");
+        assert_eq!(app.status.workers, 3, "the load comes from the service");
+        assert!(
+            app.status.repository.as_deref() == Some("o/r"),
+            "the account names the repository: {:?}",
+            app.status.repository
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn the_model_picker_lists_every_provider_plus_an_add_row() {
         let (mut app, dir, _env) = editor("model");
         app.store = Store {

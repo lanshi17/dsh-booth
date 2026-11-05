@@ -529,6 +529,9 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     Ok(lines)
 }
 
+/// The pause before the single retry of a CLI the kernel refused to execute.
+const RETRY_PAUSE: Duration = Duration::from_millis(50);
+
 /// How long a settings change may take to answer; `BOOTH_WAIT_SECONDS` overrides it.
 fn wait_budget() -> Duration {
     std::env::var("BOOTH_WAIT_SECONDS")
@@ -586,7 +589,9 @@ fn repository_from_url(url: &str) -> Option<String> {
 fn gh_login(program: &str) -> Result<String, String> {
     // A CLI written moments ago can still be open for writing elsewhere in the process, and the
     // kernel then refuses to execute it (`ETXTBSY`); one retry covers that window.
-    let mut attempt = 0;
+    // A bounded counter: `attempt: u32` keeps the one-retry intent explicit, and the retry is
+    // observable in the elapsed time, which is what the test asserts.
+    let mut attempt: u32 = 0;
     let output = loop {
         match Command::new(program)
             .args(["api", "user", "--jq", ".login"])
@@ -597,7 +602,7 @@ fn gh_login(program: &str) -> Result<String, String> {
                 if attempt == 0 && error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
             {
                 attempt += 1;
-                sleep(Duration::from_millis(50));
+                sleep(RETRY_PAUSE);
             }
             Err(error) => {
                 return Err(format!("cannot run gh: {error}; install the GitHub CLI"));
@@ -1289,13 +1294,30 @@ mod api_tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(gh_login(path.to_str().unwrap()).unwrap(), "tester");
 
-        // Linux refuses to execute a file that a process holds open for writing (ETXTBSY).
-        // Holding one makes the first attempt fail; the retry is what the arm exists for, and
-        // the second attempt reports the error instead of panicking.
+        // Linux refuses to execute a file a process holds open for writing (ETXTBSY). Holding one
+        // makes the first attempt fail; the retry is what the arm exists for, and the second
+        // attempt reports the error. The pause is what proves the retry happened: without it the
+        // error would come back at once, exactly as a non-busy failure does.
         let writer = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let started = std::time::Instant::now();
         let error = gh_login(path.to_str().unwrap()).unwrap_err();
+        let busy = started.elapsed();
         drop(writer);
         assert!(error.contains("cannot run gh"), "{error}");
+        assert!(
+            busy >= super::RETRY_PAUSE / 2,
+            "a busy CLI is retried after a pause, not failed at once ({busy:?})"
+        );
+
+        // A missing binary is not busy, so it fails immediately: no pause, no retry.
+        let started = std::time::Instant::now();
+        let error = gh_login(dir.join("absent").to_str().unwrap()).unwrap_err();
+        let missing = started.elapsed();
+        assert!(error.contains("cannot run"), "{error}");
+        assert!(
+            missing < super::RETRY_PAUSE / 2,
+            "only a busy CLI waits ({missing:?})"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

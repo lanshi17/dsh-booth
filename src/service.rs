@@ -694,6 +694,12 @@ mod tests {
             &cmdline(&["node", "--profile=superagent", "--no-open"]),
             "superagent"
         ));
+        // A node script named without a path is still a script, not a subcommand: either half of
+        // the "looks like a script" test must be enough on its own.
+        assert!(serves_profile(
+            &cmdline(&["node", "dsh.js", "--profile", "superagent"]),
+            "superagent"
+        ));
         // The shape the real service runs under, captured from /proc: node, its script, then the
         // flags. The script is not a subcommand.
         assert!(serves_profile(
@@ -731,6 +737,47 @@ mod tests {
         ));
         // Nothing to read.
         assert!(!serves_profile(b"", "superagent"));
+    }
+
+    #[test]
+    fn is_service_reads_a_live_command_line() {
+        // A positive case needs a real /proc entry, so the test runs an idle node process whose
+        // arguments are the service's shape: `node <script> --profile <name>`. node is already
+        // required to run booth at all.
+        let dir = config("is-service-live").state_dir.join("probe");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("idle.js");
+        fs::write(&script, "setTimeout(() => {}, 30000)").unwrap();
+        let mut child = match std::process::Command::new("node")
+            .arg(&script)
+            .args(["--profile", "superagent"])
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(_) => {
+                eprintln!("node is not available; the positive /proc case did not run");
+                let _ = fs::remove_dir_all(&dir);
+                return;
+            }
+        };
+        let pid = child.id();
+        for _ in 0..50 {
+            if fs::read(format!("/proc/{pid}/cmdline"))
+                .map(|raw| !raw.is_empty())
+                .unwrap_or(false)
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let found = is_service(pid, "superagent");
+        let other = is_service(pid, "another-profile");
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(found, "a node process carrying this profile is the service");
+        assert!(!other, "another profile's process is not");
     }
 
     #[test]
