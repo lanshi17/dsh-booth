@@ -117,6 +117,29 @@ pub fn replies(cfg: &service::Config) -> Vec<Reply> {
         .collect()
 }
 
+/// The lines typed in earlier console sessions, oldest first, capped at 500.
+pub fn history(cfg: &service::Config) -> Vec<String> {
+    let text = std::fs::read_to_string(cfg.state_dir.join("booth-history.txt")).unwrap_or_default();
+    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    lines[lines.len().saturating_sub(500)..].to_vec()
+}
+
+/// Appends a submitted line, rewriting the file once it holds twice the cap.
+pub fn remember(cfg: &service::Config, line: &str) {
+    let path = cfg.state_dir.join("booth-history.txt");
+    let _ = std::fs::create_dir_all(&cfg.state_dir);
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let count = existing.lines().count();
+    if count >= 1000 {
+        let kept: Vec<&str> = existing.lines().skip(count - 500).collect();
+        let _ = std::fs::write(&path, format!("{}\n", kept.join("\n")));
+    }
+    use std::io::Write;
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "{}", line.replace('\n', " "));
+    }
+}
+
 /// The `/provider` view: which provider and model the agent runs with.
 pub fn summary(store: &Store) -> Vec<L> {
     let mut lines = Vec::new();
@@ -489,6 +512,20 @@ mod tests {
         assert_eq!(messages[0].ticket.as_deref(), Some("t-1"));
         assert_eq!(messages[1].kind, "reply");
         assert!(replies(&config(dir.join("missing"))).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn remembers_prompt_history_across_sessions() {
+        let dir = scratch("history");
+        let cfg = config(dir.clone());
+        assert!(history(&cfg).is_empty());
+        remember(&cfg, "one");
+        remember(&cfg, "two words");
+        assert_eq!(
+            history(&cfg),
+            vec!["one".to_owned(), "two words".to_owned()]
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
