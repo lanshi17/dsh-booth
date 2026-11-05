@@ -143,6 +143,11 @@ enum Command {
     Stop { id: String },
     /// Start a fresh assignment for a stalled ticket.
     Retry { id: String },
+    /// Read or change what may start work without a person.
+    Eval {
+        /// off | observe | auto; omitted prints the current mode.
+        mode: Option<String>,
+    },
     /// Pause the executor.
     Pause,
     /// Resume the executor.
@@ -371,6 +376,10 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Retry { id } => {
             api.retry(&id).map_err(String::from)?;
             println!("retried {id}");
+            Ok(())
+        }
+        Command::Eval { mode } => {
+            print_lines(intake::eval(&api, mode.as_deref().unwrap_or_default())?);
             Ok(())
         }
         Command::Pause => {

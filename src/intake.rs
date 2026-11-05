@@ -117,6 +117,70 @@ pub fn replies(cfg: &service::Config) -> Vec<Reply> {
         .collect()
 }
 
+/// The Eval modes, in the order the choice offers them, with what each one admits.
+pub const EVAL_MODES: &[(&str, &str)] = &[
+    (
+        "off",
+        "only a listed person's explicit request becomes a ticket",
+    ),
+    (
+        "observe",
+        "inferred candidates are recorded, never accepted on their own",
+    ),
+    (
+        "auto",
+        "inferred candidates may be accepted without a person",
+    ),
+];
+
+/// `/eval`: reads or changes the accept mode, the one setting that decides how much work
+/// starts without a person.
+pub fn eval(api: &Api, argument: &str) -> Result<Vec<L>, String> {
+    let wanted = argument.trim().to_ascii_lowercase();
+    let (value, _) = api.block("eval")?;
+    let current = value
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("observe")
+        .to_owned();
+    if wanted.is_empty() {
+        let mut lines = vec![section("eval")];
+        for (mode, description) in EVAL_MODES {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    if *mode == current { "▶ " } else { "  " },
+                    Style::default().fg(CYAN),
+                ),
+                Span::styled(format!("{mode:<9}"), Style::default().fg(Color::White)),
+                Span::styled(*description, Style::default().fg(DIM)),
+            ]));
+        }
+        lines.push(blank());
+        lines.push(muted(&format!(
+            "timeout {}s · /eval off | observe | auto changes the mode",
+            value
+                .get("timeoutSeconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(120)
+        )));
+        return Ok(lines);
+    }
+    let Some((mode, _)) = EVAL_MODES.iter().find(|(mode, _)| *mode == wanted) else {
+        return Err(format!("{wanted} is not a mode; use off, observe or auto"));
+    };
+    if *mode == current {
+        return Ok(vec![done(format!("eval already {mode}"))]);
+    }
+    api.set("eval", &|block| block["mode"] = json!(mode))?;
+    let mut lines = vec![done(format!("eval {current} → {mode}"))];
+    if *mode == "auto" {
+        lines.push(muted(
+            "inferred candidates can now become tickets without a person; the policy rules still decide which",
+        ));
+    }
+    Ok(lines)
+}
+
 /// The lines typed in earlier console sessions, oldest first, capped at 500.
 pub fn history(cfg: &service::Config) -> Vec<String> {
     let text = std::fs::read_to_string(cfg.state_dir.join("booth-history.txt")).unwrap_or_default();
@@ -442,6 +506,24 @@ fn gh_login(program: &str) -> Result<String, String> {
     Ok(login)
 }
 
+fn section(text: &str) -> L {
+    Line::from(Span::styled(
+        text.to_owned(),
+        Style::default().fg(Color::DarkGray),
+    ))
+}
+
+fn blank() -> L {
+    Line::from("")
+}
+
+fn done(text: impl Into<String>) -> L {
+    Line::from(Span::styled(
+        format!("✓ {}", text.into()),
+        Style::default().fg(GREEN),
+    ))
+}
+
 fn field(name: &str, value: &str) -> L {
     Line::from(vec![
         Span::styled(format!("{name:<10}"), Style::default().fg(CYAN)),
@@ -557,5 +639,18 @@ mod tests {
         );
         assert_eq!(repository_from_url("git@gitlab.com:o/r.git"), None);
         assert_eq!(repository_from_url("https://github.com/owner"), None);
+    }
+}
+
+#[cfg(test)]
+mod eval_tests {
+    use super::EVAL_MODES;
+
+    #[test]
+    fn every_mode_explains_itself() {
+        let modes: Vec<&str> = EVAL_MODES.iter().map(|(mode, _)| *mode).collect();
+        assert_eq!(modes, vec!["off", "observe", "auto"]);
+        assert!(EVAL_MODES.iter().all(|(_, text)| !text.is_empty()));
+        assert!(EVAL_MODES.iter().any(|(mode, _)| *mode == "observe"));
     }
 }

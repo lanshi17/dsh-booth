@@ -36,6 +36,10 @@ pub const PALETTE: &[(&str, &str)] = &[
     ("/search <text>", "find tickets, threads and decisions"),
     ("/stop <id>", "withdraw a ticket's mandate"),
     ("/retry <id>", "start a fresh assignment"),
+    (
+        "/eval [mode]",
+        "off | observe | auto — what may start without a person",
+    ),
     ("/pause", "stop the executor from taking work"),
     ("/resume", "let the executor take work"),
     ("/keys", "the keyboard shortcuts, on one screen"),
@@ -148,6 +152,7 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
             api.unsubscribe(key)?;
             vec![done(format!("unsubscribed {key}"))]
         }
+        "/eval" => crate::intake::eval(api, argument)?,
         "/pause" => {
             api.pause(true)?;
             vec![done("executor paused")]
