@@ -332,9 +332,16 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     let directory = words.next().map(str::to_owned);
 
     // A newer gh unlocks the GitHub front door; the system one still lets the agent push.
-    let mut cli = "gh".to_owned();
+    // `BOOTH_NO_GH_INSTALL` keeps a test or an offline machine from a 13 MB download.
+    let mut cli = std::env::var("BOOTH_GH").unwrap_or_else(|_| "gh".to_owned());
     let mut cli_note: Option<(String, bool)> = None;
-    match crate::gh::ensure(cfg, true) {
+    let download = std::env::var_os("BOOTH_NO_GH_INSTALL").is_none();
+    let chosen = if std::env::var_os("BOOTH_GH").is_some() {
+        Ok(Some(cli.clone()))
+    } else {
+        crate::gh::ensure(cfg, download)
+    };
+    match chosen {
         Ok(Some(path)) => {
             let version = crate::gh::version(std::path::Path::new(&path)).unwrap_or_default();
             cli = path.clone();
@@ -832,5 +839,165 @@ mod eval_tests {
         assert_eq!(modes, vec!["off", "observe", "auto"]);
         assert!(EVAL_MODES.iter().all(|(_, text)| !text.is_empty()));
         assert!(EVAL_MODES.iter().any(|(mode, _)| *mode == "observe"));
+    }
+}
+
+#[cfg(test)]
+mod api_tests {
+    use super::*;
+    use crate::testkit::FakeApi;
+
+    fn cfg(dir: &std::path::Path) -> service::Config {
+        service::Config {
+            profile: "test".into(),
+            port: 0,
+            dsh_home: dir.to_path_buf(),
+            state_dir: dir.to_path_buf(),
+            bundle: dir.to_path_buf(),
+        }
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("booth-api-{name}-{}", oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn eval_prints_the_modes_and_marks_the_current_one() {
+        let api = FakeApi::start();
+        let lines = eval(&Api::new(&api.base), "").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("observe"), "{text}");
+        assert!(text.contains("▶ observe"), "{text}");
+        assert!(api.put_count() == 0, "reading must not save");
+    }
+
+    #[test]
+    fn eval_switches_the_mode_and_reads_the_revision_back() {
+        let api = FakeApi::start();
+        let lines = eval(&Api::new(&api.base), "auto").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("observe → auto"), "{text}");
+        let (block, body) = api.last_put().unwrap();
+        assert_eq!(block, "eval");
+        assert_eq!(body["value"]["mode"], "auto");
+        // The revision the fake can report is the one the console read.
+        assert_eq!(
+            api.settings.lock().unwrap()["blocks"]["eval"]["revision"],
+            4
+        );
+    }
+
+    #[test]
+    fn eval_reports_an_unchanged_mode_without_saving() {
+        let api = FakeApi::start();
+        let text: String = eval(&Api::new(&api.base), "observe")
+            .unwrap()
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        assert!(text.contains("already observe"), "{text}");
+        assert_eq!(api.put_count(), 0);
+    }
+
+    #[test]
+    fn summary_shows_the_current_provider_and_never_the_key() {
+        let store = Store {
+            current: "deepseek".into(),
+            providers: vec![crate::provider::Provider {
+                id: "deepseek".into(),
+                base: "https://api.deepseek.com".into(),
+                api: "openai-completions".into(),
+                model: "deepseek-chat".into(),
+                key: "sk-must-not-appear".into(),
+            }],
+        };
+        let text: String = summary(&store)
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("deepseek · deepseek-chat"), "{text}");
+        assert!(text.contains("BOOTH_KEY_DEEPSEEK"), "{text}");
+        assert!(
+            !text.contains("sk-must-not-appear"),
+            "the key must not be printed: {text}"
+        );
+    }
+
+    #[test]
+    fn summary_says_so_when_no_provider_is_configured() {
+        let text: String = summary(&Store::default())
+            .iter()
+            .map(|l| l.to_string())
+            .collect();
+        assert!(
+            text.contains("no provider") || text.contains("DeepSeek account"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn setup_writes_every_block_and_reports_the_repository() {
+        // No download and no real `gh`: a fixture CLI the test writes itself, so the run needs
+        // nothing from outside the repository.
+        let dir = scratch("setup");
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp  use with --paginate';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        let config = cfg(&dir);
+        let lines = setup(&Api::new(&api.base), &config, "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("o/r"), "{text}");
+
+        let puts = api.puts.lock().unwrap().clone();
+        // The console percent-encodes the block name, since a Source block is `source:<id>`.
+        let names: Vec<String> = puts
+            .iter()
+            .map(|(name, _)| name.replace("source%3A", "source:"))
+            .collect();
+        assert!(names.contains(&"source:github".to_owned()), "{names:?}");
+        assert!(names.contains(&"source:local".to_owned()), "{names:?}");
+        assert!(names.contains(&"policy".to_owned()), "{names:?}");
+        let github = puts
+            .iter()
+            .find(|(name, _)| name.replace("source%3A", "source:") == "source:github")
+            .unwrap();
+        assert_eq!(github.1["value"]["config"]["repository"], "o/r");
+        assert_eq!(github.1["value"]["enabled"], true);
+        let policy = puts.iter().find(|(name, _)| name == "policy").unwrap();
+        assert!(policy.1["value"]["sources"]["local"]["allowed"][0]["id"].is_string());
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_rejects_an_argument_that_is_not_owner_name() {
+        let api = FakeApi::start();
+        let dir = scratch("setup-bad");
+        let error = setup(&Api::new(&api.base), &cfg(&dir), "notarepo").unwrap_err();
+        assert!(error.contains("owner/name"), "{error}");
+        assert_eq!(api.put_count(), 0, "a bad argument must not save anything");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

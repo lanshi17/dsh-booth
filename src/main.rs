@@ -14,6 +14,8 @@ mod model;
 mod oauth;
 mod provider;
 mod service;
+#[cfg(test)]
+mod testkit;
 
 use api::Api;
 use clap::{Parser, Subcommand};
