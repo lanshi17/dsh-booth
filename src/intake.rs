@@ -93,10 +93,67 @@ pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<S
 
 /// Reads every agent message the console has not shown yet; the caller decides which are new by id.
 pub fn replies(cfg: &service::Config) -> Vec<Reply> {
-    let text = match std::fs::read_to_string(outbox(cfg)) {
-        Ok(text) => text,
-        Err(_) => return Vec::new(),
+    replies_from(cfg, &mut Tail::fresh())
+}
+
+/// Where the console's last outbox read stopped, and the file stamp it saw then.
+///
+/// Length alone cannot tell a rewrite from an append when both have the same size, so the
+/// modification time is kept beside the offset.
+#[derive(Default, Clone, Copy)]
+pub struct Tail {
+    offset: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+impl Tail {
+    pub fn fresh() -> Self {
+        Self::default()
+    }
+}
+
+/// Reads the messages appended since `tail`, leaving it after the last complete line.
+///
+/// The console polls every two seconds and the outbox only grows, so rereading it whole turns
+/// each poll into O(history) work (SPEC defect C). A file that shrank, or whose modification
+/// time moved without the offset reaching its end, was rewritten: the read restarts.
+pub fn replies_from(cfg: &service::Config, tail: &mut Tail) -> Vec<Reply> {
+    let path = outbox(cfg);
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return Vec::new();
     };
+    let size = meta.len();
+    let modified = meta.modified().ok();
+    let rewritten = size < tail.offset
+        || (size == tail.offset && tail.modified.is_some() && modified != tail.modified);
+    if rewritten {
+        tail.offset = 0;
+    }
+    if size == tail.offset {
+        tail.modified = modified;
+        return Vec::new();
+    }
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = std::fs::File::open(&path) else {
+        return Vec::new();
+    };
+    if file.seek(SeekFrom::Start(tail.offset)).is_err() {
+        return Vec::new();
+    }
+    let mut raw = Vec::new();
+    if file.read_to_end(&mut raw).is_err() {
+        return Vec::new();
+    }
+    // Only whole lines count: a half-written record waits for the next poll.
+    let Some(end) = raw.iter().rposition(|byte| *byte == b'\n').map(|at| at + 1) else {
+        return Vec::new();
+    };
+    tail.offset += end as u64;
+    tail.modified = modified;
+    parse_replies(&String::from_utf8_lossy(&raw[..end]))
+}
+
+fn parse_replies(text: &str) -> Vec<Reply> {
     text.lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter_map(|value| {
@@ -573,6 +630,72 @@ mod tests {
         assert_eq!(lines[1]["thread"], "t-1");
         assert!(lines[0]["id"].as_str().unwrap().len() >= 16);
         assert!(send(&cfg, "  ", None).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reads_only_what_was_appended() {
+        // SPEC scenario "文件里有 5000 条旧消息、新增 1 条".
+        let dir = scratch("tail");
+        let cfg = config(dir.clone());
+        let mut body = String::new();
+        for index in 0..5000 {
+            body.push_str(&format!(
+                "{{\"id\":\"old-{index}\",\"kind\":\"reply\",\"text\":\"x\"}}\n"
+            ));
+        }
+        std::fs::write(outbox(&cfg), &body).unwrap();
+        let mut tail = Tail::fresh();
+        // The first read sees the history once, then the tail sits at the end.
+        assert_eq!(replies_from(&cfg, &mut tail).len(), 5000);
+        assert_eq!(tail.offset, body.len() as u64);
+        assert!(replies_from(&cfg, &mut tail).is_empty());
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(outbox(&cfg))
+            .unwrap();
+        file.write_all(b"{\"id\":\"new-1\",\"kind\":\"reply\",\"text\":\"hello\"}\n")
+            .unwrap();
+        let fresh = replies_from(&cfg, &mut tail);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "new-1");
+        assert_eq!(fresh[0].text, "hello");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_shrunk_outbox_starts_over_and_a_partial_line_waits() {
+        // SPEC scenario "文件被截断或替换".
+        let dir = scratch("shrink");
+        let cfg = config(dir.clone());
+        let first = "{\"id\":\"a\",\"kind\":\"reply\",\"text\":\"one\"}\n";
+        std::fs::write(outbox(&cfg), first).unwrap();
+        let mut tail = Tail::fresh();
+        assert_eq!(replies_from(&cfg, &mut tail).len(), 1);
+        assert_eq!(tail.offset, first.len() as u64);
+
+        // Truncated and rewritten shorter than the offset: no panic, the new content is read.
+        std::fs::write(
+            outbox(&cfg),
+            "{\"id\":\"b\",\"kind\":\"reply\",\"text\":\"two\"}\n",
+        )
+        .unwrap();
+        let after = replies_from(&cfg, &mut tail);
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].id, "b");
+
+        // A half-written record stays unread until its newline arrives.
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(outbox(&cfg))
+            .unwrap();
+        file.write_all(b"{\"id\":\"c\",\"kind\":\"re").unwrap();
+        assert!(replies_from(&cfg, &mut tail).is_empty());
+        file.write_all(b"ply\",\"text\":\"three\"}\n").unwrap();
+        let complete = replies_from(&cfg, &mut tail);
+        assert_eq!(complete.len(), 1);
+        assert_eq!(complete[0].id, "c");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
