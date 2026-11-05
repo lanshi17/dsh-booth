@@ -176,7 +176,9 @@ The console follows what it sent:
 - **A silent report is not lost.** When the agent did not also send a reply, the console prints
   the ticket's own summary under `◇ ticket … · report`.
 - **No decision is still an answer.** After 20 seconds without a judgement the console says so,
-  and `/sources` / `/status` explain whether the Source or the service is the reason.
+  and `/sources` / `/status` explain whether the Source or the service is the reason. It keeps
+  watching for ten minutes — a judgement can wait behind another turn — and a late one still
+  appears in place.
 
 `/setup` names the repository and the people who may ask for work:
 

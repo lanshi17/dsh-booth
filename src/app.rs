@@ -834,16 +834,24 @@ impl App {
                 Style::default().fg(FAINT),
             )));
         }
+        // An assessment can legitimately take minutes: the Eval timeout is 120 s and the model
+        // may be queued behind another turn. Keep waiting instead of declaring failure, and say
+        // what a long wait usually means.
         let stale: Vec<String> = self
             .pending
             .iter()
-            .filter(|(_, (sent, _))| now.duration_since(*sent) > Duration::from_secs(240))
+            .filter(|(_, (sent, warned))| {
+                *warned && now.duration_since(*sent) > Duration::from_secs(600)
+            })
             .map(|(trigger, _)| trigger.clone())
             .collect();
         for trigger in stale {
-            self.pending.remove(&trigger);
+            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
+                *warned = false;
+            }
             self.push(warn_line(
-                "the agent never judged that instruction; /sources and /status explain why",
+                "10 minutes without a judgement · /status shows whether a model failure stopped it; \
+                 a late answer still appears here",
             ));
         }
     }
@@ -856,6 +864,7 @@ impl App {
         let api = self.api.clone();
         let tx = self.tx.clone();
         let config = self.config.clone();
+        // Keep asking for judgements while any sent instruction is unresolved.
         let pending = !self.pending.is_empty();
         let tracked: Vec<String> = self.tracked.keys().cloned().collect();
         let polled = self.api.clone();
