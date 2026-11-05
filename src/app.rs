@@ -3200,6 +3200,33 @@ mod editor_tests {
     }
 
     #[test]
+    fn refresh_status_delivers_an_agent_reply_from_the_outbox() {
+        let (mut app, dir, _env) = editor("refresh-reply");
+        std::fs::write(
+            dir.join("booth-outbox.jsonl"),
+            "{\"id\":\"m1\",\"kind\":\"reply\",\"text\":\"done\",\"ticket\":\"t-1\"}\n",
+        )
+        .unwrap();
+        app.refresh_status();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut delivered: Option<Vec<intake::Reply>> = None;
+        while std::time::Instant::now() < deadline {
+            match app.rx.recv_timeout(std::time::Duration::from_millis(200)) {
+                Ok(Msg::Replies(replies)) => {
+                    delivered = Some(replies);
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => continue,
+            }
+        }
+        let replies = delivered.expect("the poll delivers what the agent wrote");
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].text, "done");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn the_model_picker_lists_every_provider_plus_an_add_row() {
         let (mut app, dir, _env) = editor("model");
         app.store = Store {
