@@ -124,10 +124,11 @@ pub fn init(cfg: &Config) -> Result<(), String> {
 
 pub fn start(cfg: &Config) -> Result<(), String> {
     if let Some(pid) = read_pid(cfg) {
-        if alive(pid) {
+        if alive(pid) && is_service(pid, &cfg.profile) {
             println!("already running (pid {pid})");
             return report(cfg);
         }
+        // A stale or reused pid must not stop a start.
         let _ = fs::remove_file(cfg.pid());
     }
     if Api::new(&cfg.url()).state().is_ok() {
@@ -225,6 +226,14 @@ pub fn stop(cfg: &Config) -> Result<(), String> {
         let _ = fs::remove_file(cfg.pid());
         println!("not running (stale pid {pid})");
         return Ok(());
+    }
+    if !is_service(pid, &cfg.profile) {
+        return Err(format!(
+            "pid {pid} is not the `{}` service — the pid file is stale; check /proc/{pid}/cmdline \
+             and remove {} yourself",
+            cfg.profile,
+            cfg.pid().display()
+        ));
     }
     signal(pid, "TERM")?;
     let deadline = Instant::now() + STOP_TIMEOUT;
@@ -510,6 +519,7 @@ fn signal(pid: u32, name: &str) -> Result<(), String> {
     if status.success() {
         Ok(())
     } else {
+        // Name both the signal and the process: the OS message alone does not.
         Err(format!("kill -{name} {pid} failed ({status})"))
     }
 }
@@ -524,6 +534,55 @@ fn read_pid(cfg: &Config) -> Option<u32> {
     fs::read_to_string(cfg.pid())
         .ok()
         .and_then(|text| text.trim().parse().ok())
+}
+
+/// Whether a NUL-separated command line is this profile's DSH service.
+///
+/// Split out from `/proc` so the argument matching is testable without spawning processes.
+/// `--profile <name>` and `--profile=<name>` both count; a positional argument such as `plugin`
+/// makes it a one-shot command, not the service.
+fn serves_profile(cmdline: &[u8], profile: &str) -> bool {
+    let words: Vec<&str> = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|word| !word.is_empty())
+        .map(|word| std::str::from_utf8(word).unwrap_or_default())
+        .collect();
+    let Some(program) = words.first() else {
+        return false;
+    };
+    let name = Path::new(program)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if name != "dsh" && name != "node" {
+        return false;
+    }
+    let mut matched = false;
+    let mut subcommand = false;
+    let mut following = false;
+    for word in &words[1..] {
+        if following {
+            matched = *word == profile;
+            following = false;
+        } else if *word == "--profile" {
+            following = true;
+        } else if let Some(value) = word.strip_prefix("--profile=") {
+            matched = value == profile;
+        } else if !word.starts_with('-') {
+            subcommand = true;
+        }
+    }
+    matched && !subcommand
+}
+
+/// Whether `pid` runs this profile's DSH service.
+///
+/// A pid file outlives a crash and the kernel reuses pids, so the pid alone says nothing about
+/// what is running now (SPEC defect B).
+fn is_service(pid: u32, profile: &str) -> bool {
+    fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|raw| serves_profile(&raw, profile))
+        .unwrap_or(false)
 }
 
 fn alive(pid: u32) -> bool {
@@ -557,6 +616,86 @@ mod tests {
             state_dir: root.join("state"),
             bundle: root.join("superagent"),
         }
+    }
+
+    fn cmdline(words: &[&str]) -> Vec<u8> {
+        let mut raw = Vec::new();
+        for word in words {
+            raw.extend_from_slice(word.as_bytes());
+            raw.push(0);
+        }
+        raw
+    }
+
+    #[test]
+    fn matches_only_this_profiles_service_command_line() {
+        // SPEC scenario "pid 文件指向一个不是 dsh 的进程", at the level the argument match lives.
+        assert!(serves_profile(
+            &cmdline(&[
+                "/home/me/.bun/bin/dsh",
+                "--profile",
+                "superagent",
+                "--no-open"
+            ]),
+            "superagent"
+        ));
+        assert!(serves_profile(
+            &cmdline(&["node", "--profile=superagent", "--no-open"]),
+            "superagent"
+        ));
+        // Another profile is another service.
+        assert!(!serves_profile(
+            &cmdline(&["dsh", "--profile", "other"]),
+            "superagent"
+        ));
+        // A one-shot subcommand is not the long-running service.
+        assert!(!serves_profile(
+            &cmdline(&["dsh", "plugin", "--profile", "superagent", "add", "x"]),
+            "superagent"
+        ));
+        // An unrelated program that happens to mention the profile.
+        assert!(!serves_profile(
+            &cmdline(&["/bin/bash", "-c", "dsh --profile superagent"]),
+            "superagent"
+        ));
+        // An unrelated program carrying exactly the service's arguments: only the program name
+        // separates them, so this line is what makes the name check load-bearing.
+        assert!(!serves_profile(
+            &cmdline(&["/usr/bin/python3", "--profile", "superagent", "--no-open"]),
+            "superagent"
+        ));
+        // Nothing to read.
+        assert!(!serves_profile(b"", "superagent"));
+    }
+
+    #[test]
+    fn is_service_recognizes_its_own_dsh_process_only() {
+        // SPEC scenario "pid 文件指向一个不是 dsh 的进程": an unrelated live process must be
+        // refused before any signal, so a stale or reused pid cannot be killed.
+        let me = std::process::id();
+        assert!(
+            !is_service(me, "superagent"),
+            "the test process is not a dsh service"
+        );
+        let cmdline = fs::read(format!("/proc/{me}/cmdline")).unwrap_or_default();
+        assert!(
+            !cmdline.is_empty(),
+            "the test needs a readable /proc/self/cmdline"
+        );
+    }
+
+    #[test]
+    fn stop_refuses_a_pid_file_pointing_at_another_program() {
+        let cfg = config("stop-foreign");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let me = std::process::id();
+        fs::write(cfg.pid(), me.to_string()).unwrap();
+        let error = stop(&cfg).unwrap_err();
+        assert!(error.contains(&me.to_string()), "{error}");
+        assert!(error.contains("not"), "{error}");
+        // The process is still there and the pid file is left for the operator to inspect.
+        assert!(alive(me));
+        assert!(cfg.pid().exists());
     }
 
     #[test]

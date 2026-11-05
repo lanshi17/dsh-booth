@@ -758,10 +758,7 @@ impl App {
                     Some(follow) => vec![Line::from(vec![
                         Span::styled("  ↳ ", Style::default().fg(CYAN)),
                         Span::styled("follow-up to ", Style::default().fg(DIM)),
-                        Span::styled(
-                            short_id(&follow.ticket),
-                            Style::default().fg(CYAN),
-                        ),
+                        Span::styled(short_id(&follow.ticket), Style::default().fg(CYAN)),
                         Span::styled("  · /new starts a new ticket", Style::default().fg(FAINT)),
                     ])],
                     None => {
