@@ -557,18 +557,46 @@ fn serves_profile(cmdline: &[u8], profile: &str) -> bool {
     if name != "dsh" && name != "node" {
         return false;
     }
+    // `node <script> --profile X` puts the script where a native binary has nothing. A positional
+    // word is a subcommand only while no option has been seen yet; after that, a positional is
+    // that option's value (`--patch <file>`), which is not a subcommand. The real service runs
+    // `node <script> --profile superagent --patch <file> --no-open`, so this is not cosmetic:
+    // without it `booth stop` refused the service it had started itself.
+    let mut rest = &words[1..];
+    if name == "node" {
+        if let Some(script) = rest.first() {
+            if script.contains('/') || script.ends_with(".js") || script.ends_with(".mjs") {
+                rest = &rest[1..];
+            }
+        }
+    }
     let mut matched = false;
     let mut subcommand = false;
     let mut following = false;
-    for word in &words[1..] {
+    let mut seen_option = false;
+    for word in rest {
         if following {
             matched = *word == profile;
             following = false;
-        } else if *word == "--profile" {
-            following = true;
-        } else if let Some(value) = word.strip_prefix("--profile=") {
+            continue;
+        }
+        if let Some(value) = word.strip_prefix("--profile=") {
             matched = value == profile;
-        } else if !word.starts_with('-') {
+            seen_option = true;
+            continue;
+        }
+        if *word == "--profile" {
+            following = true;
+            seen_option = true;
+            continue;
+        }
+        if word.starts_with('-') {
+            seen_option = true;
+            continue;
+        }
+        // A positional before the first option is the subcommand; after one it is an option's
+        // value, such as the file that follows `--patch`.
+        if !seen_option {
             subcommand = true;
         }
     }
@@ -664,6 +692,20 @@ mod tests {
         ));
         assert!(serves_profile(
             &cmdline(&["node", "--profile=superagent", "--no-open"]),
+            "superagent"
+        ));
+        // The shape the real service runs under, captured from /proc: node, its script, then the
+        // flags. The script is not a subcommand.
+        assert!(serves_profile(
+            &cmdline(&[
+                "node",
+                "/home/me/.bun/bin/dsh",
+                "--profile",
+                "superagent",
+                "--patch",
+                "/home/me/.dsh/state/superagent/provider.yml",
+                "--no-open",
+            ]),
             "superagent"
         ));
         // Another profile is another service.
