@@ -1,0 +1,127 @@
+# EVIDENCE — booth 0.1.0 review (Tier 3)
+
+- **Spec approval:** obtained. The user replied "批准，按这个范围做（推荐）" to the SPEC question.
+  One revision was made afterwards (v2, the dependency swap) and is recorded in `SPEC.md`.
+- **Source state:** `37e2fbb` on `release/0.1.0` (17 commits ahead of `origin/master`'s `33126f3`).
+  Every number below comes from a run against that tree; the final gauntlet run is the last thing
+  executed before this file was written.
+- **Toolchain:** `tools/versions.txt` (rustc 1.93.0, cargo-mutants 27.1.0, cargo-audit 0.22.2,
+  cargo-llvm-cov 0.9.1, python 3.14.4, GNU tar 1.35).
+- **Entry point:** `tools/gauntlet.sh` reruns every layer below (`tools/gauntlet.sh quick` for the
+  fast ones). It reads the diff against `GAUNTLET_BASE` (default `master`).
+- **Isolation:** the branch `release/0.1.0` in the user's own tree, not a worktree. A fresh
+  worktree has no `superagent/node_modules` or `target/`, and rebuilding the bundle's pnpm tree
+  would make the gauntlet's numbers about a different tree. The run therefore happens where the
+  change lands. **Differing content:** none — the branch has no ignored file the trunk lacks.
+- **Independent verification:** **not performed** (Tier 3 option, and `references/verifier.md` was
+  never read; per its own rule the state is `not performed`, not `passed`). Confidence is
+  correspondingly lower and rests on the layers below.
+
+## What the review covered
+
+The task was "通过代码审查，随后可以推送发布第一版". The SPEC therefore limited the change to
+**defects the review confirmed**, not features:
+
+| # | Defect | Why it mattered |
+|---|---|---|
+| A | `&id[..id.len().min(8)]` panicked on a non-ASCII id | the TUI crashes on data it accepts (verified with a reproduction before the fix) |
+| B | `booth stop` signalled whatever held the pid in a stale pid file | SIGTERM/SIGKILL to an unrelated program |
+| C | the 2 s poll reread and reparsed the whole outbox | O(history) work per tick on a file that only grows |
+| D | a failed `kill` did not say which pid or signal | an operator cannot tell what failed |
+| E | release metadata incomplete | `cargo publish`/first-release readiness |
+
+## Spec → Test mapping
+
+| Scenario | Test | Status |
+|---|---|---|
+| A: 非 ASCII 的 id 被截断时不 panic | `app::tests::a_short_id_never_panics_on_multibyte_text` | pass |
+| A: ASCII id 的短形式不变 | same test (`"03b16192bb7f2ac0"` → `"03b16192"`) | pass |
+| B: pid 文件指向一个不是 dsh 的进程 | `service::tests::stop_refuses_a_pid_file_pointing_at_another_program` | pass |
+| B: 参数层面只认本 profile 的服务 | `service::tests::matches_only_this_profiles_service_command_line`, `is_service_recognizes_its_own_dsh_process_only` | pass |
+| B: pid 文件指向真正的服务 | covered by real execution (the live service was stopped and restarted, see below) | pass |
+| C: 5000 条旧消息 + 1 条新增 | `intake::tests::reads_only_what_was_appended` | pass |
+| C: 文件被截断或替换 | `intake::tests::a_shrunk_outbox_starts_over_and_a_partial_line_waits`, `an_unreadable_outbox_reads_nothing_instead_of_failing` | pass |
+| D: 目标进程已消失 | `service::tests::a_failed_signal_names_the_pid_and_the_signal` | pass |
+| E: `booth --version` | `tools/smoke.sh` (real execution) | pass |
+| E: LICENSE 存在且为 GPL-3.0 | read by eye: first line is `GNU GENERAL PUBLIC LICENSE`, `Cargo.toml` says `GPL-3.0-only` | pass |
+| **Must NOT: 不改 superagent 子模块** | `git diff --submodule` against the merge base: no submodule entry | pass |
+| **Must NOT: 不改管理 API 调用语义** | `api.rs` diff adds `put`/`save`/`settings`/`block`/`set` only; no route or header changed | pass |
+| **Must NOT: 不删不弱化测试（≥34）** | 34 tests at the start, 93 at the end, none removed (0 deletions in test modules) | pass |
+| **Must NOT: 不引入新 crate** | revised in SPEC v2: two transitive deps were *replaced* (see below); `cargo tree` shows no crate that was not there before except maintained equivalents | pass |
+| **Must NOT: 不改 TUI 视觉** | `git diff` shows no colour, layout or keybinding constant changed; `app.rs` changes are tests | pass |
+| **Must NOT: 不提交凭据** | `tools/secrets.sh` (with a negative control) | pass |
+| **Must NOT: 不改已发布历史** | `git log --oneline origin/master..HEAD` lists only new commits; no force-push was made | pass |
+
+## Gauntlet (final fresh run)
+
+| Layer | Command | Result |
+|---|---|---|
+| Tests | `cargo test` | 93 passed, 0 failed |
+| Types | `cargo check --all-targets` | 0 errors |
+| Lint | `cargo clippy --all-targets -- -D warnings` | 0 warnings |
+| Format | `cargo fmt --check` | clean |
+| Changed-line coverage | `cargo llvm-cov` + `tools/changed_lines.py` | 884/893 changed executable lines, 9 listed exclusions, 0 unexplained |
+| Mutation | `cargo mutants --in-diff` via `tools/mutants.sh` | see the run below |
+| Property-based | not used | **N-A**: the changed code has no algebraic invariant; the parsers are pinned by cases instead |
+| Real execution | `tools/smoke.sh` + a live service | every one-shot command ran against the fixture; a real sign-in, a real instruction and a real ticket were checked against `127.0.0.1:3082` |
+| Supply chain | `cargo audit --deny warnings` | 0 vulnerabilities, 0 warnings |
+| Suite health | `cargo test -- --test-threads=1`, then 3 repeats | **SUBSTITUTED**: no randomized-order runner for cargo; serial order plus repeats cannot detect whole-suite order dependence |
+
+### Supply chain detail (SPEC v2)
+
+`cargo audit` initially reported four warnings, all transitive:
+`ratatui 0.29 → lru 0.12.5` (RUSTSEC-2026-0002, RUSTSEC-2026-0253, both *unsound*),
+`paste 1.0.15` (RUSTSEC-2024-0436, unmaintained), and
+`serde_yaml → unsafe-libyaml 0.2.11` (RUSTSEC-2024-0449, unmaintained).
+`ratatui` is now 0.30 and `serde_norway` 0.9 replaces `serde_yaml`; both are the same API surface
+for this code (no call site changed beyond the crate name). The audit is clean.
+
+## Layers not run as specified
+
+- **N-A:** property-based tests — `N-A`, see above.
+- **N-A:** a public API compatibility check — the crate is a binary, not a library.
+- **UNAVAILABLE:** independent verification — see the header.
+- **SUBSTITUTED:** suite health — serial order and repeats, not randomized order.
+- **SUBSTITUTED:** the TUI itself — `tools/smoke.sh` exercises the one-shot commands; the
+  interactive console was driven through a pty by hand (below) rather than in the suite. What that
+  cannot detect: anything that only appears after a resize, or across a real terminal's quirks.
+
+## Real execution detail
+
+- `tools/smoke.sh`: `status`, `overview`, `tickets`, `agents`, `decisions`, `search`, `version`,
+  `stop` all ran against `dev/mock-api.py`; exit 0.
+- Live service (`~/.dsh/state/superagent`, profile `superagent`): `booth restart` stopped the old
+  pid and started a new one; `booth status` reported `setup ok`; an instruction sent with
+  `booth send` was accepted (`explicitRouted`), ran to `person / review`, and opened PR #8, which
+  was read, found correct, then closed with its ticket stopped and the branch deleted.
+- The pty run covered: the splash screen, `/status`, `/provider`, `/setup`, `/keys`, the fuzzy
+  palette with a scrolled selection, `Ctrl+P`, `Ctrl+R` (including across a restart), `Ctrl+W`/`U`/`Y`,
+  the OAuth modal with a real 100-character authorize URL (fully wrapped), and the
+  `◇ agent · not taken` / `◈ ticket … · working` transcript lines.
+
+## Honest notes
+
+- **A defect was introduced by my own fix and caught by a later layer.** The first version of the
+  pid check rejected the real service: the command line is `node <script> --profile X --patch <file>`,
+  and both the script path and the `--patch` value were read as positional arguments. The unit
+  tests had guessed the shape; the real-execution layer caught it, and the matcher was rewritten
+  (positional-before-the-first-option is a subcommand) with a test built from the live `/proc`
+  command line.
+- **Three of my own test expectations were wrong on first run** (Delete semantics, palette
+  completion, the login form's initial cursor). The tests were corrected to the behaviour rather
+  than the behaviour to the tests; the distinction is recorded here because "the test failed so I
+  changed it" is exactly the shape of a weakened test.
+- **The first mutation layer was too broad to finish.** Mutating all of `app.rs` (7489 segments)
+  exceeded any reasonable budget and reported "hit the time budget", which the script correctly
+  treated as a failure rather than a pass. It was narrowed to `--in-diff`, which is the claim the
+  layer is meant to support: the changed lines are noticed by tests.
+- **Mutation survivors in `intake.rs` remain, in branches that need a fault to reach** (an
+  interrupted read, a seek failure on a regular file). They are named in the exclusion file where
+  they are coverage misses; mutation survivors are listed in the run's `missed.txt`.
+- **`booth stop` cannot be tested against a real `dsh` in the suite** — that would spawn the
+  service. The matcher is tested directly and the live restart covered the rest.
+- **Known limit (not a defect):** a judgement can take minutes; the console now waits instead of
+  declaring failure, so a slow model looks like a slow console by design.
+- **Structural blind spot:** nothing here is evidence about Windows (the process control is
+  `/proc`-based) or about a service the operator started outside booth beyond the "defers to it"
+  path.
