@@ -18,7 +18,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use ratatui::{Frame, Terminal};
-use std::io::{self, IsTerminal, Stdout};
+use std::io::{self, IsTerminal, Stdout, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -473,6 +473,13 @@ impl App {
                     }
                 }
                 Msg::OAuthReady(attempt) => {
+                    // The terminal wraps a long authorize URL; keep an unwrapped copy the
+                    // operator can open or copy without fighting the line breaks.
+                    if let Some(config) = &self.config {
+                        let path = config.state_dir.join("oauth-url.txt");
+                        let _ = std::fs::create_dir_all(&config.state_dir);
+                        let _ = std::fs::write(&path, &attempt.url);
+                    }
                     if let Some(Modal::OAuth(state)) = &mut self.modal {
                         state.url = attempt.url.clone();
                         state.attempt = Some(*attempt);
@@ -1379,13 +1386,29 @@ impl App {
     }
 
     fn oauth_key(&mut self, key: KeyEvent, mut state: OAuthState) {
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('y') {
+            if !state.url.is_empty() {
+                state.status = if copy_to_clipboard(&state.url) {
+                    "the URL is on the clipboard".into()
+                } else {
+                    "could not copy; open oauth-url.txt from the state directory".into()
+                };
+            }
+            self.modal = Some(Modal::OAuth(state));
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('o') {
             if !state.url.is_empty() {
-                let _ = std::process::Command::new("xdg-open")
+                let opened = std::process::Command::new("xdg-open")
                     .arg(&state.url)
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn();
+                if opened.is_err() {
+                    state.status =
+                        "could not start a browser; open oauth-url.txt from the state directory"
+                            .into();
+                }
             }
             self.modal = Some(Modal::OAuth(state));
             return;
@@ -1625,14 +1648,16 @@ impl App {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let mut lines = Vec::new();
-            let result = std::env::current_exe()
-                .map_err(|error| error.to_string())
-                .and_then(|exe| {
-                    std::process::Command::new(exe)
-                        .arg("restart")
-                        .output()
-                        .map_err(|error| error.to_string())
-                });
+            // `cargo install` can replace the binary under a running console; /proc/self/exe
+            // then names a deleted file, so fall back to `booth` on PATH.
+            let program = std::env::current_exe()
+                .ok()
+                .filter(|path| path.exists())
+                .unwrap_or_else(|| std::path::PathBuf::from("booth"));
+            let result = std::process::Command::new(program)
+                .arg("restart")
+                .output()
+                .map_err(|error| format!("{error}; run `booth restart` yourself"));
             match result {
                 Ok(output) => {
                     for line in String::from_utf8_lossy(&output.stdout).lines().take(6) {
@@ -2224,7 +2249,10 @@ fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
 
 fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
     let width = area.width.saturating_sub(8).clamp(48, 84).min(area.width);
-    let height = 11.min(area.height);
+    // Height follows the wrapped authorize URL: a fixed box cut the link's tail off.
+    let inner_width = width.saturating_sub(2).max(1) as usize;
+    let url_rows = wrapped_rows(&state.url, inner_width).max(1) as u16;
+    let height = (8 + url_rows).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -2267,7 +2295,10 @@ fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
             clip_text(&state.status, room),
             Style::default().fg(Color::Yellow),
         )),
-        Line::from(""),
+        Line::from(Span::styled(
+            "the full URL is also in oauth-url.txt",
+            Style::default().fg(FAINT),
+        )),
         Line::from(Span::styled(
             "or paste the callback URL:",
             Style::default().fg(DIM),
@@ -2277,11 +2308,55 @@ fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
             Span::styled(paste, Style::default()),
         ]),
         Line::from(Span::styled(
-            " Enter finish · Esc cancel",
+            " Ctrl+O open · Ctrl+Y copy · Enter finish · Esc cancel",
             Style::default().fg(DIM),
         )),
     ];
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+/// Copies through whichever clipboard tool the session has; false when none works.
+fn copy_to_clipboard(text: &str) -> bool {
+    let mut candidates: Vec<(&str, Vec<&str>)> = Vec::new();
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        candidates.push(("wl-copy", Vec::new()));
+    }
+    if std::env::var_os("DISPLAY").is_some() {
+        candidates.push(("xclip", vec!["-selection", "clipboard"]));
+        candidates.push(("xsel", vec!["--clipboard", "--input"]));
+    }
+    // macOS: no display variable, pbcopy talks to the pasteboard directly.
+    if cfg!(target_os = "macos") {
+        candidates.push(("pbcopy", Vec::new()));
+    }
+    for (program, args) in candidates {
+        let child = std::process::Command::new(program)
+            .args(&args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Ok(mut child) = child {
+            if let Some(stdin) = child.stdin.as_mut() {
+                if stdin.write_all(text.as_bytes()).is_ok() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// How many terminal rows `text` needs at `width` columns, at least one.
+fn wrapped_rows(text: &str, width: usize) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    let width = width.max(1);
+    text.split('\n')
+        .map(|line| UnicodeWidthStr::width(line).div_ceil(width))
+        .sum::<usize>()
+        .max(1)
 }
 
 fn clip_error(text: &str) -> String {
@@ -2510,6 +2585,14 @@ fn draw_splash(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_wrapped_rows_for_the_oauth_box() {
+        assert_eq!(wrapped_rows("", 10), 0);
+        assert_eq!(wrapped_rows("short", 10), 1);
+        assert_eq!(wrapped_rows(&"x".repeat(25), 10), 3);
+        assert_eq!(wrapped_rows("ab\ncd", 10), 2);
+    }
 
     #[test]
     fn history_search_is_newest_first_and_fuzzy() {
