@@ -1453,7 +1453,7 @@ impl App {
             return Some(format::clip(note, room));
         }
         if self.status.setup {
-            return Some("setup pending — /status".into());
+            return Some("setup pending — /setup owner/repo".into());
         }
         if self.status.errors > 0 {
             return Some(format!("{} health error(s) — /status", self.status.errors));
@@ -1560,7 +1560,13 @@ impl App {
             self.scroll = self.scroll.min(max_scroll);
         }
         if self.lines.is_empty() && !self.busy {
-            draw_splash(frame, body, &self.status, self.started.elapsed());
+            draw_splash(
+                frame,
+                body,
+                &self.status,
+                self.started.elapsed(),
+                self.store.current().is_none() && !self.status.account,
+            );
         } else {
             frame.render_widget(
                 Paragraph::new(self.lines.clone())
@@ -1990,7 +1996,13 @@ fn compose_bottom(input: &str, _cursor: usize, width: u16, hint: Option<Span<'st
     Line::from(spans)
 }
 
-fn draw_splash(frame: &mut Frame, area: Rect, status: &Status, elapsed: Duration) {
+fn draw_splash(
+    frame: &mut Frame,
+    area: Rect,
+    status: &Status,
+    elapsed: Duration,
+    provider_missing: bool,
+) {
     let mut lines: Vec<L> = Vec::new();
     if area.width >= 54 && area.height >= 14 {
         for (row, text) in LOGO.iter().enumerate() {
@@ -2014,6 +2026,12 @@ fn draw_splash(frame: &mut Frame, area: Rect, status: &Status, elapsed: Duration
         status.base.clone(),
         Style::default().fg(FAINT),
     )));
+    if provider_missing {
+        lines.push(Line::from(Span::styled(
+            "no model provider yet · /login",
+            Style::default().fg(TIP),
+        )));
+    }
     lines.push(Line::from(""));
     let tip = TIPS[(elapsed.as_secs() / 10) as usize % TIPS.len()];
     lines.push(Line::from(vec![

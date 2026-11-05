@@ -92,7 +92,6 @@ fn install(cfg: &service::Config) -> Result<(), String> {
     let target = target()?;
     let archive = format!("gh_{VERSION}_{target}.tar.gz");
     let base = format!("https://github.com/cli/cli/releases/download/v{VERSION}");
-    println!("installing gh {VERSION} for the GitHub front door (13 MB)");
     let bytes = fetch(&format!("{base}/{archive}"))?;
     let sums = fetch(&format!("{base}/gh_{VERSION}_checksums.txt"))?;
     let text =
