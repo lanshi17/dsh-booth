@@ -74,6 +74,7 @@ enum Msg {
     Error(String),
     Status(Status),
     Replies(Vec<intake::Reply>),
+    Decisions(Vec<crate::model::Decision>),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
@@ -231,6 +232,8 @@ pub struct App {
     rx: Receiver<Msg>,
     /// Agent messages already shown; the outbox is reread whole on each poll.
     seen: std::collections::HashSet<String>,
+    /// Trigger ids of the instructions this console sent and has not seen judged yet.
+    pending: std::collections::HashSet<String>,
     /// When the transcript last polled the service for status and replies.
     polled: Instant,
 }
@@ -290,6 +293,7 @@ impl App {
             tx,
             rx,
             seen: std::collections::HashSet::new(),
+            pending: std::collections::HashSet::new(),
             polled: Instant::now(),
         }
     }
@@ -335,6 +339,23 @@ impl App {
                     )));
                 }
                 Msg::Status(status) => self.status = status,
+                Msg::Decisions(decisions) => {
+                    for decision in decisions {
+                        let Some(trigger) = decision
+                            .trigger_ids
+                            .iter()
+                            .find(|trigger| self.pending.contains(*trigger))
+                            .cloned()
+                        else {
+                            continue;
+                        };
+                        self.pending.remove(&trigger);
+                        // An accept is already answered by the acknowledgement in the outbox.
+                        if decision.outcome != "accept" {
+                            self.push_decision(&decision);
+                        }
+                    }
+                }
                 Msg::Replies(replies) => {
                     let mut fresh = Vec::new();
                     for reply in replies {
@@ -394,6 +415,24 @@ impl App {
 
     fn push(&mut self, line: L) {
         self.push_lines(vec![line]);
+    }
+
+    /// Shows why the agent did not take an instruction; silence is the one answer a console cannot show.
+    fn push_decision(&mut self, decision: &crate::model::Decision) {
+        let label = match decision.outcome.as_str() {
+            "ignore" => "agent · not taken",
+            "unavailable" => "agent · could not judge",
+            "stop" => "agent · stopped",
+            other => other,
+        };
+        self.push(Line::from(vec![
+            Span::styled("  ◇ ", Style::default().fg(FAINT)),
+            Span::styled(label.to_owned(), Style::default().fg(FAINT)),
+            Span::styled(
+                format!("  {}", format::reason(&decision.reason)),
+                Style::default().fg(MUTED),
+            ),
+        ]));
     }
 
     /// Shows one message the agent wrote back: an acknowledgement, a reply, or a notice.
@@ -467,6 +506,7 @@ impl App {
         };
         match intake::send(&config, text) {
             Ok(id) => {
+                self.pending.insert(format!("local-{id}"));
                 self.push(Line::from(vec![
                     Span::styled("  ↑ ", Style::default().fg(GREEN)),
                     Span::styled("sent to the agent", Style::default().fg(GREEN)),
@@ -502,7 +542,14 @@ impl App {
         let api = self.api.clone();
         let tx = self.tx.clone();
         let config = self.config.clone();
+        let pending = !self.pending.is_empty();
+        let decisions = self.api.clone();
         std::thread::spawn(move || {
+            if pending {
+                if let Ok(view) = decisions.decisions() {
+                    let _ = tx.send(Msg::Decisions(view.items));
+                }
+            }
             if let Some(config) = &config {
                 let replies = intake::replies(config);
                 if !replies.is_empty() {

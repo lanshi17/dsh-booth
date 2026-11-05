@@ -265,6 +265,8 @@ pub struct Decision {
     pub preview: Option<String>,
     pub dismissed: Option<bool>,
     pub rules: Vec<Value>,
+    /// The Triggers this decision judged; the console matches the instructions it sent by these.
+    pub trigger_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
