@@ -22,6 +22,8 @@ pub struct FakeApi {
     pub failures: Arc<Mutex<Vec<(u16, String)>>>,
     /// How many `/state` answers to refuse before the service "comes back".
     pub state_failures: Arc<Mutex<usize>>,
+    /// How many `/settings` answers to refuse, the way a restart does.
+    pub settings_failures: Arc<Mutex<usize>>,
     pub puts: Puts,
     #[allow(dead_code)]
     /// Bodies for the other GET routes, by path; the tests that need one extend this.
@@ -36,6 +38,7 @@ impl FakeApi {
         let puts = Arc::new(Mutex::new(Vec::new()));
         let failures = Arc::new(Mutex::new(Vec::new()));
         let state_failures = Arc::new(Mutex::new(0usize));
+        let settings_failures = Arc::new(Mutex::new(0usize));
         let routes = Arc::new(Mutex::new(vec![
             (
                 "/state".to_owned(),
@@ -64,6 +67,7 @@ impl FakeApi {
             routes.clone(),
             failures.clone(),
             state_failures.clone(),
+            settings_failures.clone(),
         );
         std::thread::spawn(move || serve(listener, shared));
         Self {
@@ -72,8 +76,14 @@ impl FakeApi {
             puts,
             failures,
             state_failures,
+            settings_failures,
             routes,
         }
+    }
+
+    /// Makes `/settings` refuse this many times first, as a restarting service does.
+    pub fn refuse_settings(&self, times: usize) {
+        *self.settings_failures.lock().unwrap() = times;
     }
 
     /// Makes `/state` refuse this many times first, as a restarting service does.
@@ -127,9 +137,16 @@ type Failures = Arc<Mutex<Vec<(u16, String)>>>;
 
 fn serve(
     listener: TcpListener,
-    shared: (Arc<Mutex<Value>>, Puts, Routes, Failures, Arc<Mutex<usize>>),
+    shared: (
+        Arc<Mutex<Value>>,
+        Puts,
+        Routes,
+        Failures,
+        Arc<Mutex<usize>>,
+        Arc<Mutex<usize>>,
+    ),
 ) {
-    let (settings, puts, routes, failures, state_failures) = shared;
+    let (settings, puts, routes, failures, state_failures, settings_failures) = shared;
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
         let (settings, puts, routes, failures) = (
@@ -139,6 +156,7 @@ fn serve(
             failures.clone(),
         );
         let state_failures = state_failures.clone();
+        let settings_failures = settings_failures.clone();
         std::thread::spawn(move || {
             let mut raw = Vec::new();
             let mut buffer = [0u8; 8192];
@@ -224,7 +242,14 @@ fn serve(
                     (200, body)
                 }
             } else if path.ends_with("/settings") {
-                (200, settings.lock().unwrap().clone())
+                let mut left = settings_failures.lock().unwrap();
+                if *left > 0 {
+                    *left -= 1;
+                    (503, json!({ "error": "restarting" }))
+                } else {
+                    drop(left);
+                    (200, settings.lock().unwrap().clone())
+                }
             } else {
                 let known = routes
                     .lock()

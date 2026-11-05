@@ -371,7 +371,17 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     let registration = wait_budget().min(Duration::from_secs(30));
     let deadline = Instant::now() + registration;
     let settings = loop {
-        let settings = api.settings()?;
+        // A restart mid-read answers with a transport error or a 5xx; that is the same "not
+        // back yet" as an empty registry, so the loop retries instead of failing the setup.
+        let settings = match api.settings() {
+            Ok(settings) => settings,
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+                sleep(Duration::from_millis(500));
+                continue;
+            }
+            Err(error) => return Err(error.to_string()),
+        };
         if installed(&settings, "github") && installed(&settings, "local") {
             break settings;
         }
@@ -1269,6 +1279,8 @@ mod api_tests {
         // A generous budget: the point is that setup waits instead of failing at once.
         std::env::set_var("BOOTH_WAIT_SECONDS", "20");
         let api = FakeApi::start();
+        // Both reads a restart interrupts: the registry snapshot and the readiness answer.
+        api.refuse_settings(2);
         api.refuse_state(2);
         let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
         let text: String = lines
