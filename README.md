@@ -299,6 +299,8 @@ falls back to the profile's own default model.
   by the profile next to `dsh-superagent/github-watch`, so instructions pass the same Policy
   gate and Eval as a GitHub issue. Removing that bundle removes the console's door, not its
   reads.
+- **The bundle stays read-only.** booth talks to `dsh-superagent` only through the management
+  API and never edits its source.
 
 ## Compatibility
 
