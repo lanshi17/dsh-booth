@@ -93,3 +93,9 @@ Feature: 首发元数据完整
 ## Revisions
 
 - v1（初稿）：范围定为 A–E 五个缺陷 + 发布元数据。审查以“能否发布”为标准，不顺手重构。
+- v2（供应链层触发）：`cargo audit` 报 4 条告警，全部来自传递依赖——
+  `ratatui 0.29 → lru 0.12.5`（两条 unsound）与 `paste`（unmaintained），
+  `serde_yaml → unsafe-libyaml`（unmaintained）。改为 `ratatui 0.30` + `serde_norway 0.9`。
+  这不是新增功能依赖，是替换被标记的传递依赖；改动范围仍是 A–E + 发布元数据，
+  但 Must NOT 里“不引入新 crate”按此解释：不增加**新的**依赖，允许替换已标记者。
+  `cargo audit` 归零，81 个测试仍全过。

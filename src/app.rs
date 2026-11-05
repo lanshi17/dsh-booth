@@ -2694,3 +2694,267 @@ mod tests {
         assert_eq!(matching_history(&history, "").len(), 3);
     }
 }
+
+#[cfg(test)]
+mod transcript_tests {
+    use super::*;
+    use crate::model::{Decision, TicketRow};
+    use crate::testkit::FakeApi;
+    use serde_json::json;
+
+    /// A console around a temp state directory, with no terminal and no poll threads started.
+    ///
+    /// `App::new` reads the config from the environment, so the test sets it; nothing here draws
+    /// or reads a key, which is the only part of the console that needs a tty.
+    fn console(name: &str) -> (App, std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
+        // The console reads its state directory from the environment.
+        let guard = crate::testkit::env_lock();
+        let dir =
+            std::env::temp_dir().join(format!("booth-console-{name}-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("BOOTH_STATE_DIR", &dir);
+        std::env::set_var("DSH_HOME", &dir);
+        let api = FakeApi::start();
+        (App::new(Api::new(&api.base)), dir, guard)
+    }
+
+    fn text(app: &App) -> String {
+        app.lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn row(id: &str, stage: &str, action: Option<&str>) -> TicketRow {
+        TicketRow {
+            id: id.to_owned(),
+            title: "a ticket".into(),
+            state: "open".into(),
+            stage: stage.to_owned(),
+            action: action.map(str::to_owned),
+            ..TicketRow::default()
+        }
+    }
+
+    #[test]
+    fn a_ticket_stage_is_reported_once_per_change() {
+        let (mut app, dir, _env) = console("stages");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "new".into(),
+            },
+        );
+        app.show_tickets(vec![row("abcdef1234567890", "working", None)]);
+        assert!(text(&app).contains("abcdef12 · working"), "{}", text(&app));
+
+        // The same stage again says nothing new.
+        let before = app.lines.len();
+        app.show_tickets(vec![row("abcdef1234567890", "working", None)]);
+        assert_eq!(app.lines.len(), before, "a repeated stage is not repeated");
+
+        // A stage with an action names the action.
+        app.show_tickets(vec![row("abcdef1234567890", "person", Some("review"))]);
+        assert!(
+            text(&app).contains("abcdef12 · needs a person · review"),
+            "{}",
+            text(&app)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_closed_ticket_stops_being_followed_and_releases_the_thread() {
+        let (mut app, dir, _env) = console("closed");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        app.continues = Some(Follow {
+            thread: "t-1".into(),
+            ticket: "abcdef1234567890".into(),
+        });
+        app.replied.insert("abcdef1234567890".into());
+        app.show_tickets(vec![TicketRow {
+            id: "abcdef1234567890".into(),
+            state: "ended".into(),
+            stage: "idle".into(),
+            ..TicketRow::default()
+        }]);
+        assert!(text(&app).contains("abcdef12 · closed"), "{}", text(&app));
+        // With a reply already shown, the summary is not printed twice.
+        assert!(!text(&app).contains("report"), "{}", text(&app));
+        assert!(app.tracked.is_empty(), "a closed ticket is not tracked");
+        assert!(app.continues.is_none(), "the thread is released");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_silent_report_falls_back_to_the_summary() {
+        let (mut app, dir, _env) = console("silent");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        app.show_tickets(vec![TicketRow {
+            id: "abcdef1234567890".into(),
+            state: "ended".into(),
+            stage: "idle".into(),
+            summary: Some("the worker changed the README".into()),
+            ..TicketRow::default()
+        }]);
+        let shown = text(&app);
+        assert!(shown.contains("report"), "{shown}");
+        assert!(shown.contains("the worker changed the README"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_declined_instruction_shows_the_agents_sentence() {
+        let (mut app, dir, _env) = console("declined");
+        app.push_decision(&Decision {
+            outcome: "ignore".into(),
+            reason: json!([{ "code": "said", "values": { "text": "打招呼，没有具体改动请求" } }]),
+            trigger_ids: vec!["local-1".into()],
+            ..Decision::default()
+        });
+        let shown = text(&app);
+        assert!(shown.contains("not taken"), "{shown}");
+        assert!(shown.contains("打招呼，没有具体改动请求"), "{shown}");
+        assert!(
+            !shown.contains("said"),
+            "the reason code is not shown: {shown}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_unavailable_judgement_says_what_to_do_next() {
+        let (mut app, dir, _env) = console("unavailable");
+        app.push_decision(&Decision {
+            outcome: "unavailable".into(),
+            reason: json!([{ "code": "timeout" }]),
+            trigger_ids: vec!["local-abc".into()],
+            ..Decision::default()
+        });
+        let shown = text(&app);
+        assert!(shown.contains("could not judge"), "{shown}");
+        assert!(shown.contains("timeout"), "{shown}");
+        // The advice names both the cause and the way back.
+        assert!(shown.contains("Eval timeout"), "{shown}");
+        assert!(shown.contains("/requeue abc"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_agent_reply_names_its_ticket_and_kind() {
+        let (mut app, dir, _env) = console("reply");
+        app.push_agent(intake::Reply {
+            id: "m1".into(),
+            kind: "acknowledgement".into(),
+            text: "收到".into(),
+            ticket: Some("abcdef1234567890".into()),
+        });
+        let shown = text(&app);
+        assert!(shown.contains("accepted"), "{shown}");
+        assert!(shown.contains("abcdef12"), "{shown}");
+        assert!(shown.contains("收到"), "{shown}");
+        assert!(
+            app.replied.contains("abcdef1234567890"),
+            "the ticket is marked answered"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bare_text_is_written_to_the_inbox_and_a_command_is_not() {
+        let (mut app, dir, _env) = console("submit");
+        app.input = "把 README 的错字改掉".into();
+        app.submit();
+        let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
+        assert!(inbox.contains("把 README 的错字改掉"), "{inbox}");
+        assert!(text(&app).contains("sent to the agent"), "{}", text(&app));
+
+        // A slash line goes to the command grammar instead of the agent.
+        app.input = "/nonexistent".into();
+        app.submit();
+        assert!(
+            !std::fs::read_to_string(dir.join("booth-inbox.jsonl"))
+                .unwrap()
+                .contains("nonexistent"),
+            "a command must not reach the agent"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_follow_up_continues_the_ticket_the_console_accepted() {
+        let (mut app, dir, _env) = console("follow");
+        app.continues = Some(Follow {
+            thread: "t-1".into(),
+            ticket: "abcdef1234567890".into(),
+        });
+        app.input = "改成另一种写法".into();
+        app.submit();
+        let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
+        assert!(inbox.contains("\"thread\":\"t-1\""), "{inbox}");
+        assert!(
+            text(&app).contains("follow-up to abcdef12"),
+            "{}",
+            text(&app)
+        );
+        // A follow-up fans out without a decision, so it is not awaited as one.
+        assert!(
+            app.pending.is_empty(),
+            "a follow-up is not pending a judgement"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bootstrap_announces_the_ticket_it_resumes() {
+        let (mut app, dir, _env) = console("bootstrap");
+        app.continues = Some(Follow {
+            thread: "t-1".into(),
+            ticket: "abcdef1234567890".into(),
+        });
+        app.bootstrap();
+        let shown = text(&app);
+        assert!(shown.contains("continuing ticket abcdef12"), "{shown}");
+        assert!(shown.contains("/new starts a new ticket"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn new_starts_a_new_ticket_and_forgets_the_follow_target() {
+        let (mut app, dir, _env) = console("new");
+        app.continues = Some(Follow {
+            thread: "t-1".into(),
+            ticket: "abcdef1234567890".into(),
+        });
+        app.input = "/new".into();
+        app.submit();
+        assert!(app.continues.is_none(), "/new releases the ticket");
+        assert!(text(&app).contains("starts a new ticket"), "{}", text(&app));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_long_input_is_truncated_to_the_composer_width() {
+        let line = compose_bottom(&"x".repeat(200), 0, 40, None);
+        let width: usize = line
+            .spans
+            .iter()
+            .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
+            .sum();
+        assert!(width <= 40, "the composer stays inside its width: {width}");
+        // The rails and the prompt survive the truncation.
+        let text = line.to_string();
+        assert!(text.starts_with('╰') && text.ends_with('╯'), "{text}");
+    }
+}

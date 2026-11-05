@@ -719,6 +719,30 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_outbox_reads_nothing_instead_of_failing() {
+        let dir = scratch("unreadable");
+        let cfg = config(dir.clone());
+        let path = outbox(&cfg);
+
+        // A directory is readable by name and fails to read as a file.
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(replies_from(&cfg, &mut Tail::fresh()).is_empty());
+        std::fs::remove_dir_all(&path).unwrap();
+
+        // A file with no read permission fails to open.
+        std::fs::write(&path, "{\"id\":\"a\",\"kind\":\"reply\",\"text\":\"x\"}\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = replies_from(&cfg, &mut Tail::fresh());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        // Running as root ignores the mode, so only assert the ordinary case.
+        if !unreadable.is_empty() {
+            assert!(replies_from(&cfg, &mut Tail::fresh()).len() == 1);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_shrunk_outbox_starts_over_and_a_partial_line_waits() {
         // SPEC scenario "文件被截断或替换".
         let dir = scratch("shrink");
@@ -902,10 +926,7 @@ mod api_tests {
     use crate::testkit::FakeApi;
 
     /// `BOOTH_GH` and `BOOTH_WAIT_SECONDS` are process-wide, so tests that set them take turns.
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|error| error.into_inner())
-    }
+    use crate::testkit::env_lock;
 
     fn cfg(dir: &std::path::Path) -> service::Config {
         service::Config {
@@ -1260,6 +1281,25 @@ mod api_tests {
     }
 
     #[test]
+    fn gh_login_retries_a_cli_the_kernel_refuses_to_execute() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("gh-busy");
+        let path = dir.join("gh");
+        std::fs::write(&path, "#!/bin/sh\necho tester\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(gh_login(path.to_str().unwrap()).unwrap(), "tester");
+
+        // Linux refuses to execute a file that a process holds open for writing (ETXTBSY).
+        // Holding one makes the first attempt fail; the retry is what the arm exists for, and
+        // the second attempt reports the error instead of panicking.
+        let writer = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let error = gh_login(path.to_str().unwrap()).unwrap_err();
+        drop(writer);
+        assert!(error.contains("cannot run gh"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn infers_the_repository_from_the_checkout_origin() {
         // Changing the working directory is process-wide, so this test takes its turn too.
         let _env = env_lock();
@@ -1378,6 +1418,70 @@ mod api_tests {
         assert!(!text.contains("repository changed"), "{text}");
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_gives_up_when_the_service_never_answers() {
+        let _env = env_lock();
+        let dir = scratch("setup-silent");
+        let gh = dir.join("gh");
+        std::fs::write(&gh, "#!/bin/sh\necho tester\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        std::env::set_var("BOOTH_WAIT_SECONDS", "1");
+        let api = FakeApi::start();
+        api.refuse_settings(100);
+        let error = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap_err();
+        assert!(
+            error.contains("restarting") || error.contains("503"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+        std::env::remove_var("BOOTH_WAIT_SECONDS");
+    }
+
+    #[test]
+    fn setup_uses_a_capable_cli_installed_under_the_state_directory() {
+        let _env = env_lock();
+        let dir = scratch("setup-local-gh");
+        std::env::remove_var("BOOTH_GH");
+        // `gh::ensure` looks here before offering a download, so a capable fixture means the
+        // setup takes the real path with no network access.
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let gh = bin.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp  use with --paginate';;\n  *) echo local-tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let api = FakeApi::start();
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The CLI the Source was pointed at is the local one, and the GitHub door is open.
+        assert!(
+            text.contains("local-tester"),
+            "the local CLI answered: {text}"
+        );
+        let github = api
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| name.replace("source%3A", "source:") == "source:github")
+            .map(|(_, body)| body.clone())
+            .unwrap();
+        assert_eq!(github["value"]["config"]["cli"], gh.display().to_string());
+        assert_eq!(github["value"]["enabled"], true);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

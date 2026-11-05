@@ -15,10 +15,16 @@ if ! command -v cargo-mutants >/dev/null 2>&1; then
   exit 1
 fi
 
+# `--file` takes one path per flag, so the list is turned into repeated flags.
 FILES=${MUTANTS_FILES:-"src/intake.rs src/service.rs src/app.rs"}
+file_flags=()
+for file in $FILES; do
+  file_flags+=(--file "$file")
+done
+
 # A time budget keeps the layer usable; a timeout is reported as unfinished, not as a pass.
 timeout "${MUTANTS_TIMEOUT:-1800}" cargo mutants \
-  --file ${FILES//,/ } \
+  "${file_flags[@]}" \
   --timeout 120 \
   --no-shuffle \
   --output target/mutants \

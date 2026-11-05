@@ -1,1 +1,7 @@
-# Tool versions the gauntlet ran with. Regenerate with: tools/versions.sh > tools/versions.txt
+rustc   rustc 1.93.0 (254b59607 2026-01-19)
+cargo   cargo 1.93.0 (083ac5135 2025-12-15)
+mutants cargo-mutants 27.1.0
+audit   cargo-audit-audit 0.22.2
+llvm-cov cargo-llvm-cov 0.9.1
+python3 Python 3.14.4
+tar     tar (GNU tar) 1.35

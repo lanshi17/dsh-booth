@@ -9,6 +9,15 @@ use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
 
+/// A process-wide lock for tests that set environment variables or change the working directory.
+///
+/// cargo runs tests in parallel threads of one process, so `std::env::set_var` in one test is
+/// visible to another. Every test that reads or writes such state takes this first.
+pub fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    LOCK.lock().unwrap_or_else(|error| error.into_inner())
+}
+
 /// A route body keyed by the path suffix it answers.
 type Routes = Arc<Mutex<Vec<(String, Value)>>>;
 /// Every PUT the service received, by block name, with its body.
