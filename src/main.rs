@@ -62,6 +62,8 @@ enum Command {
     },
     /// Show the model provider booth starts the service with.
     Provider,
+    /// Move the DSH sessions aside so the next turn uses the configured model.
+    ResetSessions,
     /// Hand one instruction to the agent, as typing it in the console does.
     Send {
         #[arg(required = true, trailing_var_arg = true)]
@@ -197,6 +199,14 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Restart => service::restart(&service::Config::from_env()?),
         Command::Logs { lines } => service::logs(&service::Config::from_env()?, lines),
         Command::Provider => show_provider(),
+        Command::ResetSessions => {
+            let cfg = service::Config::from_env()?;
+            match service::reset_sessions(&cfg)? {
+                Some(path) => println!("sessions moved to {}", path.display()),
+                None => println!("no sessions to move"),
+            }
+            Ok(())
+        }
         Command::Send { text } => {
             let cfg = service::Config::from_env()?;
             let id = intake::send(&cfg, &text.join(" "), None)?;

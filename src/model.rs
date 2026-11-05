@@ -14,6 +14,8 @@ pub struct Health {
     pub state: String,
     pub detail: String,
     pub at: Option<String>,
+    /// The bundle's machine-readable code, such as `pollFailures` or `setupPending`.
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

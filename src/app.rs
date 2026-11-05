@@ -171,6 +171,8 @@ struct Status {
     note: Option<String>,
     account: bool,
     repository: Option<String>,
+    /// The name of the first health entry in error, so the alert can say which part is failing.
+    first_error: Option<String>,
 }
 
 impl Status {
@@ -187,6 +189,7 @@ impl Status {
             note: None,
             account: false,
             repository: None,
+            first_error: None,
         }
     }
 
@@ -215,6 +218,14 @@ impl Status {
                 .values()
                 .filter(|health| health.state == "error")
                 .count(),
+            first_error: state
+                .health
+                .iter()
+                .find(|(_, health)| health.state == "error")
+                .map(|(name, health)| match health.code.as_deref() {
+                    Some(code) => format!("{name} ({code})"),
+                    None => name.clone(),
+                }),
             setup: state.setup.problem.is_some(),
             note: None,
             account: oauth::account_signed_in(),
@@ -507,6 +518,19 @@ impl App {
                         ]));
                         if let Some(cfg) = &self.config {
                             let _ = std::fs::remove_file(provider::overlay(cfg));
+                            // Sessions created while an API-key provider was default keep that
+                            // provider; once it is gone every turn fails with NO_ADAPTER.
+                            match service::reset_sessions(cfg) {
+                                Ok(Some(path)) => self.push(Line::from(Span::styled(
+                                    format!(
+                                        "previous sessions moved to {} · the next turn uses the account",
+                                        path.display()
+                                    ),
+                                    Style::default().fg(FAINT),
+                                ))),
+                                Ok(None) => {}
+                                Err(error) => self.push(warn_line(&error)),
+                            }
                         }
                         self.restart_service();
                     }
@@ -623,14 +647,39 @@ impl App {
             "stop" => "agent · stopped",
             other => other,
         };
+        let reason = format::reason(&decision.reason);
+        let advice = match (decision.outcome.as_str(), reason.as_str()) {
+            ("unavailable", "timeout") => {
+                Some("the judgement ran past the Eval timeout · the panel's Eval block raises it")
+            }
+            ("unavailable", "noAdapter") => Some(
+                "the session names a provider that is gone · `booth reset-sessions` moves it aside",
+            ),
+            ("unavailable", _) => {
+                Some("a model failure, not a judgement · /status and the panel show it")
+            }
+            _ => None,
+        };
         self.push(Line::from(vec![
             Span::styled("  ◇ ", Style::default().fg(FAINT)),
             Span::styled(label.to_owned(), Style::default().fg(FAINT)),
-            Span::styled(
-                format!("  {}", format::reason(&decision.reason)),
-                Style::default().fg(MUTED),
-            ),
+            Span::styled(format!("  {reason}"), Style::default().fg(MUTED)),
         ]));
+        if let Some(advice) = advice {
+            self.push(Line::from(Span::styled(
+                format!("    {advice}"),
+                Style::default().fg(FAINT),
+            )));
+        }
+        if decision.outcome == "unavailable" {
+            if let Some(trigger) = decision.trigger_ids.first() {
+                let short = trigger.strip_prefix("local-").unwrap_or(trigger);
+                self.push(Line::from(Span::styled(
+                    format!("    /requeue {short} puts it back in the agent's queue"),
+                    Style::default().fg(FAINT),
+                )));
+            }
+        }
     }
 
     /// Shows one message the agent wrote back: an acknowledgement, a reply, or a notice.
@@ -1569,6 +1618,19 @@ impl App {
                                 Style::default(),
                             ),
                         ]));
+                        // A session keeps the provider it was created with, so switching to a
+                        // provider that is not registered any more would break every turn.
+                        match service::reset_sessions(&cfg) {
+                            Ok(Some(path)) => self.push(Line::from(Span::styled(
+                                format!(
+                                    "previous sessions moved to {} · they used another provider",
+                                    path.display()
+                                ),
+                                Style::default().fg(FAINT),
+                            ))),
+                            Ok(None) => {}
+                            Err(error) => self.push(warn_line(&error)),
+                        }
                         self.restart_service();
                     }
                     Err(error) => {
@@ -1699,6 +1761,9 @@ impl App {
         }
         if self.status.setup {
             return Some("setup pending — /setup owner/repo".into());
+        }
+        if let Some(entry) = &self.status.first_error {
+            return Some(format!("{} is failing · /status shows it", entry));
         }
         if self.status.errors > 0 {
             return Some(format!("{} health error(s) — /status", self.status.errors));

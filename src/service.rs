@@ -247,6 +247,53 @@ pub fn restart(cfg: &Config) -> Result<(), String> {
     start(cfg)
 }
 
+/// The DSH session tree for this state directory, such as
+/// `~/.dsh/sessions/--home-me-.dsh-state-superagent--`.
+pub fn session_root(cfg: &Config) -> PathBuf {
+    let encoded = format!(
+        "--{}--",
+        cfg.state_dir
+            .display()
+            .to_string()
+            .trim_start_matches('/')
+            .replace('/', "-")
+    );
+    cfg.dsh_home.join("sessions").join(encoded)
+}
+
+/// Moves the sessions aside so the next ones are created with the current default model.
+///
+/// A DSH session keeps the provider and model it was created with. After a sign-in or a model
+/// switch that provider can disappear, and every turn then fails with `no adapter registered for
+/// provider …` — an error a person cannot act on. The sessions are moved, not deleted, so the
+/// transcripts can still be read.
+pub fn reset_sessions(cfg: &Config) -> Result<Option<PathBuf>, String> {
+    let root = session_root(cfg);
+    if !root.is_dir()
+        || fs::read_dir(&root)
+            .map(|mut it| it.next().is_none())
+            .unwrap_or(true)
+    {
+        return Ok(None);
+    }
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|span| span.as_secs())
+        .unwrap_or_default();
+    let target = cfg.state_dir.join(format!("sessions-{stamp}"));
+    fs::create_dir_all(&target)
+        .map_err(|error| format!("cannot create {}: {error}", target.display()))?;
+    for entry in fs::read_dir(&root)
+        .map_err(|error| format!("cannot read {}: {error}", root.display()))?
+        .flatten()
+    {
+        let destination = target.join(entry.file_name());
+        fs::rename(entry.path(), destination)
+            .map_err(|error| format!("cannot move {} aside: {error}", entry.path().display()))?;
+    }
+    Ok(Some(target))
+}
+
 pub fn logs(cfg: &Config, lines: usize) -> Result<(), String> {
     tail(cfg, lines);
     Ok(())
@@ -503,6 +550,36 @@ mod tests {
             state_dir: root.join("state"),
             bundle: root.join("superagent"),
         }
+    }
+
+    #[test]
+    fn finds_the_session_tree_of_the_state_directory() {
+        let cfg = config("sessions-path");
+        let root = session_root(&cfg);
+        // `/home/me/.dsh/state/superagent` becomes `--home-me-.dsh-state-superagent--`.
+        let encoded = cfg
+            .state_dir
+            .display()
+            .to_string()
+            .trim_start_matches('/')
+            .replace('/', "-");
+        assert_eq!(
+            root.file_name().unwrap().to_string_lossy(),
+            format!("--{encoded}--")
+        );
+        assert!(root.parent().unwrap().ends_with("sessions"));
+    }
+
+    #[test]
+    fn moves_sessions_aside_and_tolerates_none() {
+        let cfg = config("sessions-move");
+        assert_eq!(reset_sessions(&cfg).unwrap(), None);
+        let root = session_root(&cfg);
+        fs::create_dir_all(root.join("orchestrator-x")).unwrap();
+        fs::write(root.join("orchestrator-x").join("session.json"), "{}").unwrap();
+        let moved = reset_sessions(&cfg).unwrap().expect("a move");
+        assert!(moved.join("orchestrator-x").join("session.json").is_file());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
     }
 
     #[test]
