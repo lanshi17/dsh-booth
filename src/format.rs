@@ -96,6 +96,12 @@ pub fn reason(value: &Value) -> String {
         .get("code")
         .and_then(Value::as_str)
         .unwrap_or("reason");
+    // `said` renders as the agent's own sentence, without a code in front of it.
+    if code == "said" {
+        if let Some(text) = value.get("values").and_then(|values| values.get("text")) {
+            return text.as_str().unwrap_or_default().to_string();
+        }
+    }
     match value.get("values") {
         Some(Value::Object(map)) if !map.is_empty() => {
             let parts: Vec<String> = map
@@ -766,8 +772,17 @@ mod tests {
     fn words_a_reason_code_and_its_values() {
         assert_eq!(reason(&json!({"code": "timeout"})), "timeout");
         assert_eq!(
+            reason(&json!({"code": "observed", "values": {"text": "later"}})),
+            "observed (text=later)"
+        );
+        // `said` is the agent's own sentence: no code in front of it.
+        assert_eq!(
             reason(&json!({"code": "said", "values": {"text": "later"}})),
-            "said (text=later)"
+            "later"
+        );
+        assert_eq!(
+            reason(&json!([{"code": "said", "values": {"text": "greeting"}}])),
+            "greeting"
         );
     }
 }
