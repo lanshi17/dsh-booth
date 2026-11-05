@@ -3204,6 +3204,58 @@ mod editor_tests {
     }
 
     #[test]
+    fn the_login_form_value_follows_the_focused_field() {
+        // `value()` is what every editor key writes into, so an arm that returns the wrong
+        // field would edit the base URL while the operator edits the model.
+        let mut form = LoginForm::new(0);
+        // Each field's own text, copied out so the loop can borrow the form mutably.
+        let id = form.id.clone();
+        let base = form.base.clone();
+        let model = form.model.clone();
+        let expected = [
+            (0usize, String::new()), // the preset row is a chooser, not a text field
+            (1, id),
+            (2, base),
+            (3, model),
+            (4, String::new()), // the api row is a chooser
+            (5, String::new()), // the key starts empty
+        ];
+        for (field, want) in expected {
+            form.focus(field);
+            assert_eq!(form.value(), want, "field {field}");
+        }
+        assert_eq!(form.value(), "", "the key field starts empty");
+
+        // The key field is masked on screen, but the value is the key itself.
+        form.key = "sk-test".into();
+        form.focus(5);
+        assert_eq!(form.value(), "sk-test");
+    }
+
+    #[test]
+    fn tab_walks_the_login_form_in_both_directions() {
+        let (mut app, dir, _env) = editor("login-tab");
+        app.modal = Some(Modal::Login(LoginForm::new(0)));
+        let field = |app: &App| match &app.modal {
+            Some(Modal::Login(form)) => form.field,
+            _ => usize::MAX,
+        };
+        assert_eq!(field(&app), 1, "the id field is focused first");
+        app.modal_key(key(KeyCode::Tab));
+        assert_eq!(field(&app), 2);
+        app.modal_key(key(KeyCode::BackTab));
+        assert_eq!(field(&app), 1);
+        // BackTab walks to the preset row, and from there wraps to the last field.
+        app.modal_key(key(KeyCode::BackTab));
+        assert_eq!(field(&app), 0, "the preset row comes before the id");
+        app.modal_key(key(KeyCode::BackTab));
+        assert_eq!(field(&app), 5, "below the first row is the last");
+        app.modal_key(key(KeyCode::Tab));
+        assert_eq!(field(&app), 0, "the last field wraps to the preset");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn the_login_form_edits_one_field_at_a_time() {
         let (mut app, dir, _env) = editor("login-form");
         app.modal = Some(Modal::Login(LoginForm::new(0)));
