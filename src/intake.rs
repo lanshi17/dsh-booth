@@ -584,10 +584,26 @@ fn repository_from_url(url: &str) -> Option<String> {
 }
 
 fn gh_login(program: &str) -> Result<String, String> {
-    let output = Command::new(program)
-        .args(["api", "user", "--jq", ".login"])
-        .output()
-        .map_err(|error| format!("cannot run gh: {error}; install the GitHub CLI"))?;
+    // A CLI written moments ago can still be open for writing elsewhere in the process, and the
+    // kernel then refuses to execute it (`ETXTBSY`); one retry covers that window.
+    let mut attempt = 0;
+    let output = loop {
+        match Command::new(program)
+            .args(["api", "user", "--jq", ".login"])
+            .output()
+        {
+            Ok(output) => break output,
+            Err(error)
+                if attempt == 0 && error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
+            {
+                attempt += 1;
+                sleep(Duration::from_millis(50));
+            }
+            Err(error) => {
+                return Err(format!("cannot run gh: {error}; install the GitHub CLI"));
+            }
+        }
+    };
     if !output.status.success() {
         return Err(format!(
             "gh is not signed in: {}",
@@ -1215,11 +1231,15 @@ mod api_tests {
     #[test]
     fn gh_login_reports_a_missing_account_and_a_failed_cli() {
         let dir = scratch("gh-login");
+        // Written under another name and renamed into place: a file some other thread still
+        // holds open cannot be executed, and a rename never leaves one at the final path.
         let write = |name: &str, body: &str| {
-            let path = dir.join(name);
-            std::fs::write(&path, body).unwrap();
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let staged = dir.join(format!(".{name}.staged"));
+            std::fs::write(&staged, body).unwrap();
+            std::fs::set_permissions(&staged, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let path = dir.join(name);
+            std::fs::rename(&staged, &path).unwrap();
             path
         };
         let ok = write("ok", "#!/bin/sh\necho tester\n");
