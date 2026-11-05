@@ -94,6 +94,7 @@ booth retry t-7f3a9c2e1b           # start a fresh assignment
 booth pause                        # / booth resume
 booth send "把 README 里的错字改掉"  # hand one instruction to the agent
 booth setup owner/name             # repository + allowed senders, from the shell
+booth gh                           # the GitHub CLI the Source would use
 ```
 
 Every read command takes `--json` and prints the view as served, for scripts and the hourly
@@ -124,7 +125,7 @@ check the deployment guide asks for.
 Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, plus
-`/send`, `/setup`, `/model`, `/provider`, `/login`, `/clear` and `/quit`.
+`/send`, `/setup`, `/new`, `/model`, `/provider`, `/login`, `/clear` and `/quit`.
 
 ## Sending work
 
@@ -140,6 +141,29 @@ Booth ships a third one, `local-source/`, so the console itself is a front door:
 - the GitHub and Feishu Sources keep working as before — booth adds a door, it does not replace
   them.
 
+The console follows what it sent:
+
+```text
+  ❯ 在 README 里加一句：这一行由 booth 控制台发起
+  ↑ sent to the agent  b4e50b13 · picks it up within a second
+  ◆ agent · accepted  2457786b
+    收到：在 README 里加一句“这一行由 booth 控制台发起”。
+  ◇ ticket 2457786b · working
+  ◇ ticket 2457786b · needs a person · review
+  ◆ agent  2457786b
+    [PR #2](https://github.com/lanshi17/booth-sandbox/pull/2) 已按改后的措辞加上…，可审阅。
+```
+
+- **A greeting is not work.** The agent answers `hi` with a reason, not a ticket:
+  `◇ agent · not taken  打招呼，没有具体改动请求`. Requests need a concrete change.
+- **Follow-ups continue the ticket.** After an accept, the next instruction goes to that
+  ticket's thread, so “改成 …” revises the same work; the composer's top rail shows
+  `↳ <ticket>`, and the choice survives a console restart. `/new` starts a new ticket.
+- **A silent report is not lost.** When the agent did not also send a reply, the console prints
+  the ticket's own summary under `◇ ticket … · report`.
+- **No decision is still an answer.** After 20 seconds without a judgement the console says so,
+  and `/sources` / `/status` explain whether the Source or the service is the reason.
+
 `/setup` names the repository and the people who may ask for work:
 
 ```text
@@ -151,11 +175,28 @@ Booth ships a third one, `local-source/`, so the console itself is a front door:
 It reads the signed-in `gh` account and writes three settings blocks through the management
 API: the GitHub Source (repository, CLI, new Issues on), the Policy (that account for GitHub,
 `operator` for the console), and the console Source itself. Run inside a checkout, the
-repository can be inferred: `/setup`. An optional second argument is the directory workers
-work in: `/setup owner/name ~/src/name`. `booth setup owner/name` does the same from a shell.
+repository can be inferred: `/setup`. An optional second argument moves the ticket directories:
+`/setup owner/name ~/src/work`. `booth setup owner/name` does the same from a shell.
+
+The bundle's GitHub reads use `gh api --slurp`, which CLIs before 2.57 reject. When the system
+`gh` is older, `/setup` downloads a pinned release into `<state>/bin/gh`, checks it against the
+published SHA-256 and points the Source at it — the GitHub front door works without touching
+the system CLI. `booth gh` reports the choice; `booth gh --install` installs it on demand.
 
 The concurrency limit, the worker model and the prompts stay where they were: `/model` and the
 web panel.
+
+## When nothing seems to happen
+
+| What you see | What it means |
+| --- | --- |
+| `◇ agent · not taken  …` | The agent judged the instruction and declined; its sentence says why (a greeting, no concrete change, an unrelated request) |
+| `⋯ no decision yet` | The Source has not produced a judgement after 20 s; `/sources` shows whether it is polling and `/status` shows health |
+| `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and a follow-up message answers it |
+| `↑ sent …` and no further line | The console wrote the instruction but the service is down or still starting; `booth status`, `booth logs` |
+
+The web panel at the same port is the same service; anything the console cannot edit (policy
+rules, prompts, concurrency) is there.
 
 ## Providers
 

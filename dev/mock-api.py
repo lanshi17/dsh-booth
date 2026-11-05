@@ -20,7 +20,9 @@ THREAD = {
  "latest":{"actor":{"source":"github","id":"alice","name":{"zh":"爱丽丝","en":"Alice"}},"human":True,"at":"2026-11-04T10:12:00.000Z","preview":"What about option B?"},
  "url":"https://github.com/o/r/issues/12",
 }
-DECISION = {"id":"d-1","kind":"accept","outcome":"accept","reason":{"code":"addressed"},"at":"2026-11-04T09:00:30.000Z","strength":"hard","ticketId":ROW["id"],"thread":"github:o/r#12","threadTitle":"Issue #12 flaky retry","preview":"@agent please fix this","dismissed":False}
+DECISION = {"id":"d-1","kind":"accept","outcome":"accept","reason":[{"code":"addressed"}],"at":"2026-11-04T09:00:30.000Z","strength":"hard","ticketId":ROW["id"],"triggerIds":["tr-1"],"thread":"github:o/r#12","threadTitle":"Issue #12 flaky retry","preview":"@agent please fix this","dismissed":False}
+# A greeting the agent declined: the console prints this as `◇ agent · not taken`.
+IGNORED = {"id":"d-2","kind":"ignore","outcome":"ignore","reason":[{"code":"said","values":{"text":"打招呼，没有具体改动请求"}}],"at":"2026-11-04T10:20:00.000Z","strength":"explicit","triggerIds":["tr-2"],"thread":"local:t-demo","threadTitle":"hi","preview":"hi","dismissed":False}
 DETAIL = dict(ROW)
 DETAIL.update({
  "mandate":{"actor":{"source":"github","id":"alice","name":{"zh":"爱丽丝","en":"Alice"}},"strength":"hard"},
@@ -34,11 +36,11 @@ DETAIL.update({
 })
 
 ROUTES = {
- "/orchestrator/api/state": {"paused":False,"masterId":"orchestrator-abc","health":{"runtime":{"state":"ready","detail":""},"github":{"state":"ready","detail":"last poll 20s ago"},"evals":{"state":"ready","detail":"no unavailable Eval"}},"load":{"running":1,"queued":0},"setup":{"problem":None,"accounts":{"repository":"o/r","agent":"agent-bot"}}},
+ "/orchestrator/api/state": {"paused":False,"masterId":"orchestrator-abc","health":{"runtime":{"state":"ready","detail":""},"github":{"state":"ready","detail":"last poll 20s ago"},"local":{"state":"ready","detail":"Waiting for an instruction"},"evals":{"state":"ready","detail":"no unavailable Eval"}},"load":{"running":1,"queued":0},"setup":{"problem":None,"accounts":{"repository":"o/r","agent":"agent-bot"}}},
  "/orchestrator/api/overview": {"problems":[{"kind":"source-error","source":{"id":"feishu","title":"Feishu","health":{"state":"error","detail":"bot CLI not configured"}}}],"person":[ROW],"executor":{"running":1,"queued":0,"maxWorkers":4,"idle":2},"flow":{"received":12,"filtered":3,"triggers":9,"judged":8,"accepted":2,"evaluating":1,"dropped":0},"policyVersion":"8f3a2c9d1e4b"},
  "/orchestrator/api/tickets": {"items":[ROW],"total":1,"next_offset":None},
  "/orchestrator/api/threads": {"items":[THREAD],"total":1,"next_offset":None},
- "/orchestrator/api/decisions": {"items":[DECISION],"total":1},
+ "/orchestrator/api/decisions": {"items":[DECISION,IGNORED],"next_offset":None},
  "/orchestrator/api/sources": [{"id":"github","kind":"github","title":"GitHub","state":"ready","enabled":True,"installed":True,"health":[{"state":"ready","detail":"ok"}],"stats":{"received":9,"filtered":2,"lastAt":"2026-11-04T10:11:00.000Z"}},{"id":"feishu","kind":"feishu","title":"Feishu","state":"error","enabled":False,"installed":True,"health":[{"state":"error","detail":"bot CLI not configured"}]}],
  "/orchestrator/api/search": {"tickets":[ROW],"threads":[THREAD],"items":[]},
 }

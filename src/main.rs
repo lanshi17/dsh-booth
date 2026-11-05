@@ -8,6 +8,7 @@ mod api;
 mod app;
 mod commands;
 mod format;
+mod gh;
 mod intake;
 mod model;
 mod oauth;
@@ -65,6 +66,12 @@ enum Command {
     Send {
         #[arg(required = true, trailing_var_arg = true)]
         text: Vec<String>,
+    },
+    /// Report the GitHub CLI the GitHub Source would use, or install a newer one.
+    Gh {
+        /// Download the pinned release when the system gh is too old.
+        #[arg(long)]
+        install: bool,
     },
     /// Name the repository and the people who may ask for work.
     Setup {
@@ -192,8 +199,44 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Provider => show_provider(),
         Command::Send { text } => {
             let cfg = service::Config::from_env()?;
-            let id = intake::send(&cfg, &text.join(" "))?;
+            let id = intake::send(&cfg, &text.join(" "), None)?;
             println!("sent {id} — the agent picks it up within a second");
+            Ok(())
+        }
+        Command::Gh { install } => {
+            let cfg = service::Config::from_env()?;
+            let system = gh::version(std::path::Path::new("gh")).unwrap_or_else(|| "?".into());
+            println!(
+                "system      gh {system} · {}",
+                if gh::system_capable() {
+                    "supports GitHub reads"
+                } else {
+                    "too old for GitHub reads"
+                }
+            );
+            let local = cfg.state_dir.join("bin").join("gh");
+            if local.exists() {
+                println!(
+                    "installed   gh {} · {}",
+                    gh::version(&local).unwrap_or_else(|| "?".into()),
+                    local.display()
+                );
+            }
+            if install {
+                match gh::ensure(&cfg, true)? {
+                    Some(path) => println!("selected    {path}"),
+                    None => println!("selected    gh (system)"),
+                }
+            } else if gh::system_capable() {
+                println!("selected    gh (system)");
+            } else if local.exists() && gh::capable(&local) {
+                println!("selected    {}", local.display());
+            } else {
+                println!(
+                    "hint        booth gh --install downloads gh {} (13 MB)",
+                    gh::VERSION
+                );
+            }
             Ok(())
         }
         Command::Setup {

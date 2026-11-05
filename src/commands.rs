@@ -101,7 +101,7 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
         }
         "/send" => {
             let cfg = crate::service::Config::from_env()?;
-            let id = crate::intake::send(&cfg, need("/send", argument)?)?;
+            let id = crate::intake::send(&cfg, need("/send", argument)?, None)?;
             vec![done(format!(
                 "sent {id} — the agent picks it up within a second"
             ))]
