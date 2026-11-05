@@ -380,7 +380,7 @@ impl App {
 
     fn bootstrap(&mut self) {
         if let Some(follow) = &self.continues {
-            let short = &follow.ticket[..follow.ticket.len().min(8)];
+            let short = short_id(&follow.ticket);
             self.push(Line::from(vec![
                 Span::styled("  ↳ ", Style::default().fg(CYAN)),
                 Span::styled(
@@ -568,7 +568,7 @@ impl App {
         let mut lines: Vec<L> = Vec::new();
         let mut done: Vec<String> = Vec::new();
         for (id, tracked) in self.tracked.iter_mut() {
-            let short = id[..id.len().min(8)].to_owned();
+            let short = short_id(id);
             let Some(row) = by_id.get(id.as_str()) else {
                 if tracked.stage != "closed" {
                     tracked.stage = "closed".into();
@@ -692,7 +692,7 @@ impl App {
             Span::styled(label.to_owned(), Style::default().fg(FAINT)),
             match &reply.ticket {
                 Some(ticket) => Span::styled(
-                    format!("  {}", &ticket[..ticket.len().min(8)]),
+                    format!("  {}", short_id(ticket)),
                     Style::default().fg(FAINT),
                 ),
                 None => Span::raw(""),
@@ -759,7 +759,7 @@ impl App {
                         Span::styled("  ↳ ", Style::default().fg(CYAN)),
                         Span::styled("follow-up to ", Style::default().fg(DIM)),
                         Span::styled(
-                            follow.ticket[..follow.ticket.len().min(8)].to_owned(),
+                            short_id(&follow.ticket),
                             Style::default().fg(CYAN),
                         ),
                         Span::styled("  · /new starts a new ticket", Style::default().fg(FAINT)),
@@ -773,7 +773,7 @@ impl App {
                             Span::styled("  ↑ ", Style::default().fg(GREEN)),
                             Span::styled("sent to the agent", Style::default().fg(GREEN)),
                             Span::styled(
-                                format!("  {} · picks it up within a second", &id[..8]),
+                                format!("  {} · picks it up within a second", short_id(&id)),
                                 Style::default().fg(FAINT),
                             ),
                         ])]
@@ -1813,7 +1813,7 @@ impl App {
         }
         if let Some(follow) = &self.continues {
             segments.push(Span::styled(
-                format!("↳ {}", &follow.ticket[..follow.ticket.len().min(8)]),
+                format!("↳ {}", short_id(&follow.ticket)),
                 Style::default().fg(CYAN),
             ));
         }
@@ -2456,6 +2456,12 @@ fn warn_line(text: &str) -> L {
     Line::from(Span::styled(format!("! {text}"), Style::default().fg(RED)))
 }
 
+/// The first eight characters of an id, for the one-line ticket markers. Counts characters,
+/// not bytes: a byte slice panics when it lands inside one (SPEC defect A).
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
 fn char_to_byte(text: &str, index: usize) -> usize {
     text.char_indices()
         .nth(index)
@@ -2649,6 +2655,17 @@ mod tests {
         assert_eq!(wrapped_rows("short", 10), 1);
         assert_eq!(wrapped_rows(&"x".repeat(25), 10), 3);
         assert_eq!(wrapped_rows("ab\ncd", 10), 2);
+    }
+
+    #[test]
+    fn a_short_id_never_panics_on_multibyte_text() {
+        // SPEC scenario "非 ASCII 的 id 被截断时不 panic". The first input is longer than
+        // eight characters so truncation actually happens; the second is exactly eight.
+        assert_eq!(short_id("中文工单编号中文测试"), "中文工单编号中文");
+        assert_eq!(short_id("中文工单编号中文"), "中文工单编号中文");
+        assert_eq!(short_id("03b16192bb7f2ac0"), "03b16192");
+        assert_eq!(short_id("abc"), "abc");
+        assert_eq!(short_id(""), "");
     }
 
     #[test]
