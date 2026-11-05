@@ -2958,3 +2958,272 @@ mod transcript_tests {
         assert!(text.starts_with('╰') && text.ends_with('╯'), "{text}");
     }
 }
+
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+    use crate::testkit::FakeApi;
+
+    /// A console whose editor is driven directly; no terminal, no event loop.
+    fn editor(name: &str) -> (App, std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
+        let guard = crate::testkit::env_lock();
+        let dir =
+            std::env::temp_dir().join(format!("booth-editor-{name}-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("BOOTH_STATE_DIR", &dir);
+        std::env::set_var("DSH_HOME", &dir);
+        let api = FakeApi::start();
+        (App::new(Api::new(&api.base)), dir, guard)
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl(ch: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL)
+    }
+
+    fn alt(ch: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(ch), KeyModifiers::ALT)
+    }
+
+    fn typed(app: &mut App, text: &str) {
+        for ch in text.chars() {
+            app.on_key(key(KeyCode::Char(ch)));
+        }
+    }
+
+    #[test]
+    fn typing_moves_the_cursor_and_editing_keeps_it_there() {
+        let (mut app, dir, _env) = editor("typing");
+        typed(&mut app, "hello");
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.cursor, 5);
+
+        app.on_key(key(KeyCode::Left));
+        app.on_key(key(KeyCode::Left));
+        app.on_key(key(KeyCode::Backspace));
+        assert_eq!(app.input, "helo", "backspace deletes before the cursor");
+        assert_eq!(app.cursor, 2);
+
+        // Delete removes the character under the cursor: "helo" with the cursor on 'l'.
+        app.on_key(key(KeyCode::Delete));
+        assert_eq!(app.input, "heo");
+        app.on_key(key(KeyCode::End));
+        app.on_key(key(KeyCode::Delete));
+        assert_eq!(app.input, "heo", "delete at the end changes nothing");
+
+        app.on_key(key(KeyCode::Home));
+        assert_eq!(app.cursor, 0);
+        app.on_key(key(KeyCode::End));
+        assert_eq!(app.cursor, app.input.chars().count());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_multibyte_line_edits_by_character() {
+        let (mut app, dir, _env) = editor("multibyte");
+        typed(&mut app, "工单");
+        assert_eq!(app.cursor, 2, "the cursor counts characters");
+        app.on_key(key(KeyCode::Backspace));
+        assert_eq!(
+            app.input, "工",
+            "backspace removes one character, not one byte"
+        );
+        app.on_key(key(KeyCode::End));
+        typed(&mut app, "作");
+        assert_eq!(app.input, "工作");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn readline_motion_and_the_kill_ring() {
+        let (mut app, dir, _env) = editor("readline");
+        typed(&mut app, "one two three");
+
+        app.on_key(ctrl('w'));
+        assert_eq!(app.input, "one two ", "Ctrl+W deletes the word before");
+        app.on_key(alt('b'));
+        assert_eq!(app.cursor, 4, "Alt+B lands at the start of 'two'");
+        app.on_key(alt('f'));
+        assert_eq!(app.cursor, 8, "Alt+F lands after the word");
+        app.on_key(ctrl('a'));
+        assert_eq!(app.cursor, 0);
+        app.on_key(ctrl('e'));
+        assert_eq!(app.cursor, 8);
+
+        // Ctrl+U deletes to the start and keeps it for Ctrl+Y.
+        app.on_key(ctrl('u'));
+        assert_eq!(app.input, "");
+        app.on_key(ctrl('y'));
+        assert_eq!(app.input, "one two ");
+
+        app.on_key(ctrl('a'));
+        app.on_key(ctrl('k'));
+        assert_eq!(app.input, "", "Ctrl+K deletes to the end");
+        app.on_key(ctrl('y'));
+        assert_eq!(app.input, "one two ");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_palette_filters_selects_and_completes() {
+        let (mut app, dir, _env) = editor("palette");
+        typed(&mut app, "/tick");
+        let matches = app.palette().expect("a slash line opens the palette");
+        assert!(matches.iter().any(|(name, _)| name.starts_with("/ticket")));
+
+        // The selection moves within the list, and Tab completes it.
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.selection, 1);
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.selection, 0);
+        app.on_key(key(KeyCode::Tab));
+        assert!(
+            app.input.ends_with(' '),
+            "completion leaves a space: {:?}",
+            app.input
+        );
+        assert!(
+            app.input.trim().len() > "/tick".len(),
+            "the typed prefix is completed, not kept: {:?}",
+            app.input
+        );
+        assert_eq!(app.cursor, app.input.chars().count());
+
+        // Esc empties the line and closes the palette.
+        app.on_key(key(KeyCode::Esc));
+        assert!(app.input.is_empty());
+        assert!(app.palette().is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_line_without_a_slash_never_opens_the_palette() {
+        let (mut app, dir, _env) = editor("palette-closed");
+        typed(&mut app, "hi");
+        assert!(app.palette().is_none());
+        // Ctrl+P opens it only on an empty line, so a draft survives.
+        app.on_key(ctrl('p'));
+        assert_eq!(app.input, "hi");
+        app.input.clear();
+        app.cursor = 0;
+        app.on_key(ctrl('p'));
+        assert_eq!(app.input, "/");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn history_walks_backwards_and_forwards() {
+        let (mut app, dir, _env) = editor("history");
+        app.history = vec!["first".into(), "second".into()];
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "second", "the newest line comes first");
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "first");
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "first", "the oldest line is the end");
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "second");
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "", "past the newest is an empty line");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn new_output_counts_as_unread_only_while_scrolled_up() {
+        let (mut app, dir, _env) = editor("unread");
+        app.follow = true;
+        app.push(Line::from("one"));
+        assert_eq!(app.unread, 0, "following the bottom, nothing is unread");
+
+        app.follow = false;
+        app.push(Line::from("two"));
+        app.push(Line::from("three"));
+        assert_eq!(app.unread, 2);
+        assert!(
+            app.alert_text(80).unwrap().contains("2 new"),
+            "{:?}",
+            app.alert_text(80)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_transcript_is_capped_and_older_lines_fall_away() {
+        let (mut app, dir, _env) = editor("cap");
+        for index in 0..4200 {
+            app.push(Line::from(format!("line {index}")));
+        }
+        assert_eq!(
+            app.lines.len(),
+            4000,
+            "the transcript keeps the newest 4000 lines"
+        );
+        assert!(
+            app.lines[0].to_string().contains("line 200"),
+            "{}",
+            app.lines[0]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_model_picker_lists_every_provider_plus_an_add_row() {
+        let (mut app, dir, _env) = editor("model");
+        app.store = Store {
+            current: "a".into(),
+            providers: vec![
+                crate::provider::Provider {
+                    id: "a".into(),
+                    base: "https://a".into(),
+                    api: "openai-completions".into(),
+                    model: "m-a".into(),
+                    key: "ka".into(),
+                },
+                crate::provider::Provider {
+                    id: "b".into(),
+                    base: "https://b".into(),
+                    api: "openai-completions".into(),
+                    model: "m-b".into(),
+                    key: "kb".into(),
+                },
+            ],
+        };
+        app.modal = Some(Modal::Model(ModelPick { selected: 0 }));
+        // Down past the last provider lands on the add row, which opens the login form.
+        app.modal_key(key(KeyCode::Down));
+        app.modal_key(key(KeyCode::Down));
+        app.modal_key(key(KeyCode::Enter));
+        assert!(
+            matches!(app.modal, Some(Modal::Login(_))),
+            "the add row opens the login form"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_login_form_edits_one_field_at_a_time() {
+        let (mut app, dir, _env) = editor("login-form");
+        app.modal = Some(Modal::Login(LoginForm::new(0)));
+        // The id field is focused after the preset, so typing replaces nothing and appends.
+        for ch in "-new".chars() {
+            app.modal_key(key(KeyCode::Char(ch)));
+        }
+        match &app.modal {
+            Some(Modal::Login(form)) => {
+                // The form opens with the cursor at the start of the id field, so typing
+                // inserts there rather than appending.
+                assert!(form.id.starts_with("-new"), "{}", form.id);
+                assert_eq!(form.cursor, 4);
+                // Tab walks to the next field rather than inserting a tab.
+                assert!(!form.id.contains('\t'));
+            }
+            _ => panic!("the login form is not open"),
+        }
+        app.modal_key(key(KeyCode::Esc));
+        assert!(app.modal.is_none(), "Esc closes the form");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

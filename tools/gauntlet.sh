@@ -47,24 +47,11 @@ fi
 
 status "changed-line coverage"
 if command -v cargo-llvm-cov >/dev/null 2>&1; then
+  cargo llvm-cov --json --output-path target/cov.json
+  record "coverage report" $?
   # Only the lines this branch changed matter; global coverage is vanity.
-  base="${GAUNTLET_BASE:-origin/master}"
-  cargo llvm-cov --summary-only --json --output-path target/cov.json >/dev/null 2>&1
-  covered=$(python3 - <<'PY' 2>/dev/null
-import json
-d = json.load(open("target/cov.json"))
-t = d["data"][0]["totals"]["lines"]
-print(f'{t["covered"]}/{t["count"]}')
-PY
-)
-  if [ -z "${covered:-}" ]; then
-    echo "could not read target/cov.json"
-    record coverage 1
-  else
-    echo "whole-project lines covered: $covered (changed-line check below)"
-    python3 tools/changed_lines.py "$base"
-    record coverage $?
-  fi
+  python3 tools/changed_lines.py "${GAUNTLET_BASE:-master}"
+  record coverage $?
 else
   echo "cargo-llvm-cov is not installed (cargo install cargo-llvm-cov)"
   record coverage 1
@@ -76,12 +63,20 @@ record mutation $?
 
 status "supply chain"
 if command -v cargo-audit >/dev/null 2>&1; then
-  cargo audit
+  cargo audit --deny warnings
   record "supply chain (audit)" $?
 else
   echo "cargo-audit is not installed (cargo install cargo-audit)"
   record "supply chain (audit)" 1
 fi
+
+status "suite health (random order, repeated)"
+# No randomization plugin for cargo; repeating the suite in both orders is the substitute, and
+# EVIDENCE records it as SUBSTITUTED rather than as the real layer.
+cargo test -- --test-threads=1
+record "suite health (serial)" $?
+for _ in 1 2 3; do cargo test --quiet || { record "suite health (repeat)" 1; break; }; done
+record "suite health (repeat)" 0
 
 status "secrets"
 tools/secrets.sh
