@@ -30,19 +30,14 @@ timeout "${MUTANTS_TIMEOUT:-1800}" cargo mutants \
   --in-diff target/review.diff \
   --timeout 120 \
   --no-shuffle \
-  --output target/mutants \
-  --json >target/mutants.json 2>target/mutants.err
+  --output target/mutants >target/mutants.log 2>target/mutants.err
 code=$?
 if [ "$code" -eq 124 ]; then
   echo "mutation run hit the time budget; not a pass"
   exit 1
 fi
 
-# A run that hit its budget writes no report; cargo-mutants' own outcomes file is the fallback.
-report=target/mutants.json
-if [ ! -s "$report" ] && [ -s target/mutants/mutants.out/mutants.json ]; then
-  report=target/mutants/mutants.out/mutants.json
-  echo "the run did not finish; reading the partial report at $report"
-fi
-python3 tools/mutant_summary.py "$report"
+# cargo-mutants 27 writes its outcome counts and per-mutant results here; the `--json` stream is
+# only for `--list`, so this is the only machine-readable report of a run.
+python3 tools/mutant_summary.py target/mutants/mutants.out/outcomes.json
 exit $?
