@@ -487,3 +487,74 @@ fn tail(cfg: &Config, lines: usize) {
         Err(error) => println!("no log at {} ({error})", cfg.log().display()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(name: &str) -> Config {
+        let root = std::env::temp_dir().join(format!("booth-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("profiles").join("superagent")).unwrap();
+        Config {
+            profile: "superagent".into(),
+            port: 3082,
+            dsh_home: root.join("profiles").parent().unwrap().to_path_buf(),
+            state_dir: root.join("state"),
+            bundle: root.join("superagent"),
+        }
+    }
+
+    #[test]
+    fn writes_the_three_entries_into_a_fresh_patch() {
+        let cfg = config("patch-fresh");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        write_patch(&cfg).unwrap();
+        let text = fs::read_to_string(cfg.patch()).unwrap();
+        for entry in ["webserver", "dsh-superagent", "dsh-booth-local"] {
+            assert!(text.contains(entry), "{entry} missing from {text}");
+        }
+        assert!(text.contains(&cfg.state_dir.display().to_string()));
+    }
+
+    #[test]
+    fn keeps_the_profile_comment_and_drops_the_empty_array() {
+        let cfg = config("patch-comment");
+        let path = cfg.patch();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "# profile layer\n[]\n").unwrap();
+        write_patch(&cfg).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# profile layer\n"), "{text}");
+        assert!(!text.lines().any(|line| line.trim() == "[]"), "{text}");
+        assert!(text.contains("dsh-booth-local"), "{text}");
+    }
+
+    #[test]
+    fn appends_the_console_source_to_an_older_booth_patch() {
+        let cfg = config("patch-older");
+        let path = cfg.patch();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "- id: webserver\n  config:\n    port: 3082\n- id: dsh-superagent\n  config:\n    stateDir: /tmp/s\n",
+        )
+        .unwrap();
+        write_patch(&cfg).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("dsh-booth-local").count(), 1, "{text}");
+        // A second run adds nothing.
+        write_patch(&cfg).unwrap();
+        let again = fs::read_to_string(&path).unwrap();
+        assert_eq!(again.matches("dsh-booth-local").count(), 1, "{again}");
+    }
+
+    #[test]
+    fn refuses_to_rewrite_a_patch_with_custom_entries() {
+        let cfg = config("patch-custom");
+        let path = cfg.patch();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "- id: something-else\n  config: {}\n").unwrap();
+        assert!(write_patch(&cfg).is_err());
+    }
+}

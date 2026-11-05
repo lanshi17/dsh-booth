@@ -75,6 +75,7 @@ enum Msg {
     Status(Status),
     Replies(Vec<intake::Reply>),
     Decisions(Vec<crate::model::Decision>),
+    Tickets(Vec<crate::model::TicketRow>),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
@@ -210,6 +211,17 @@ impl Status {
     }
 }
 
+/// The ticket the next instruction continues, and the thread that reaches it.
+struct Follow {
+    thread: String,
+    ticket: String,
+}
+
+/// What the console has already said about one ticket it opened.
+struct Tracked {
+    stage: String,
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -232,10 +244,19 @@ pub struct App {
     rx: Receiver<Msg>,
     /// Agent messages already shown; the outbox is reread whole on each poll.
     seen: std::collections::HashSet<String>,
-    /// Trigger ids of the instructions this console sent and has not seen judged yet.
-    pending: std::collections::HashSet<String>,
+    /// Trigger ids of the instructions this console sent and has not seen judged yet, with when
+    /// they were sent and whether the console already said the judgement is slow.
+    pending: std::collections::HashMap<String, (Instant, bool)>,
+    /// Tickets this console opened, with what it has already shown about each.
+    tracked: std::collections::HashMap<String, Tracked>,
+    /// Set after an accept: the next instruction goes to that ticket's thread instead of a new one.
+    continues: Option<Follow>,
+    /// Tickets the agent already wrote a reply about; their reports need no second telling.
+    replied: std::collections::HashSet<String>,
     /// When the transcript last polled the service for status and replies.
     polled: Instant,
+    /// One poll at a time: a slow or unreachable service must not stack polling threads.
+    polling: Arc<AtomicBool>,
 }
 
 pub fn run(api: Api) -> Result<(), String> {
@@ -273,6 +294,19 @@ impl App {
         let status = Status::connecting(api.base());
         let config = service::Config::from_env().ok();
         let store = config.as_ref().map(Store::load).unwrap_or_default();
+        let continues = config
+            .as_ref()
+            .and_then(|config| intake::follow(config))
+            .map(|(ticket, thread)| Follow { thread, ticket });
+        // A restart shows the recent conversation, not the whole outbox.
+        let mut seen = std::collections::HashSet::new();
+        if let Some(config) = &config {
+            let replies = intake::replies(config);
+            let skip = replies.len().saturating_sub(20);
+            for reply in replies.into_iter().take(skip) {
+                seen.insert(reply.id);
+            }
+        }
         Self {
             api,
             config,
@@ -292,13 +326,28 @@ impl App {
             started: Instant::now(),
             tx,
             rx,
-            seen: std::collections::HashSet::new(),
-            pending: std::collections::HashSet::new(),
+            seen,
+            pending: std::collections::HashMap::new(),
+            tracked: std::collections::HashMap::new(),
+            continues,
+            replied: std::collections::HashSet::new(),
             polled: Instant::now(),
+            polling: Arc::new(AtomicBool::new(false)),
         }
     }
 
     fn bootstrap(&mut self) {
+        if let Some(follow) = &self.continues {
+            let short = &follow.ticket[..follow.ticket.len().min(8)];
+            self.push(Line::from(vec![
+                Span::styled("  ↳ ", Style::default().fg(CYAN)),
+                Span::styled(
+                    format!("continuing ticket {short}"),
+                    Style::default().fg(DIM),
+                ),
+                Span::styled("  · /new starts a new ticket", Style::default().fg(FAINT)),
+            ]));
+        }
         self.refresh_status();
     }
 
@@ -311,6 +360,7 @@ impl App {
             }
             if self.polled.elapsed() > Duration::from_secs(2) {
                 self.polled = Instant::now();
+                self.check_pending();
                 self.refresh_status();
             }
             if event::poll(Duration::from_millis(120))? {
@@ -344,18 +394,42 @@ impl App {
                         let Some(trigger) = decision
                             .trigger_ids
                             .iter()
-                            .find(|trigger| self.pending.contains(*trigger))
+                            .find(|trigger| self.pending.contains_key(*trigger))
                             .cloned()
                         else {
                             continue;
                         };
                         self.pending.remove(&trigger);
-                        // An accept is already answered by the acknowledgement in the outbox.
-                        if decision.outcome != "accept" {
+                        // An accept is already answered by the acknowledgement in the outbox; the
+                        // ticket it opened is followed here for its progress and final report.
+                        if decision.outcome == "accept" {
+                            if let Some(ticket) = &decision.ticket_id {
+                                self.tracked.insert(
+                                    ticket.clone(),
+                                    Tracked {
+                                        stage: "new".into(),
+                                    },
+                                );
+                                if let Some(thread) = decision
+                                    .thread
+                                    .as_deref()
+                                    .and_then(|key| key.strip_prefix("local:"))
+                                {
+                                    self.continues = Some(Follow {
+                                        thread: thread.to_owned(),
+                                        ticket: ticket.clone(),
+                                    });
+                                    if let Some(config) = &self.config {
+                                        intake::set_follow(config, Some((ticket.as_str(), thread)));
+                                    }
+                                }
+                            }
+                        } else {
                             self.push_decision(&decision);
                         }
                     }
                 }
+                Msg::Tickets(rows) => self.show_tickets(rows),
                 Msg::Replies(replies) => {
                     let mut fresh = Vec::new();
                     for reply in replies {
@@ -417,6 +491,80 @@ impl App {
         self.push_lines(vec![line]);
     }
 
+    /// Reports the stage of the tickets this console opened, once per change; a report the agent
+    /// did not also send as a reply is shown as a short fallback.
+    fn show_tickets(&mut self, rows: Vec<crate::model::TicketRow>) {
+        let by_id: std::collections::HashMap<&str, &crate::model::TicketRow> =
+            rows.iter().map(|row| (row.id.as_str(), row)).collect();
+        let replied = self.replied.clone();
+        let mut lines: Vec<L> = Vec::new();
+        let mut done: Vec<String> = Vec::new();
+        for (id, tracked) in self.tracked.iter_mut() {
+            let short = id[..id.len().min(8)].to_owned();
+            let Some(row) = by_id.get(id.as_str()) else {
+                if tracked.stage != "closed" {
+                    tracked.stage = "closed".into();
+                    lines.push(ticket_line(&format!("{short} · closed")));
+                }
+                done.push(id.clone());
+                continue;
+            };
+            let stage = if row.state == "ended" {
+                "closed"
+            } else {
+                row.stage.as_str()
+            };
+            // "new" is the placeholder between the accept and the first poll.
+            if stage != tracked.stage && !(tracked.stage == "new" && stage == "idle") {
+                let label = match stage {
+                    "person" => row
+                        .action
+                        .as_deref()
+                        .map(|action| format!("needs a person · {action}"))
+                        .unwrap_or_else(|| "needs a person".into()),
+                    "working" => "working".into(),
+                    "idle" => "waiting".into(),
+                    "closed" => "closed".into(),
+                    other => other.to_owned(),
+                };
+                lines.push(ticket_line(&format!("{short} · {label}")));
+                tracked.stage = stage.to_owned();
+            }
+            // The agent's own reply is the report; only a silent report falls back to the summary.
+            if stage == "closed" && !replied.contains(id.as_str()) {
+                if let Some(summary) = row.summary.as_deref().filter(|text| !text.is_empty()) {
+                    lines.push(ticket_line(&format!("{short} · report")));
+                    lines.push(Line::from(vec![
+                        Span::raw("    "),
+                        Span::styled(format::clip(summary, 400), Style::default().fg(TEXT)),
+                    ]));
+                }
+            }
+            if stage == "closed" {
+                done.push(id.clone());
+            }
+        }
+        self.push_lines(lines);
+        for id in done {
+            self.tracked.remove(&id);
+            if self
+                .continues
+                .as_ref()
+                .map(|follow| follow.ticket == id)
+                .unwrap_or(false)
+            {
+                self.continues = None;
+                if let Some(config) = &self.config {
+                    intake::set_follow(config, None);
+                }
+                self.push(Line::from(Span::styled(
+                    "  · that ticket is closed; the next instruction starts a new one",
+                    Style::default().fg(FAINT),
+                )));
+            }
+        }
+    }
+
     /// Shows why the agent did not take an instruction; silence is the one answer a console cannot show.
     fn push_decision(&mut self, decision: &crate::model::Decision) {
         let label = match decision.outcome.as_str() {
@@ -437,6 +585,9 @@ impl App {
 
     /// Shows one message the agent wrote back: an acknowledgement, a reply, or a notice.
     fn push_agent(&mut self, reply: intake::Reply) {
+        if let Some(ticket) = &reply.ticket {
+            self.replied.insert(ticket.clone());
+        }
         let label = match reply.kind.as_str() {
             "acknowledgement" => "agent · accepted",
             "notice" => "agent · notice",
@@ -504,17 +655,40 @@ impl App {
             ));
             return;
         };
-        match intake::send(&config, text) {
+        let follow = self.continues.as_ref().map(|follow| follow.thread.clone());
+        match intake::send(&config, text, follow.as_deref()) {
             Ok(id) => {
-                self.pending.insert(format!("local-{id}"));
-                self.push(Line::from(vec![
-                    Span::styled("  ↑ ", Style::default().fg(GREEN)),
-                    Span::styled("sent to the agent", Style::default().fg(GREEN)),
-                    Span::styled(
-                        format!("  {} · picks it up within a second", &id[..8]),
-                        Style::default().fg(FAINT),
-                    ),
-                ]));
+                let lines = match &self.continues {
+                    Some(follow) => vec![Line::from(vec![
+                        Span::styled("  ↳ ", Style::default().fg(CYAN)),
+                        Span::styled("follow-up to ", Style::default().fg(DIM)),
+                        Span::styled(
+                            follow.ticket[..follow.ticket.len().min(8)].to_owned(),
+                            Style::default().fg(CYAN),
+                        ),
+                        Span::styled("  · /new starts a new ticket", Style::default().fg(FAINT)),
+                    ])],
+                    None => {
+                        // A follow-up fans out to its ticket without a decision, so only a new
+                        // instruction is awaited as one.
+                        self.pending
+                            .insert(format!("local-{id}"), (Instant::now(), false));
+                        vec![Line::from(vec![
+                            Span::styled("  ↑ ", Style::default().fg(GREEN)),
+                            Span::styled("sent to the agent", Style::default().fg(GREEN)),
+                            Span::styled(
+                                format!("  {} · picks it up within a second", &id[..8]),
+                                Style::default().fg(FAINT),
+                            ),
+                        ])]
+                    }
+                };
+                self.push_lines(lines);
+                if self.status.runtime == "down" {
+                    self.push(warn_line(
+                        "the service is down; the instruction waits in the queue — `booth up`",
+                    ));
+                }
                 self.refresh_status();
             }
             Err(error) => self.push(warn_line(&error)),
@@ -538,23 +712,72 @@ impl App {
         });
     }
 
+    /// Says so when a sent instruction is not judged, instead of leaving "sent" as the last word.
+    fn check_pending(&mut self) {
+        let now = Instant::now();
+        let slow: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, (sent, warned))| {
+                !warned && now.duration_since(*sent) > Duration::from_secs(20)
+            })
+            .map(|(trigger, _)| trigger.clone())
+            .collect();
+        for trigger in slow {
+            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
+                *warned = true;
+            }
+            self.push(Line::from(Span::styled(
+                "  ⋯ no decision yet · /sources shows whether the source is polling",
+                Style::default().fg(FAINT),
+            )));
+        }
+        let stale: Vec<String> = self
+            .pending
+            .iter()
+            .filter(|(_, (sent, _))| now.duration_since(*sent) > Duration::from_secs(240))
+            .map(|(trigger, _)| trigger.clone())
+            .collect();
+        for trigger in stale {
+            self.pending.remove(&trigger);
+            self.push(warn_line(
+                "the agent never judged that instruction; /sources and /status explain why",
+            ));
+        }
+    }
+
     fn refresh_status(&self) {
+        if self.polling.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let polling = self.polling.clone();
         let api = self.api.clone();
         let tx = self.tx.clone();
         let config = self.config.clone();
         let pending = !self.pending.is_empty();
-        let decisions = self.api.clone();
+        let tracked: Vec<String> = self.tracked.keys().cloned().collect();
+        let polled = self.api.clone();
         std::thread::spawn(move || {
             if pending {
-                if let Ok(view) = decisions.decisions() {
+                if let Ok(view) = polled.decisions() {
                     let _ = tx.send(Msg::Decisions(view.items));
                 }
             }
+            // Replies first: the ticket poll below then knows a report was already spoken.
             if let Some(config) = &config {
                 let replies = intake::replies(config);
                 if !replies.is_empty() {
                     let _ = tx.send(Msg::Replies(replies));
                 }
+            }
+            if !tracked.is_empty() {
+                let mut rows = Vec::new();
+                for state in ["open", "ended"] {
+                    if let Ok(page) = polled.tickets(state) {
+                        rows.extend(page.items);
+                    }
+                }
+                let _ = tx.send(Msg::Tickets(rows));
             }
             let status = match api.state() {
                 Ok(state) => Status::from_state(&api, &state),
@@ -569,6 +792,7 @@ impl App {
                 }
             };
             let _ = tx.send(Msg::Status(status));
+            polling.store(false, Ordering::SeqCst);
         });
     }
 
@@ -731,6 +955,27 @@ impl App {
         }
         if line == "/model" {
             self.open_model();
+            return;
+        }
+        if line == "/new" || line == "/reset" {
+            self.push(Line::from(vec![
+                Span::styled("  ❯ ", Style::default().fg(CYAN)),
+                Span::styled(line.clone(), Style::default().fg(TEXT)),
+            ]));
+            if self.continues.take().is_some() {
+                if let Some(config) = &self.config {
+                    intake::set_follow(config, None);
+                }
+                self.push(Line::from(Span::styled(
+                    "✓ the next instruction starts a new ticket",
+                    Style::default().fg(GREEN),
+                )));
+            } else {
+                self.push(Line::from(Span::styled(
+                    "each instruction already starts a new ticket",
+                    Style::default().fg(DIM),
+                )));
+            }
             return;
         }
         if line == "/provider" {
@@ -1246,6 +1491,12 @@ impl App {
         if self.status.paused {
             segments.push(Span::styled("paused", Style::default().fg(Color::Yellow)));
         }
+        if let Some(follow) = &self.continues {
+            segments.push(Span::styled(
+                format!("↳ {}", &follow.ticket[..follow.ticket.len().min(8)]),
+                Style::default().fg(CYAN),
+            ));
+        }
         let right = Span::styled(
             format!("v{}", env!("CARGO_PKG_VERSION")),
             Style::default().fg(FAINT),
@@ -1604,6 +1855,15 @@ fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
 
 fn clip_error(text: &str) -> String {
     format::clip(text, 70)
+}
+
+/// One structural line about a ticket the console opened: a stage, a report, or an end.
+fn ticket_line(text: &str) -> L {
+    Line::from(vec![
+        Span::styled("  ◇ ", Style::default().fg(FAINT)),
+        Span::styled("ticket ", Style::default().fg(FAINT)),
+        Span::styled(text.to_owned(), Style::default().fg(MUTED)),
+    ])
 }
 
 /// One red line for something the console refused or could not do.

@@ -35,6 +35,31 @@ fn outbox(cfg: &service::Config) -> PathBuf {
     cfg.state_dir.join("booth-outbox.jsonl")
 }
 
+/// The ticket the console was continuing, so a restart resumes it instead of starting over.
+pub fn follow(cfg: &service::Config) -> Option<(String, String)> {
+    let text = std::fs::read_to_string(cfg.state_dir.join("booth-follow.json")).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    let ticket = value.get("ticket")?.as_str()?.to_owned();
+    let thread = value.get("thread")?.as_str()?.to_owned();
+    Some((ticket, thread))
+}
+
+/// Records the ticket the console continues; `None` forgets it.
+pub fn set_follow(cfg: &service::Config, target: Option<(&str, &str)>) {
+    let path = cfg.state_dir.join("booth-follow.json");
+    match target {
+        Some((ticket, thread)) => {
+            let _ = std::fs::write(
+                &path,
+                json!({ "ticket": ticket, "thread": thread }).to_string(),
+            );
+        }
+        None => {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
+
 /// One agent message the console shows: an acknowledgement, a reply, or a notice.
 pub struct Reply {
     pub id: String,
@@ -43,8 +68,8 @@ pub struct Reply {
     pub ticket: Option<String>,
 }
 
-/// Appends one instruction for the Source and returns its id.
-pub fn send(cfg: &service::Config, text: &str) -> Result<String, String> {
+/// Appends one instruction for the Source and returns its id; `thread` continues a ticket's thread.
+pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<String, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("an instruction needs text".into());
@@ -52,7 +77,10 @@ pub fn send(cfg: &service::Config, text: &str) -> Result<String, String> {
     std::fs::create_dir_all(&cfg.state_dir)
         .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
     let id = oauth::uuid_v4();
-    let line = json!({ "id": id, "text": text, "sender": "operator" });
+    let mut line = json!({ "id": id, "text": text, "sender": "operator" });
+    if let Some(thread) = thread {
+        line["thread"] = json!(thread);
+    }
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -150,59 +178,127 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     };
     let directory = words.next().map(str::to_owned);
 
-    let login = gh_login()?;
-    let settings = api.settings()?;
-    let source_block = |id: &str| -> Result<(Value, u64), String> {
-        let source = settings
+    // A newer gh unlocks the GitHub front door; the system one still lets the agent push.
+    let mut cli = "gh".to_owned();
+    let mut cli_note: Option<(String, bool)> = None;
+    match crate::gh::ensure(cfg, true) {
+        Ok(Some(path)) => {
+            let version = crate::gh::version(std::path::Path::new(&path)).unwrap_or_default();
+            cli = path.clone();
+            cli_note = Some((format!("gh {version} → {path}"), true));
+        }
+        Ok(None) => {}
+        Err(error) => cli_note = Some((error, false)),
+    }
+    let reads = crate::gh::capable(std::path::Path::new(&cli));
+    let login = gh_login(&cli)?;
+    // A fresh service answers /settings before every Source plugin has registered; wait for the
+    // two this setup writes instead of reporting them missing.
+    let installed = |settings: &Value, id: &str| {
+        settings
             .get("sources")
             .and_then(Value::as_array)
             .and_then(|items| items.iter().find(|item| item.get("id") == Some(&json!(id))))
-            .ok_or(format!(
-                "the Source `{id}` is not installed; run `booth init` to install the booth console Source"
-            ))?;
-        Ok((
-            source.get("value").cloned().unwrap_or_else(|| json!({})),
-            source.get("revision").and_then(Value::as_u64).unwrap_or(0),
-        ))
+            .map(|source| {
+                source
+                    .get("installed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
     };
-    let block = |name: &str| -> Result<(Value, u64), String> {
-        let entry = settings
-            .get("blocks")
-            .and_then(|blocks| blocks.get(name))
-            .ok_or(format!("the settings block `{name}` is missing"))?;
-        Ok((
-            entry.get("value").cloned().unwrap_or_else(|| json!({})),
-            entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
-        ))
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let settings = loop {
+        let settings = api.settings()?;
+        if installed(&settings, "github") && installed(&settings, "local") {
+            break settings;
+        }
+        if Instant::now() > deadline {
+            return Err(
+                "the booth console Source is not installed; run `booth init` to install it".into(),
+            );
+        }
+        sleep(Duration::from_millis(500));
+    };
+    let previous = settings
+        .get("sources")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items
+                .iter()
+                .find(|item| item.get("id") == Some(&json!("github")))
+        })
+        .and_then(|source| source.get("value"))
+        .and_then(|value| value.get("config"))
+        .and_then(|config| config.get("repository"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+
+    // Saving a Source restarts dsh-superagent, and its registry is briefly empty: re-read the
+    // revision and retry while the Source is not yet back instead of failing the whole setup.
+    let save = |block: &str, change: &dyn Fn(&mut Value)| -> Result<(), String> {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            let settings = api.settings()?;
+            let source = block.strip_prefix("source:");
+            let entry = match source {
+                Some(id) => settings
+                    .get("sources")
+                    .and_then(Value::as_array)
+                    .and_then(|items| items.iter().find(|item| item.get("id") == Some(&json!(id)))),
+                None => settings
+                    .get("blocks")
+                    .and_then(|blocks| blocks.get(block))
+                    .map(|entry| entry),
+            };
+            let Some(entry) = entry else {
+                // The restart between two saves unregisters Sources for a moment.
+                if Instant::now() > deadline {
+                    return Err(match source {
+                        Some(id) => format!(
+                            "the Source `{id}` is not installed; run `booth init` to install the console Source"
+                        ),
+                        None => format!("the settings block `{block}` is missing"),
+                    });
+                }
+                sleep(Duration::from_millis(600));
+                continue;
+            };
+            let mut value = entry.get("value").cloned().unwrap_or_else(|| json!({}));
+            let revision = entry.get("revision").and_then(Value::as_u64).unwrap_or(0);
+            change(&mut value);
+            match api.save(block, &value, revision) {
+                Ok(_) => return wait_ready(api),
+                Err(crate::api::ApiError::Status(code, message))
+                    if ((code == 404 && message.contains("Source not found")) || code == 409)
+                        && Instant::now() < deadline =>
+                {
+                    sleep(Duration::from_millis(600));
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
     };
 
-    // The GitHub Source's reads use `gh api --slurp`, which older CLIs reject; the agent's own
-    // pushes and pull requests work without it, so an old `gh` turns only that door off.
-    let reads = gh_supports_slurp();
-    let (mut github, revision) = source_block("github")?;
-    github["enabled"] = json!(reads);
-    github["config"]["repository"] = json!(repository);
-    github["config"]["cli"] = json!("gh");
-    github["config"]["observeIssues"] = json!(true);
-    api.save("source:github", &github, revision)?;
-    wait_ready(api)?;
+    save("source:github", &|github| {
+        github["enabled"] = json!(reads);
+        github["config"]["repository"] = json!(repository);
+        github["config"]["cli"] = json!(cli);
+        github["config"]["observeIssues"] = json!(true);
+    })?;
 
-    let (mut local, revision) = source_block("local")?;
-    local["enabled"] = json!(true);
-    api.save("source:local", &local, revision)?;
-    wait_ready(api)?;
+    save("source:local", &|local| local["enabled"] = json!(true))?;
 
-    let (mut policy, revision) = block("policy")?;
-    policy["sources"]["github"]["allowed"] = json!([{ "id": login }]);
-    policy["sources"]["local"]["allowed"] = json!([{ "id": "operator", "name": "booth" }]);
-    api.save("policy", &policy, revision)?;
-    wait_ready(api)?;
+    save("policy", &|policy| {
+        policy["sources"]["github"]["allowed"] = json!([{ "id": login }]);
+        policy["sources"]["local"]["allowed"] = json!([{ "id": "operator", "name": "booth" }]);
+    })?;
 
     if let Some(ref directory) = directory {
-        let (mut executor, revision) = block("executor")?;
-        executor["directory"] = json!(directory);
-        api.save("executor", &executor, revision)?;
-        wait_ready(api)?;
+        save("executor", &|executor| {
+            executor["directory"] = json!(directory)
+        })?;
     }
 
     let state = api.state()?;
@@ -227,19 +323,35 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
             Style::default().fg(GREEN),
         ),
     ]));
-    if !reads {
-        let version = gh_version();
+    if let Some((note, installed)) = cli_note {
         lines.push(Line::from(Span::styled(
-            format!(
-                "! GitHub Issues are off: gh {version} lacks `gh api --slurp`; upgrade to gh 2.57+ and run /setup again"
-            ),
+            if installed {
+                format!("✓ {note}")
+            } else {
+                format!("! GitHub front door unavailable: {note}")
+            },
+            Style::default().fg(if installed { GREEN } else { RED }),
+        )));
+    }
+    if !reads {
+        lines.push(Line::from(Span::styled(
+            "! GitHub Issues are off: the system gh lacks `gh api --slurp`; run `booth gh --install`, then /setup again",
             Style::default().fg(RED),
         )));
     }
-    if directory.is_none() {
-        lines.push(muted(
-            "workers get no repository checkout; add one with /setup owner/repo <directory>",
-        ));
+    let work = directory
+        .clone()
+        .unwrap_or_else(|| cfg.state_dir.join("work").display().to_string());
+    lines.push(muted(&format!(
+        "ticket directories {work} · panel → Execution gives each one a checkout"
+    )));
+    if !previous.is_empty() && previous != repository {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "! repository changed from {previous}; its tickets keep threads that no longer read — a different repository deserves a fresh BOOTH_STATE_DIR"
+            ),
+            Style::default().fg(RED),
+        )));
     }
     lines.push(muted(&format!(
         "inbox {} · one instruction at a time",
@@ -292,31 +404,8 @@ fn repository_from_url(url: &str) -> Option<String> {
     Some(format!("{owner}/{repository}"))
 }
 
-/// Whether the installed `gh` has the flag dsh-superagent's GitHub reads pass.
-fn gh_supports_slurp() -> bool {
-    Command::new("gh")
-        .args(["api", "--help"])
-        .output()
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains("--slurp"))
-        .unwrap_or(false)
-}
-
-fn gh_version() -> String {
-    Command::new("gh")
-        .args(["--version"])
-        .output()
-        .ok()
-        .and_then(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .split_whitespace()
-                .nth(2)
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "?".into())
-}
-
-fn gh_login() -> Result<String, String> {
-    let output = Command::new("gh")
+fn gh_login(program: &str) -> Result<String, String> {
+    let output = Command::new(program)
         .args(["api", "user", "--jq", ".login"])
         .output()
         .map_err(|error| format!("cannot run gh: {error}; install the GitHub CLI"))?;
@@ -369,8 +458,8 @@ mod tests {
     fn one_instruction_per_line() {
         let dir = scratch("send");
         let cfg = config(dir.clone());
-        send(&cfg, "first").unwrap();
-        send(&cfg, "second").unwrap();
+        send(&cfg, "first", None).unwrap();
+        send(&cfg, "second", Some("t-1")).unwrap();
         let text = std::fs::read_to_string(inbox(&cfg)).unwrap();
         let lines: Vec<Value> = text
             .lines()
@@ -379,8 +468,9 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0]["text"], "first");
         assert_eq!(lines[1]["text"], "second");
+        assert_eq!(lines[1]["thread"], "t-1");
         assert!(lines[0]["id"].as_str().unwrap().len() >= 16);
-        assert!(send(&cfg, "  ").is_err());
+        assert!(send(&cfg, "  ", None).is_err());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -402,6 +492,18 @@ mod tests {
         assert_eq!(messages[0].ticket.as_deref(), Some("t-1"));
         assert_eq!(messages[1].kind, "reply");
         assert!(replies(&config(dir.join("missing"))).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn remembers_the_ticket_it_continues() {
+        let dir = scratch("follow");
+        let cfg = config(dir.clone());
+        assert!(follow(&cfg).is_none());
+        set_follow(&cfg, Some(("t-1", "t-9")));
+        assert_eq!(follow(&cfg), Some(("t-1".to_owned(), "t-9".to_owned())));
+        set_follow(&cfg, None);
+        assert!(follow(&cfg).is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
