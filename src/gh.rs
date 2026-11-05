@@ -30,12 +30,27 @@ fn target() -> Result<&'static str, String> {
     }
 }
 
+/// Runs `program` and returns its standard output, retrying once: a just-written script can
+/// fail with `ETXTBSY` while another thread still holds it open for writing.
+fn output_of(program: &Path, args: &[&str]) -> Option<String> {
+    for attempt in 0..2 {
+        match Command::new(program).args(args).output() {
+            Ok(output) => return Some(String::from_utf8_lossy(&output.stdout).into_owned()),
+            Err(error)
+                if attempt == 0 && error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
 /// Whether `program` has the flag the Source's reads pass.
 pub fn capable(program: &Path) -> bool {
-    Command::new(program)
-        .args(["api", "--help"])
-        .output()
-        .map(|output| String::from_utf8_lossy(&output.stdout).contains("--slurp"))
+    output_of(program, &["api", "--help"])
+        .map(|text| text.contains("--slurp"))
         .unwrap_or(false)
 }
 
@@ -46,8 +61,7 @@ pub fn system_capable() -> bool {
 
 /// The version string of `program`, such as `2.63.2`.
 pub fn version(program: &Path) -> Option<String> {
-    let output = Command::new(program).arg("--version").output().ok()?;
-    String::from_utf8_lossy(&output.stdout)
+    output_of(program, &["--version"])?
         .split_whitespace()
         .nth(2)
         .map(str::to_owned)
@@ -165,7 +179,13 @@ mod tests {
     use super::*;
 
     fn script(name: &str, body: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!("booth-{name}-{}", std::process::id()));
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "booth-{name}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::write(&path, body).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         path

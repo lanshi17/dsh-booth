@@ -134,8 +134,8 @@ check the deployment guide asks for.
 Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, plus
-`/send`, `/setup`, `/agents`, `/new`, `/model`, `/provider`, `/login`, `/keys`, `/history`,
-`/clear` and `/quit`.
+`/send`, `/setup`, `/agents`, `/eval`, `/new`, `/model`, `/provider`, `/login`, `/keys`,
+`/history`, `/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
 highlighted, and a selection past the eighth entry scrolls the window the way `omp`'s lists do.
@@ -153,6 +153,14 @@ replacing it. `/agents` (or `booth agents`) prints the whole picture:
 | Memory that outlives a conversation | Sessions persist under `<dsh_home>/sessions/`; the router keeps the tickets, threads and decisions it judged, and a worker keeps its conversation when a later message resumes its Ticket. Restarting the console loses nothing |
 | Deciding alone, asking rarely | A Ticket reaches `person` only for an answer or a review, and `/overview` lists exactly those; workers run unattended otherwise |
 | Work that starts by itself | GitHub Issues, comments and CI, Feishu messages and console instructions all enter the same way, so nothing has to be typed |
+
+`/eval` (or `booth eval`) decides how much of that starts without a person:
+
+| Mode | What becomes a ticket on its own |
+| --- | --- |
+| `off` | Only an explicit request from someone on the list |
+| `observe` (default) | Nothing; inferred candidates are recorded with what the agent would have done |
+| `auto` | Inferred candidates too, when an enabled policy rule matches |
 
 Changing the provider does not disturb any of it. `/login` and `/model` register every stored
 provider in the overlay and only change which one is the default, so a Session created earlier

@@ -118,6 +118,26 @@ impl Api {
         self.get("/settings")
     }
 
+    /// One settings block's value and revision, read fresh so a save cannot beat a stale copy.
+    pub fn block(&self, name: &str) -> Result<(Value, u64), ApiError> {
+        let settings = self.settings()?;
+        let entry = settings
+            .get("blocks")
+            .and_then(|blocks| blocks.get(name))
+            .ok_or_else(|| ApiError::Protocol(format!("no settings block `{name}`")))?;
+        Ok((
+            entry.get("value").cloned().unwrap_or_else(|| json!({})),
+            entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
+        ))
+    }
+
+    /// Saves one settings block after rereading its revision.
+    pub fn set(&self, name: &str, change: &dyn Fn(&mut Value)) -> Result<Value, ApiError> {
+        let (mut value, revision) = self.block(name)?;
+        change(&mut value);
+        self.save(name, &value, revision)
+    }
+
     pub fn state(&self) -> Result<StateView, ApiError> {
         self.get_as("/state")
     }
