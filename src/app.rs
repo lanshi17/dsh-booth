@@ -288,6 +288,8 @@ pub struct App {
     kill: String,
     /// Lines that arrived while the transcript was scrolled up.
     unread: usize,
+    /// Where the outbox reader stopped; shared with the poll thread.
+    tail: Arc<std::sync::Mutex<intake::Tail>>,
     /// When the current activity began, for the working row's elapsed time.
     work_since: Option<Instant>,
     /// Open tickets and those waiting for a person, from the last ticket poll.
@@ -335,13 +337,19 @@ impl App {
             .as_ref()
             .and_then(intake::follow)
             .map(|(ticket, thread)| Follow { thread, ticket });
-        // A restart shows the recent conversation, not the whole outbox.
+        // A restart shows the recent conversation, not the whole outbox: read the tail of the
+        // file rather than all of it, and mark everything older as already shown.
+        let tail = Arc::new(std::sync::Mutex::new(intake::Tail::fresh()));
         let mut seen = std::collections::HashSet::new();
         if let Some(config) = &config {
-            let replies = intake::replies(config);
+            let mut reader = intake::Tail::fresh();
+            let replies = intake::replies_from(config, &mut reader);
             let skip = replies.len().saturating_sub(20);
             for reply in replies.into_iter().take(skip) {
                 seen.insert(reply.id);
+            }
+            if let Ok(mut shared) = tail.lock() {
+                *shared = reader;
             }
         }
         Self {
@@ -372,6 +380,7 @@ impl App {
             polling: Arc::new(AtomicBool::new(false)),
             kill: String::new(),
             unread: 0,
+            tail,
             work_since: None,
             open: 0,
             person: 0,
@@ -859,17 +868,21 @@ impl App {
         let pending = !self.pending.is_empty();
         let tracked: Vec<String> = self.tracked.keys().cloned().collect();
         let polled = self.api.clone();
+        let tail = self.tail.clone();
         std::thread::spawn(move || {
             if pending {
                 if let Ok(view) = polled.decisions() {
                     let _ = tx.send(Msg::Decisions(view.items));
                 }
             }
-            // Replies first: the ticket poll below then knows a report was already spoken.
+            // Replies first: the ticket poll below then knows a report was already spoken. The
+            // tail remembers where the last read stopped, so a poll costs the new bytes only.
             if let Some(config) = &config {
-                let replies = intake::replies(config);
-                if !replies.is_empty() {
-                    let _ = tx.send(Msg::Replies(replies));
+                if let Ok(mut tail) = tail.lock() {
+                    let replies = intake::replies_from(config, &mut tail);
+                    if !replies.is_empty() {
+                        let _ = tx.send(Msg::Replies(replies));
+                    }
                 }
             }
             // Open tickets are the header's counts as well as the followed tickets' stages.
