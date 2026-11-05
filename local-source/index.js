@@ -113,12 +113,21 @@ function reply(outbox, message) {
   })}\n`)
 }
 
+/** Reports health, ignoring the throw a released registry entry causes during a restart. */
+function report(source, state, detail) {
+  try {
+    source.report(HEALTH, { state, ...detail ? { detail } : {} })
+  } catch {
+    // The registry this context belonged to is being replaced; the supervisor reports again.
+  }
+}
+
 async function watch(source, signal, files) {
   let cursor = source.state.get(CURSOR) ?? 0
-  source.report(HEALTH, { state: 'starting', detail: 'Waiting for the deployment check' })
+  report(source, 'starting', 'Waiting for the deployment check')
   while (!signal.aborted) {
     if (!source.configured()) {
-      source.report(HEALTH, { state: 'paused', detail: 'Waiting for setup: name the repository in /setup' })
+      report(source, 'paused', 'Waiting for setup: name the repository in /setup')
       await delay(1000, undefined, { signal }).catch(() => {})
       continue
     }
@@ -128,7 +137,7 @@ async function watch(source, signal, files) {
         cursor = offset
         source.state.set(CURSOR, cursor)
       }
-      source.report(HEALTH, { state: 'ready', detail: 'Waiting for an instruction' })
+      report(source, 'ready', 'Waiting for an instruction')
       await delay(files.pollMs, undefined, { signal }).catch(() => {})
       continue
     }
@@ -136,7 +145,7 @@ async function watch(source, signal, files) {
       try {
         await source.receive(triggerOf(line))
       } catch (error) {
-        source.report(HEALTH, { state: 'error', detail: `Could not deliver ${line.id}: ${error instanceof Error ? error.message : String(error)}` })
+        report(source, 'error', `Could not deliver ${line.id}: ${error instanceof Error ? error.message : String(error)}`)
       }
     }
     cursor = offset
@@ -191,12 +200,51 @@ export function apply(ctx, config = {}) {
     },
   }
 
-  ctx.effect(() => ctx.orchestrator.sources.register(kind), 'booth: local source kind')
-  ctx.effect(() => {
-    const source = ctx.orchestrator.context(kind)
-    const controller = new AbortController()
-    const running = watch(source, controller.signal, files)
-      .catch(error => { source.report(HEALTH, { state: 'error', detail: String(error) }) })
-    return async () => { controller.abort(); await running }
-  })
+  // dsh-superagent restarts its plugin (and with it the Source registry) on some settings
+  // saves, which would leave a kind registered once and then lost. A small supervisor keeps
+  // the kind registered against whichever registry is current, and restarts the watcher with it.
+  let host = undefined
+  let controller
+  const teardown = () => {
+    if (controller) controller.abort()
+    controller = undefined
+    host = undefined
+  }
+  const sync = () => {
+    const orchestrator = ctx.get('orchestrator')
+    if (!orchestrator) {
+      teardown()
+      return
+    }
+    const live = host === orchestrator.sources && !!orchestrator.sources.kind(KIND)
+    if (live && controller && !controller.signal.aborted) return
+    if (!live) {
+      teardown()
+      host = orchestrator.sources
+      orchestrator.sources.register(kind)
+    }
+    // Registering and watching are separate steps: the watcher is restarted when its own
+    // registration survived but the loop ended.
+    const source = orchestrator.context(kind)
+    controller = new AbortController()
+    watch(source, controller.signal, files)
+      .catch(error => { report(source, 'error', String(error)) })
+  }
+  const timer = setInterval(() => {
+    try {
+      sync()
+    } catch {
+      // The service is between instances; the next tick tries again.
+    }
+  }, 1000)
+  try {
+    sync()
+  } catch {
+    // The orchestrator may not be mounted yet; the timer registers the kind.
+  }
+  ctx.effect(() => () => {
+    clearInterval(timer)
+    teardown()
+  }, 'booth: local source supervision')
 }
+
