@@ -3201,7 +3201,7 @@ mod editor_tests {
 
     #[test]
     fn refresh_status_delivers_an_agent_reply_from_the_outbox() {
-        let (mut app, dir, _env) = editor("refresh-reply");
+        let (app, dir, _env) = editor("refresh-reply");
         std::fs::write(
             dir.join("booth-outbox.jsonl"),
             "{\"id\":\"m1\",\"kind\":\"reply\",\"text\":\"done\",\"ticket\":\"t-1\"}\n",
