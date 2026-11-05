@@ -21,9 +21,9 @@ pub struct FakeApi {
     /// Statuses to return for the next PUTs, one per call, before answering normally.
     pub failures: Arc<Mutex<Vec<(u16, String)>>>,
     /// How many `/state` answers to refuse before the service "comes back".
-    pub state_failures: Arc<Mutex<usize>>,
+    pub state_failures: Remaining,
     /// How many `/settings` answers to refuse, the way a restart does.
-    pub settings_failures: Arc<Mutex<usize>>,
+    pub settings_failures: Remaining,
     pub puts: Puts,
     #[allow(dead_code)]
     /// Bodies for the other GET routes, by path; the tests that need one extend this.
@@ -134,6 +134,8 @@ pub fn default_settings() -> Value {
 }
 
 type Failures = Arc<Mutex<Vec<(u16, String)>>>;
+/// A counter of answers still to refuse, such as a restarting service.
+type Remaining = Arc<Mutex<usize>>;
 
 fn serve(
     listener: TcpListener,
@@ -142,8 +144,8 @@ fn serve(
         Puts,
         Routes,
         Failures,
-        Arc<Mutex<usize>>,
-        Arc<Mutex<usize>>,
+        Remaining,
+        Remaining,
     ),
 ) {
     let (settings, puts, routes, failures, state_failures, settings_failures) = shared;
