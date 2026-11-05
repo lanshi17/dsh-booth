@@ -518,7 +518,13 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
 }
 
 fn wait_ready(api: &Api) -> Result<(), String> {
-    let deadline = Instant::now() + RESTART_TIMEOUT;
+    // A caller with a different budget (or a test) can shrink the wait.
+    let budget = std::env::var("BOOTH_WAIT_SECONDS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(RESTART_TIMEOUT);
+    let deadline = Instant::now() + budget;
     loop {
         if api.state().is_ok() {
             return Ok(());
@@ -526,7 +532,7 @@ fn wait_ready(api: &Api) -> Result<(), String> {
         if Instant::now() > deadline {
             return Err(format!(
                 "the service did not answer within {}s after the settings change",
-                RESTART_TIMEOUT.as_secs()
+                budget.as_secs()
             ));
         }
         sleep(Duration::from_millis(500));
@@ -813,13 +819,29 @@ mod tests {
             Some("o/r")
         );
         assert_eq!(repository_from_url("git@gitlab.com:o/r.git"), None);
+        // Each guard on the split result is reachable: no second segment, an empty first
+        // segment, and a third segment.
         assert_eq!(repository_from_url("https://github.com/owner"), None);
+        assert_eq!(repository_from_url("https://github.com//r"), None);
+        assert_eq!(repository_from_url("https://github.com/o/r/extra"), None);
     }
 }
 
 #[cfg(test)]
 mod eval_tests {
     use super::{resolve_mode, EVAL_MODES};
+
+    #[test]
+    fn an_unchanged_auto_mode_still_explains_what_auto_admits() {
+        // The hint belongs to the mode, not to the change: asking for `auto` when it is already
+        // in force says "already auto" and keeps quiet about inferred candidates.
+        let text: String = super::EVAL_MODES
+            .iter()
+            .find(|(mode, _)| *mode == "auto")
+            .map(|(_, hint)| (*hint).to_owned())
+            .unwrap();
+        assert!(text.contains("without a person"), "{text}");
+    }
 
     #[test]
     fn resolves_a_mode_change_against_the_current_one() {
@@ -847,6 +869,12 @@ mod api_tests {
     use super::*;
     use crate::testkit::FakeApi;
 
+    /// `BOOTH_GH` and `BOOTH_WAIT_SECONDS` are process-wide, so tests that set them take turns.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
     fn cfg(dir: &std::path::Path) -> service::Config {
         service::Config {
             profile: "test".into(),
@@ -861,6 +889,20 @@ mod api_tests {
         let dir = std::env::temp_dir().join(format!("booth-api-{name}-{}", oauth::uuid_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn wait_ready_passes_on_an_answering_service_and_fails_on_a_dead_port() {
+        let _env = env_lock();
+        // A service that answers: one round trip and back.
+        let api = FakeApi::start();
+        assert!(wait_ready(&Api::new(&api.base)).is_ok());
+
+        // A port nothing listens on: the error names the budget it waited.
+        std::env::set_var("BOOTH_WAIT_SECONDS", "1");
+        let error = wait_ready(&Api::new("http://127.0.0.1:9")).unwrap_err();
+        assert!(error.contains("1s"), "{error}");
+        std::env::remove_var("BOOTH_WAIT_SECONDS");
     }
 
     #[test]
@@ -935,6 +977,41 @@ mod api_tests {
     }
 
     #[test]
+    fn summary_lists_other_providers_and_says_which_one_is_current() {
+        let store = Store {
+            current: "deepseek".into(),
+            providers: vec![
+                crate::provider::Provider {
+                    id: "deepseek".into(),
+                    base: "https://api.deepseek.com".into(),
+                    api: "openai-completions".into(),
+                    model: "deepseek-chat".into(),
+                    key: "k1".into(),
+                },
+                crate::provider::Provider {
+                    id: "openai".into(),
+                    base: "https://api.openai.com/v1".into(),
+                    api: "openai-responses".into(),
+                    model: "gpt-5".into(),
+                    key: "k2".into(),
+                },
+            ],
+        };
+        let text: String = summary(&store)
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join(
+                "
+",
+            );
+        // The current provider is named once, the other one under `also`, never twice.
+        assert_eq!(text.matches("deepseek-chat").count(), 1, "{text}");
+        assert!(text.contains("also"), "{text}");
+        assert!(text.contains("openai/gpt-5"), "{text}");
+    }
+
+    #[test]
     fn summary_says_so_when_no_provider_is_configured() {
         let text: String = summary(&Store::default())
             .iter()
@@ -948,6 +1025,7 @@ mod api_tests {
 
     #[test]
     fn setup_writes_every_block_and_reports_the_repository() {
+        let _env = env_lock();
         // No download and no real `gh`: a fixture CLI the test writes itself, so the run needs
         // nothing from outside the repository.
         let dir = scratch("setup");
@@ -989,6 +1067,135 @@ mod api_tests {
         assert!(policy.1["value"]["sources"]["local"]["allowed"][0]["id"].is_string());
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_retries_a_source_that_is_not_registered_yet() {
+        let _env = env_lock();
+        // The restart between two saves unregisters the Sources for a moment; setup must wait
+        // rather than fail, so a first run configures in one go.
+        let dir = scratch("setup-retry");
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        api.fail_next_puts(1, 404, "Source not found");
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("o/r"), "{text}");
+        // The retried PUT landed, so all three blocks were written.
+        let names: Vec<String> = api
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(name, _)| name.replace("source%3A", "source:"))
+            .collect();
+        assert!(names.contains(&"source:github".to_owned()), "{names:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_stops_on_a_refusal_that_is_not_a_restart() {
+        let _env = env_lock();
+        let dir = scratch("setup-refused");
+        let gh = dir.join("gh");
+        std::fs::write(&gh, "#!/bin/sh\necho tester\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        api.fail_next_puts(1, 400, "an invalid value");
+        let error = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap_err();
+        assert!(error.contains("invalid value"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_warns_when_the_repository_changes() {
+        let _env = env_lock();
+        let dir = scratch("setup-changed");
+        let gh = dir.join("gh");
+        std::fs::write(&gh, "#!/bin/sh\necho tester\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        // The fixture already names o/r, so asking for another one is a change.
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "other/repo").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("repository changed"), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn gh_login_reports_a_missing_account_and_a_failed_cli() {
+        let dir = scratch("gh-login");
+        let write = |name: &str, body: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, body).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let ok = write("ok", "#!/bin/sh\necho tester\n");
+        assert_eq!(gh_login(ok.to_str().unwrap()).unwrap(), "tester");
+
+        let empty = write("empty", "#!/bin/sh\nexit 0\n");
+        let error = gh_login(empty.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("did not report"), "{error}");
+
+        let failing = write("failing", "#!/bin/sh\necho 'not signed in' >&2; exit 4\n");
+        let error = gh_login(failing.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("not signed in"), "{error}");
+
+        let missing = dir.join("absent");
+        let error = gh_login(missing.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("cannot run"), "{error}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn infers_the_repository_from_the_checkout_origin() {
+        // Changing the working directory is process-wide, so this test takes its turn too.
+        let _env = env_lock();
+        let dir = scratch("infer");
+        let run = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .expect("git must be installed")
+        };
+        run(&["init", "-q"]);
+        // `infer_repository` reads the process's working directory, so the test runs there.
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+        let without = infer_repository();
+        run(&["remote", "add", "origin", "git@github.com:owner/name.git"]);
+        let with = infer_repository();
+        std::env::set_current_dir(previous).unwrap();
+
+        assert_eq!(without, None, "no origin means no guess");
+        assert_eq!(with.as_deref(), Some("owner/name"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

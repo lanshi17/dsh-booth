@@ -18,6 +18,8 @@ type Puts = Arc<Mutex<Vec<(String, Value)>>>;
 pub struct FakeApi {
     pub base: String,
     pub settings: Arc<Mutex<Value>>,
+    /// Statuses to return for the next PUTs, one per call, before answering normally.
+    pub failures: Arc<Mutex<Vec<(u16, String)>>>,
     pub puts: Puts,
     #[allow(dead_code)]
     /// Bodies for the other GET routes, by path; the tests that need one extend this.
@@ -30,6 +32,7 @@ impl FakeApi {
         let port = listener.local_addr().unwrap().port();
         let settings = Arc::new(Mutex::new(default_settings()));
         let puts = Arc::new(Mutex::new(Vec::new()));
+        let failures = Arc::new(Mutex::new(Vec::new()));
         let routes = Arc::new(Mutex::new(vec![
             (
                 "/state".to_owned(),
@@ -52,13 +55,27 @@ impl FakeApi {
                 }),
             ),
         ]));
-        let shared = (settings.clone(), puts.clone(), routes.clone());
+        let shared = (
+            settings.clone(),
+            puts.clone(),
+            routes.clone(),
+            failures.clone(),
+        );
         std::thread::spawn(move || serve(listener, shared));
         Self {
             base: format!("http://127.0.0.1:{port}"),
             settings,
             puts,
+            failures,
             routes,
+        }
+    }
+
+    /// Makes the next `times` PUTs fail with `status` and `message`.
+    pub fn fail_next_puts(&self, times: usize, status: u16, message: &str) {
+        let mut failures = self.failures.lock().unwrap();
+        for _ in 0..times {
+            failures.push((status, message.to_owned()));
         }
     }
 
@@ -89,11 +106,18 @@ pub fn default_settings() -> Value {
     })
 }
 
-fn serve(listener: TcpListener, shared: (Arc<Mutex<Value>>, Puts, Routes)) {
-    let (settings, puts, routes) = shared;
+type Failures = Arc<Mutex<Vec<(u16, String)>>>;
+
+fn serve(listener: TcpListener, shared: (Arc<Mutex<Value>>, Puts, Routes, Failures)) {
+    let (settings, puts, routes, failures) = shared;
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
-        let (settings, puts, routes) = (settings.clone(), puts.clone(), routes.clone());
+        let (settings, puts, routes, failures) = (
+            settings.clone(),
+            puts.clone(),
+            routes.clone(),
+            failures.clone(),
+        );
         std::thread::spawn(move || {
             let mut raw = Vec::new();
             let mut buffer = [0u8; 8192];
@@ -130,25 +154,35 @@ fn serve(listener: TcpListener, shared: (Arc<Mutex<Value>>, Puts, Routes)) {
                 .to_ascii_lowercase()
                 .contains("x-orchestrator-request: 1");
 
+            // A queued failure answers this PUT instead of the normal handler. Only a PUT pops
+            // one: a GET must not swallow a failure meant for the save that follows it.
+            let forced = (method == "PUT")
+                .then(|| failures.lock().ok().and_then(|mut queue| queue.pop()))
+                .flatten();
             let (status, payload) = if !guarded {
                 (
                     403,
                     json!({ "error": "Same-origin management request required" }),
                 )
             } else if method == "PUT" {
-                let name = path.rsplit('/').next().unwrap_or_default().to_owned();
-                let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-                let mut settings = settings.lock().unwrap();
-                if let Some(entry) = block_mut(&mut settings, &name) {
-                    if let Some(value) = parsed.get("value") {
-                        entry["value"] = value.clone();
+                match forced {
+                    Some((status, message)) => (status, json!({ "error": message })),
+                    None => {
+                        let name = path.rsplit('/').next().unwrap_or_default().to_owned();
+                        let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
+                        let mut settings = settings.lock().unwrap();
+                        if let Some(entry) = block_mut(&mut settings, &name) {
+                            if let Some(value) = parsed.get("value") {
+                                entry["value"] = value.clone();
+                            }
+                            let revision = entry["revision"].as_u64().unwrap_or(0) + 1;
+                            entry["revision"] = json!(revision);
+                            puts.lock().unwrap().push((name, parsed));
+                            (200, json!({ "saved": true, "revision": revision }))
+                        } else {
+                            (404, json!({ "error": "Source not found" }))
+                        }
                     }
-                    let revision = entry["revision"].as_u64().unwrap_or(0) + 1;
-                    entry["revision"] = json!(revision);
-                    puts.lock().unwrap().push((name, parsed));
-                    (200, json!({ "saved": true, "revision": revision }))
-                } else {
-                    (404, json!({ "error": "Source not found" }))
                 }
             } else if path.ends_with("/settings") {
                 (200, settings.lock().unwrap().clone())
