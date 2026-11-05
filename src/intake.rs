@@ -589,7 +589,7 @@ fn repository_from_url(url: &str) -> Option<String> {
 fn gh_login(program: &str) -> Result<String, String> {
     // At most two attempts, as a range rather than a counter: the loop is bounded by its own
     // shape, so no rewrite of a guard can make it spin.
-    let mut busy: Option<std::io::Error> = None;
+    let mut first: Option<std::io::Error> = None;
     for attempt in 0..2 {
         match Command::new(program)
             .args(["api", "user", "--jq", ".login"])
@@ -597,22 +597,23 @@ fn gh_login(program: &str) -> Result<String, String> {
         {
             Ok(output) => return account_of(output),
             Err(error)
-                if error.kind() == std::io::ErrorKind::ExecutableFileBusy && attempt == 0 =>
+                if attempt == 0 && error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
             {
                 // A CLI written moments ago can still be open elsewhere in the process, and the
                 // kernel then refuses to execute it; the pause covers that window.
-                busy = Some(error);
+                first = Some(error);
                 sleep(RETRY_PAUSE);
             }
             Err(error) => {
-                return Err(format!("cannot run gh: {error}; install the GitHub CLI"));
+                // The second attempt, or a failure that was never transient.
+                return Err(match first {
+                    Some(_) => format!("cannot run gh: {error}; the CLI stayed busy"),
+                    None => format!("cannot run gh: {error}; install the GitHub CLI"),
+                });
             }
         }
     }
-    let error = busy
-        .map(|error| error.to_string())
-        .unwrap_or_else(|| "still busy".into());
-    Err(format!("cannot run gh: {error}; install the GitHub CLI"))
+    Err("cannot run gh: it never started".into())
 }
 
 /// The account a successful `gh api user` printed, or why there is none.

@@ -2,14 +2,29 @@
 # `tools/changed_lines.py` fails on any miss that is NOT listed here, and fails again when a
 # listed line stops being a miss, so this file cannot rot into a blanket exemption.
 #
-# Excluding a line is a visible, reviewable act: prefer a test whenever one is possible.
+# Excluding a line is a visible, reviewable act: prefer a test whenever one is possible. Line
+# numbers move with edits; a stale entry is reported as a failure, not silently ignored.
 
 src/app.rs:353 poisoned-mutex arm: reachable only if another thread panicked while holding the tail lock
-src/app.rs:884 poisoned-mutex arm in the poll thread: same reason
-src/app.rs:1826 composer segment drawn into a terminal frame; needs a pty, exercised by the pty run in EVIDENCE
 src/app.rs:2762 assertion failure message: evaluated only when that assertion fails
 src/app.rs:2909 assertion failure message: evaluated only when that assertion fails
+src/app.rs:3148 assertion failure message: evaluated only when that assertion fails
+src/app.rs:3167 assertion failure message: evaluated only when that assertion fails
+src/app.rs:3187 drain loop: a message other than Status cannot arrive on that channel after a poll
+src/app.rs:3188 drain loop: the still-waiting arm, reached only when the poll is slower than 5 s
+src/app.rs:3189 drain loop: the timeout panic, reachable only when the poll never answers
+src/app.rs:3219 drain loop: a message other than Replies cannot arrive on that channel after a poll
+src/app.rs:3220 drain loop: the still-waiting arm, reached only when the poll is slower than 5 s
+src/app.rs:3298 test helper: the arm that no test takes
+src/app.rs:3332 assertion failure message: evaluated only when that assertion fails
+src/app.rs:1826 composer segment drawn into a terminal frame; needs a pty, exercised by the pty run in EVIDENCE
 src/intake.rs:137 seek-failure arm: `seek` on a regular file does not fail, so this is defensive only
-src/intake.rs:740 assertion message behind a root-only branch: unprivileged runs skip it
-src/intake.rs:1113 test-only restore: the `None` arm runs when DSH_HOME was unset before the test
+src/intake.rs:616 post-loop arm: both passes return from inside the loop, so this is unreachable by construction
+src/intake.rs:754 assertion message behind a root-only branch: unprivileged runs skip it
+src/intake.rs:1127 test-only restore: the `None` arm runs when DSH_HOME was unset before the test
+src/oauth.rs:545 test-only restore: the `None` arm runs when DSH_HOME was unset before the test
+src/service.rs:571 llvm-cov attributes a continuation line of a multi-line expression to a later region; the enclosing behaviour is asserted
+src/service.rs:759 environment skip: the message printed when node is absent, which it is not here
+src/service.rs:760 environment skip: the early return taken when node is absent
+src/service.rs:761 environment skip: the cleanup in that skip path
 src/service.rs:237 llvm-cov attributes a continuation line of a multi-line `format!` to a later region; the enclosing error is asserted by stop_refuses_a_pid_file_pointing_at_another_program
