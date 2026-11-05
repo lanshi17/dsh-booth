@@ -367,7 +367,9 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
             })
             .unwrap_or(false)
     };
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // The same knob as `wait_ready`: a caller can shorten both waits, and a test does.
+    let registration = wait_budget().min(Duration::from_secs(30));
+    let deadline = Instant::now() + registration;
     let settings = loop {
         let settings = api.settings()?;
         if installed(&settings, "github") && installed(&settings, "local") {
@@ -517,13 +519,17 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     Ok(lines)
 }
 
-fn wait_ready(api: &Api) -> Result<(), String> {
-    // A caller with a different budget (or a test) can shrink the wait.
-    let budget = std::env::var("BOOTH_WAIT_SECONDS")
+/// How long a settings change may take to answer; `BOOTH_WAIT_SECONDS` overrides it.
+fn wait_budget() -> Duration {
+    std::env::var("BOOTH_WAIT_SECONDS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
         .map(Duration::from_secs)
-        .unwrap_or(RESTART_TIMEOUT);
+        .unwrap_or(RESTART_TIMEOUT)
+}
+
+fn wait_ready(api: &Api) -> Result<(), String> {
+    let budget = wait_budget();
     let deadline = Instant::now() + budget;
     loop {
         if api.state().is_ok() {
@@ -906,6 +912,19 @@ mod api_tests {
     }
 
     #[test]
+    fn the_transcript_helpers_keep_their_colours() {
+        // These three render differently from a blank line only by colour, so a plain-text
+        // assertion cannot tell them apart from `Line::default()`.
+        for line in [section("eval"), muted("hint"), blank()] {
+            let spans: Vec<_> = line.spans.iter().collect();
+            let styled = spans.iter().any(|span| span.style.fg.is_some());
+            assert!(styled || spans.is_empty(), "{line:?}");
+        }
+        assert!(section("eval").spans.iter().any(|s| s.style.fg.is_some()));
+        assert!(muted("hint").spans.iter().any(|s| s.style.fg.is_some()));
+    }
+
+    #[test]
     fn eval_prints_the_modes_and_marks_the_current_one() {
         let api = FakeApi::start();
         let lines = eval(&Api::new(&api.base), "").unwrap();
@@ -1009,6 +1028,42 @@ mod api_tests {
         assert_eq!(text.matches("deepseek-chat").count(), 1, "{text}");
         assert!(text.contains("also"), "{text}");
         assert!(text.contains("openai/gpt-5"), "{text}");
+    }
+
+    #[test]
+    fn summary_reports_the_account_only_when_a_grant_exists() {
+        let _env = env_lock();
+        let dir = scratch("summary-account");
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &dir);
+        // No grant file: no provider and no account.
+        let without: String = summary(&Store::default())
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(without.contains("no provider"), "{without}");
+        assert!(!without.contains("DeepSeek account"), "{without}");
+
+        // The grant DSH's provider reads: the account branch answers instead.
+        std::fs::write(
+            dir.join(".credentials.yaml"),
+            "version: 1\nrecords:\n  deepseek-account-platform/default:\n    kind: grant\n    payload:\n      token: t\n",
+        )
+        .unwrap();
+        let with: String = summary(&Store::default())
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(with.contains("DeepSeek account"), "{with}");
+        assert!(!with.contains("no provider"), "{with}");
+
+        match previous {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1196,6 +1251,63 @@ mod api_tests {
         assert_eq!(without, None, "no origin means no guess");
         assert_eq!(with.as_deref(), Some("owner/name"));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn setup_waits_for_a_service_that_is_still_restarting() {
+        let _env = env_lock();
+        let dir = scratch("setup-restarting");
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        // A generous budget: the point is that setup waits instead of failing at once.
+        std::env::set_var("BOOTH_WAIT_SECONDS", "20");
+        let api = FakeApi::start();
+        api.refuse_state(2);
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("o/r"), "{text}");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+        std::env::remove_var("BOOTH_WAIT_SECONDS");
+    }
+
+    #[test]
+    fn setup_says_which_source_is_missing() {
+        let _env = env_lock();
+        let dir = scratch("setup-missing-source");
+        let gh = dir.join("gh");
+        std::fs::write(&gh, "#!/bin/sh\necho tester\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        std::env::set_var("BOOTH_WAIT_SECONDS", "1");
+        let api = FakeApi::start();
+        // Only the GitHub Source registered: the console one is not there yet, and never will be.
+        api.set_sources(json!([
+            { "id": "github", "kind": "github", "installed": true, "revision": 0,
+              "value": { "enabled": true, "config": { "repository": "o/r", "cli": "gh" } } }
+        ]));
+        let error = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap_err();
+        assert!(error.contains("booth init"), "{error}");
+        assert_eq!(
+            api.put_count(),
+            0,
+            "nothing is saved before the Sources exist"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+        std::env::remove_var("BOOTH_WAIT_SECONDS");
     }
 
     #[test]
