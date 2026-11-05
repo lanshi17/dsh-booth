@@ -122,7 +122,18 @@ impl Store {
             .collect()
     }
 
+    /// Registers the API-key providers without choosing a default model, so the signed-in
+    /// DeepSeek account stays the default while sessions that name `deepseek` keep their adapter.
+    /// Rewriting the overlay this way is what keeps a sign-in from invalidating old sessions.
+    pub fn write_providers_only(&self, cfg: &Config) -> Result<(), String> {
+        self.write(cfg, false)
+    }
+
     fn write_overlay(&self, cfg: &Config) -> Result<(), String> {
+        self.write(cfg, true)
+    }
+
+    fn write(&self, cfg: &Config, choose_default: bool) -> Result<(), String> {
         let mut providers = serde_json::Map::new();
         for provider in &self.providers {
             providers.insert(
@@ -140,11 +151,13 @@ impl Store {
             "name": "@deepseek-ai/dsh-llm-pi-ai",
             "config": { "providers": providers },
         })];
-        if let Some(current) = self.current() {
-            entries.push(serde_json::json!({
-                "id": "agent-default-model",
-                "config": { "provider": current.id, "model": current.model },
-            }));
+        if choose_default {
+            if let Some(current) = self.current() {
+                entries.push(serde_json::json!({
+                    "id": "agent-default-model",
+                    "config": { "provider": current.id, "model": current.model },
+                }));
+            }
         }
         let text = serde_yaml::to_string(&entries)
             .map_err(|error| format!("cannot render the provider overlay: {error}"))?;
@@ -172,4 +185,57 @@ pub fn key_env(id: &str) -> String {
         }
     }
     name
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::Config;
+    use std::path::PathBuf;
+
+    fn config(name: &str) -> Config {
+        let root =
+            std::env::temp_dir().join(format!("booth-provider-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        Config {
+            profile: "test".into(),
+            port: 0,
+            dsh_home: root.clone(),
+            state_dir: root,
+            bundle: PathBuf::from("/tmp"),
+        }
+    }
+
+    fn store() -> Store {
+        Store {
+            current: "deepseek".into(),
+            providers: vec![Provider {
+                id: "deepseek".into(),
+                base: "https://api.deepseek.com".into(),
+                api: "openai-completions".into(),
+                model: "deepseek-chat".into(),
+                key: "sk-test".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn the_full_overlay_names_a_default_model() {
+        let cfg = config("full");
+        store().save(&cfg).unwrap();
+        let text = fs::read_to_string(overlay(&cfg)).unwrap();
+        assert!(text.contains("agent-default-model"), "{text}");
+        assert!(text.contains("deepseek"), "{text}");
+    }
+
+    #[test]
+    fn the_account_overlay_keeps_every_provider_but_no_default() {
+        let cfg = config("account");
+        store().write_providers_only(&cfg).unwrap();
+        let text = fs::read_to_string(overlay(&cfg)).unwrap();
+        // Sessions that still name `deepseek` keep their adapter after a sign-in.
+        assert!(text.contains("BOOTH_KEY_DEEPSEEK"), "{text}");
+        assert!(!text.contains("agent-default-model"), "{text}");
+    }
 }

@@ -134,12 +134,29 @@ check the deployment guide asks for.
 Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, plus
-`/send`, `/setup`, `/new`, `/model`, `/provider`, `/login`, `/keys`, `/history`, `/clear`
-and `/quit`.
+`/send`, `/setup`, `/agents`, `/new`, `/model`, `/provider`, `/login`, `/keys`, `/history`,
+`/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
 highlighted, and a selection past the eighth entry scrolls the window the way `omp`'s lists do.
 `/keys` lists every shortcut on one screen.
+
+## What the console keeps
+
+dsh-superagent's arrangement is the project's point, and the console reports it rather than
+replacing it. `/agents` (or `booth agents`) prints the whole picture:
+
+| Property | Where it lives |
+| --- | --- |
+| One agent routes, another works | The main Session (`dsh-superagent-router`) judges each Trigger; every Ticket gets its own `worker-<ticket>` Session (`dsh-superagent-worker`) |
+| Several agents in parallel | `maxWorkers` (3 by default) runs Tickets side by side, plus one extra slot so a person's message never waits for a free worker |
+| Memory that outlives a conversation | Sessions persist under `<dsh_home>/sessions/`; the router keeps the tickets, threads and decisions it judged, and a worker keeps its conversation when a later message resumes its Ticket. Restarting the console loses nothing |
+| Deciding alone, asking rarely | A Ticket reaches `person` only for an answer or a review, and `/overview` lists exactly those; workers run unattended otherwise |
+| Work that starts by itself | GitHub Issues, comments and CI, Feishu messages and console instructions all enter the same way, so nothing has to be typed |
+
+Changing the provider does not disturb any of it. `/login` and `/model` register every stored
+provider in the overlay and only change which one is the default, so a Session created earlier
+keeps its adapter and its history.
 
 ## Sending work
 
@@ -199,10 +216,11 @@ The bundle's GitHub reads use `gh api --slurp`, which CLIs before 2.57 reject. W
 published SHA-256 and points the Source at it — the GitHub front door works without touching
 the system CLI. `booth gh` reports the choice; `booth gh --install` installs it on demand.
 
-Signing in or switching the model moves the DSH sessions aside (`<state>/sessions-<epoch>/`,
-where transcripts stay readable): a session keeps the provider it was created with, and one that
-names a provider booth has since removed fails every turn with
-`no adapter registered for provider "deepseek"`. `booth reset-sessions` does the same by hand.
+A session keeps the provider it was created with, so the overlay always registers **every** stored
+provider: signing in drops only the default model, which makes the DeepSeek account the default
+while sessions that still name an API-key provider keep their adapter and their history. Nothing
+is discarded on sign-in or on `/model`. `booth reset-sessions` moves the sessions aside by hand
+if a session ever ends up naming a provider that is genuinely gone.
 
 The concurrency limit, the worker model and the prompts stay where they were: `/model` and the
 web panel.
@@ -216,7 +234,7 @@ web panel.
 | `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and a follow-up message answers it |
 | `↑ sent …` and no further line | The console wrote the instruction but the service is down or still starting; `booth status`, `booth logs` |
 | `◇ agent · could not judge  timeout` | The assessment ran past the Eval timeout; the panel's Eval block raises `timeoutSeconds`, and `/requeue <id>` puts the instruction back |
-| `no adapter registered for provider …` in a session | A session still names a provider that was removed, usually after signing in or switching providers; `booth reset-sessions` moves those sessions aside and the next turn uses the current model |
+| `no adapter registered for provider …` in a session | The overlay no longer registers that provider; `/login` re-adds it, or `booth reset-sessions` starts fresh sessions — the second costs the conversation history, so prefer the first |
 
 The web panel at the same port is the same service; anything the console cannot edit (policy
 rules, prompts, concurrency) is there.

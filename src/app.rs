@@ -517,19 +517,13 @@ impl App {
                             ),
                         ]));
                         if let Some(cfg) = &self.config {
-                            let _ = std::fs::remove_file(provider::overlay(cfg));
-                            // Sessions created while an API-key provider was default keep that
-                            // provider; once it is gone every turn fails with NO_ADAPTER.
-                            match service::reset_sessions(cfg) {
-                                Ok(Some(path)) => self.push(Line::from(Span::styled(
-                                    format!(
-                                        "previous sessions moved to {} · the next turn uses the account",
-                                        path.display()
-                                    ),
-                                    Style::default().fg(FAINT),
-                                ))),
-                                Ok(None) => {}
-                                Err(error) => self.push(warn_line(&error)),
+                            // Keep every API-key provider registered and only drop the default
+                            // model, so the account becomes the default while sessions that name
+                            // an earlier provider keep their adapter. Deleting the overlay
+                            // instead would break those sessions and cost their history.
+                            let store = provider::Store::load(cfg);
+                            if let Err(error) = store.write_providers_only(cfg) {
+                                self.push(warn_line(&error));
                             }
                         }
                         self.restart_service();
@@ -1627,19 +1621,8 @@ impl App {
                                 Style::default(),
                             ),
                         ]));
-                        // A session keeps the provider it was created with, so switching to a
-                        // provider that is not registered any more would break every turn.
-                        match service::reset_sessions(&cfg) {
-                            Ok(Some(path)) => self.push(Line::from(Span::styled(
-                                format!(
-                                    "previous sessions moved to {} · they used another provider",
-                                    path.display()
-                                ),
-                                Style::default().fg(FAINT),
-                            ))),
-                            Ok(None) => {}
-                            Err(error) => self.push(warn_line(&error)),
-                        }
+                        // The overlay registers every stored provider, so sessions that still
+                        // name another one keep working and keep their history.
                         self.restart_service();
                     }
                     Err(error) => {
