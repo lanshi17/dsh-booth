@@ -186,6 +186,22 @@ pub const EVAL_MODES: &[(&str, &str)] = &[
     ),
 ];
 
+/// What `/eval <argument>` resolves to, given the mode in force.
+///
+/// Split out so the choice is testable without a service: `Ok(None)` means "show the modes",
+/// `Ok(Some(mode))` means "switch to it", and the error names what was not a mode.
+pub fn resolve_mode(argument: &str, current: &str) -> Result<Option<&'static str>, String> {
+    let wanted = argument.trim().to_ascii_lowercase();
+    if wanted.is_empty() {
+        return Ok(None);
+    }
+    match EVAL_MODES.iter().find(|(mode, _)| *mode == wanted) {
+        Some((mode, _)) if *mode == current => Ok(None),
+        Some((mode, _)) => Ok(Some(mode)),
+        None => Err(format!("{wanted} is not a mode; use off, observe or auto")),
+    }
+}
+
 /// `/eval`: reads or changes the accept mode, the one setting that decides how much work
 /// starts without a person.
 pub fn eval(api: &Api, argument: &str) -> Result<Vec<L>, String> {
@@ -218,15 +234,12 @@ pub fn eval(api: &Api, argument: &str) -> Result<Vec<L>, String> {
         )));
         return Ok(lines);
     }
-    let Some((mode, _)) = EVAL_MODES.iter().find(|(mode, _)| *mode == wanted) else {
-        return Err(format!("{wanted} is not a mode; use off, observe or auto"));
+    let Some(mode) = resolve_mode(&wanted, &current)? else {
+        return Ok(vec![done(format!("eval already {current}"))]);
     };
-    if *mode == current {
-        return Ok(vec![done(format!("eval already {mode}"))]);
-    }
     api.set("eval", &|block| block["mode"] = json!(mode))?;
     let mut lines = vec![done(format!("eval {current} → {mode}"))];
-    if *mode == "auto" {
+    if mode == "auto" {
         lines.push(muted(
             "inferred candidates can now become tickets without a person; the policy rules still decide which",
         ));
@@ -731,6 +744,42 @@ mod tests {
     }
 
     #[test]
+    fn history_keeps_the_last_five_hundred_lines() {
+        let dir = scratch("history-cap");
+        let cfg = config(dir.clone());
+        for index in 0..600 {
+            remember(&cfg, &format!("line {index}"));
+        }
+        let lines = history(&cfg);
+        assert_eq!(lines.len(), 500, "the cap is 500");
+        assert_eq!(lines[0], "line 100");
+        assert_eq!(lines[499], "line 599");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn remember_rewrites_once_the_file_doubles_and_keeps_the_newest() {
+        let dir = scratch("history-rewrite");
+        let cfg = config(dir.clone());
+        // Reach the 1000-line threshold, then one more append rewrites to the newest 500.
+        for index in 0..1000 {
+            remember(&cfg, &format!("l{index}"));
+        }
+        let path = cfg.state_dir.join("booth-history.txt");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap().lines().count(),
+            1000
+        );
+        remember(&cfg, "after");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 501, "rewritten to 500 plus the new line");
+        assert_eq!(lines[0], "l500");
+        assert_eq!(lines[500], "after");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn remembers_the_ticket_it_continues() {
         let dir = scratch("follow");
         let cfg = config(dir.clone());
@@ -763,7 +812,19 @@ mod tests {
 
 #[cfg(test)]
 mod eval_tests {
-    use super::EVAL_MODES;
+    use super::{resolve_mode, EVAL_MODES};
+
+    #[test]
+    fn resolves_a_mode_change_against_the_current_one() {
+        assert_eq!(resolve_mode("", "observe").unwrap(), None);
+        assert_eq!(resolve_mode("  AUTO ", "observe").unwrap(), Some("auto"));
+        assert_eq!(resolve_mode("off", "observe").unwrap(), Some("off"));
+        // Asking for the mode already in force is not a change.
+        assert_eq!(resolve_mode("observe", "observe").unwrap(), None);
+        let error = resolve_mode("maybe", "observe").unwrap_err();
+        assert!(error.contains("maybe"), "{error}");
+        assert!(error.contains("off"), "{error}");
+    }
 
     #[test]
     fn every_mode_explains_itself() {
