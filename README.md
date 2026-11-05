@@ -284,7 +284,8 @@ routes listed above. If a route moves, `api.rs` is the only file to change; the 
 Not implemented: live push (SSE/WebSocket), editing prompts or the policy rules from the
 console, Feishu-specific reads, attaching to a worker Session, Windows service control.
 
-The console and `dsh-superagent` versions are those the submodule pins.
+The console and `dsh-superagent` versions are those the submodule pins. The console depends
+only on the management API and does not modify `dsh-superagent`'s source.
 
 ## License
 
