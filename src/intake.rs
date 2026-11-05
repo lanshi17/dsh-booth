@@ -92,10 +92,6 @@ pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<S
 }
 
 /// Reads every agent message the console has not shown yet; the caller decides which are new by id.
-pub fn replies(cfg: &service::Config) -> Vec<Reply> {
-    replies_from(cfg, &mut Tail::fresh())
-}
-
 /// Where the console's last outbox read stopped, and the file stamp it saw then.
 ///
 /// Length alone cannot tell a rewrite from an append when both have the same size, so the
@@ -712,11 +708,11 @@ mod tests {
             ),
         )
         .unwrap();
-        let messages = replies(&cfg);
+        let messages = replies_from(&cfg, &mut Tail::fresh());
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].ticket.as_deref(), Some("t-1"));
         assert_eq!(messages[1].kind, "reply");
-        assert!(replies(&config(dir.join("missing"))).is_empty());
+        assert!(replies_from(&config(dir.join("missing")), &mut Tail::fresh()).is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
