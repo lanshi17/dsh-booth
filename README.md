@@ -197,6 +197,11 @@ The bundle's GitHub reads use `gh api --slurp`, which CLIs before 2.57 reject. W
 published SHA-256 and points the Source at it — the GitHub front door works without touching
 the system CLI. `booth gh` reports the choice; `booth gh --install` installs it on demand.
 
+Signing in or switching the model moves the DSH sessions aside (`<state>/sessions-<epoch>/`,
+where transcripts stay readable): a session keeps the provider it was created with, and one that
+names a provider booth has since removed fails every turn with
+`no adapter registered for provider "deepseek"`. `booth reset-sessions` does the same by hand.
+
 The concurrency limit, the worker model and the prompts stay where they were: `/model` and the
 web panel.
 
@@ -208,6 +213,8 @@ web panel.
 | `⋯ no decision yet` | The Source has not produced a judgement after 20 s; `/sources` shows whether it is polling and `/status` shows health |
 | `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and a follow-up message answers it |
 | `↑ sent …` and no further line | The console wrote the instruction but the service is down or still starting; `booth status`, `booth logs` |
+| `◇ agent · could not judge  timeout` | The assessment ran past the Eval timeout; the panel's Eval block raises `timeoutSeconds`, and `/requeue <id>` puts the instruction back |
+| `no adapter registered for provider …` in a session | A session still names a provider that was removed, usually after signing in or switching providers; `booth reset-sessions` moves those sessions aside and the next turn uses the current model |
 
 The web panel at the same port is the same service; anything the console cannot edit (policy
 rules, prompts, concurrency) is there.
