@@ -5,6 +5,10 @@ edition = "2021"
 description = "A terminal console for dsh-superagent: tickets, threads and the people who are waiting"
 license = "GPL-3.0-only"
 repository = "https://github.com/lanshi17/dsh-booth"
+readme = "README.md"
+keywords = ["tui", "cli", "agent", "orchestration", "dsh"]
+categories = ["command-line-utilities", "development-tools"]
+rust-version = "1.83"
 
 [[bin]]
 name = "booth"

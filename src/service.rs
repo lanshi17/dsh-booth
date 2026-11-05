@@ -628,6 +628,14 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_signal_names_the_pid_and_the_signal() {
+        // SPEC scenario "目标进程已消失": the OS message alone does not say which process.
+        let error = signal(0x7fff_fffe, "TERM").unwrap_err();
+        assert!(error.contains("TERM"), "{error}");
+        assert!(error.contains("2147483646"), "{error}");
+    }
+
+    #[test]
     fn matches_only_this_profiles_service_command_line() {
         // SPEC scenario "pid 文件指向一个不是 dsh 的进程", at the level the argument match lives.
         assert!(serves_profile(
