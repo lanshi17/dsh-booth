@@ -57,7 +57,7 @@ const TIPS: [&str; 4] = [
     "Bare text is an instruction: the agent turns it into a ticket.",
     "/setup names the repository, once; then instructions just work.",
     "/provider shows the model the agent runs with; /model switches it.",
-    "Tab completes a command; ↑ ↓ walks the history.",
+    "Ctrl+P opens the palette, Ctrl+R searches history; /keys lists them all.",
 ];
 
 /// `/login` starts here: the account sign-in first, then API-key providers.
@@ -82,10 +82,19 @@ enum Msg {
 }
 
 enum Modal {
-    LoginList { selected: usize },
+    LoginList {
+        selected: usize,
+    },
     Login(LoginForm),
     OAuth(OAuthState),
     Model(ModelPick),
+    /// Ctrl+R: filter the command history and put the chosen line back in the composer.
+    History {
+        query: String,
+        selected: usize,
+    },
+    /// `/keys`: the shortcuts, one screen.
+    Keys,
 }
 
 /// Browser sign-in state. `attempt` arrives once `auth_init` answers; `paste` accepts the
@@ -161,6 +170,7 @@ struct Status {
     setup: bool,
     note: Option<String>,
     account: bool,
+    repository: Option<String>,
 }
 
 impl Status {
@@ -176,6 +186,7 @@ impl Status {
             setup: false,
             note: None,
             account: false,
+            repository: None,
         }
     }
 
@@ -207,6 +218,11 @@ impl Status {
             setup: state.setup.problem.is_some(),
             note: None,
             account: oauth::account_signed_in(),
+            repository: state
+                .setup
+                .accounts
+                .as_ref()
+                .and_then(|accounts| accounts.repository.clone()),
         }
     }
 }
@@ -257,6 +273,15 @@ pub struct App {
     polled: Instant,
     /// One poll at a time: a slow or unreachable service must not stack polling threads.
     polling: Arc<AtomicBool>,
+    /// The last killed text, for Ctrl+Y, as in omp's editor.
+    kill: String,
+    /// Lines that arrived while the transcript was scrolled up.
+    unread: usize,
+    /// When the current activity began, for the working row's elapsed time.
+    work_since: Option<Instant>,
+    /// Open tickets and those waiting for a person, from the last ticket poll.
+    open: u32,
+    person: u32,
 }
 
 pub fn run(api: Api) -> Result<(), String> {
@@ -296,7 +321,7 @@ impl App {
         let store = config.as_ref().map(Store::load).unwrap_or_default();
         let continues = config
             .as_ref()
-            .and_then(|config| intake::follow(config))
+            .and_then(intake::follow)
             .map(|(ticket, thread)| Follow { thread, ticket });
         // A restart shows the recent conversation, not the whole outbox.
         let mut seen = std::collections::HashSet::new();
@@ -333,6 +358,11 @@ impl App {
             replied: std::collections::HashSet::new(),
             polled: Instant::now(),
             polling: Arc::new(AtomicBool::new(false)),
+            kill: String::new(),
+            unread: 0,
+            work_since: None,
+            open: 0,
+            person: 0,
         }
     }
 
@@ -494,6 +524,18 @@ impl App {
     /// Reports the stage of the tickets this console opened, once per change; a report the agent
     /// did not also send as a reply is shown as a short fallback.
     fn show_tickets(&mut self, rows: Vec<crate::model::TicketRow>) {
+        self.open = rows
+            .iter()
+            .filter(|row| row.state == "open")
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
+        self.person = rows
+            .iter()
+            .filter(|row| row.state == "open" && row.stage == "person")
+            .count()
+            .try_into()
+            .unwrap_or(u32::MAX);
         let by_id: std::collections::HashMap<&str, &crate::model::TicketRow> =
             rows.iter().map(|row| (row.id.as_str(), row)).collect();
         let replied = self.replied.clone();
@@ -616,6 +658,9 @@ impl App {
     }
 
     fn push_lines(&mut self, lines: Vec<L>) {
+        if !self.follow && !lines.is_empty() {
+            self.unread += lines.len();
+        }
         self.lines.extend(lines);
         let overflow = self.lines.len().saturating_sub(4000);
         if overflow > 0 {
@@ -770,13 +815,19 @@ impl App {
                     let _ = tx.send(Msg::Replies(replies));
                 }
             }
+            // Open tickets are the header's counts as well as the followed tickets' stages.
+            let mut rows = Vec::new();
+            let mut fetched = false;
+            if let Ok(page) = polled.tickets("open") {
+                rows.extend(page.items);
+                fetched = true;
+            }
             if !tracked.is_empty() {
-                let mut rows = Vec::new();
-                for state in ["open", "ended"] {
-                    if let Ok(page) = polled.tickets(state) {
-                        rows.extend(page.items);
-                    }
+                if let Ok(page) = polled.tickets("ended") {
+                    rows.extend(page.items);
                 }
+            }
+            if fetched {
                 let _ = tx.send(Msg::Tickets(rows));
             }
             let status = match api.state() {
@@ -826,17 +877,42 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
-                KeyCode::Char('c') => {
-                    self.quit = true;
-                    return;
-                }
+                KeyCode::Char('c') => self.quit = true,
                 KeyCode::Char('l') => {
                     self.lines.clear();
                     self.scroll = 0;
-                    return;
                 }
+                KeyCode::Char('p') => {
+                    // An empty composer opens the palette; a draft is never replaced by it.
+                    if self.input.is_empty() {
+                        self.input = "/".into();
+                        self.cursor = 1;
+                        self.selection = 0;
+                        self.follow = true;
+                    }
+                }
+                KeyCode::Char('a') => self.cursor = 0,
+                KeyCode::Char('e') => self.cursor = self.input.chars().count(),
+                KeyCode::Char('w') => self.delete_word_back(),
+                KeyCode::Char('u') => self.delete_to_start(),
+                KeyCode::Char('k') => self.delete_to_end(),
+                KeyCode::Char('y') => self.yank(),
+                KeyCode::Char('r') => self.open_history(),
+                KeyCode::Left => self.word_left(),
+                KeyCode::Right => self.word_right(),
+                KeyCode::Backspace => self.delete_word_back(),
                 _ => {}
             }
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::ALT) {
+            match key.code {
+                KeyCode::Char('b') => self.word_left(),
+                KeyCode::Char('f') => self.word_right(),
+                KeyCode::Backspace => self.delete_word_back(),
+                _ => {}
+            }
+            return;
         }
         match key.code {
             KeyCode::Enter => {
@@ -903,6 +979,77 @@ impl App {
         self.input.remove(byte);
     }
 
+    fn word_left(&mut self) {
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut index = self.cursor;
+        while index > 0 && chars[index - 1].is_whitespace() {
+            index -= 1;
+        }
+        while index > 0 && !chars[index - 1].is_whitespace() {
+            index -= 1;
+        }
+        self.cursor = index;
+    }
+
+    fn word_right(&mut self) {
+        let chars: Vec<char> = self.input.chars().collect();
+        let mut index = self.cursor;
+        while index < chars.len() && !chars[index].is_whitespace() {
+            index += 1;
+        }
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        self.cursor = index;
+    }
+
+    fn delete_word_back(&mut self) {
+        let end = self.cursor;
+        self.word_left();
+        let start = self.cursor;
+        if start == end {
+            return;
+        }
+        self.kill =
+            self.input[char_to_byte(&self.input, start)..char_to_byte(&self.input, end)].to_owned();
+        let range = char_to_byte(&self.input, start)..char_to_byte(&self.input, end);
+        self.input.replace_range(range, "");
+        self.cursor = start;
+        self.selection = 0;
+    }
+
+    fn delete_to_start(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        self.kill = self.input[..char_to_byte(&self.input, self.cursor)].to_owned();
+        let rest = self.input[char_to_byte(&self.input, self.cursor)..].to_owned();
+        self.input = rest;
+        self.cursor = 0;
+        self.selection = 0;
+    }
+
+    fn delete_to_end(&mut self) {
+        if self.cursor >= self.input.chars().count() {
+            return;
+        }
+        self.kill = self.input[char_to_byte(&self.input, self.cursor)..].to_owned();
+        let kept = self.input[..char_to_byte(&self.input, self.cursor)].to_owned();
+        self.input = kept;
+        self.selection = 0;
+    }
+
+    fn yank(&mut self) {
+        if self.kill.is_empty() {
+            return;
+        }
+        let byte = char_to_byte(&self.input, self.cursor);
+        let killed = self.kill.clone();
+        self.input.insert_str(byte, &killed);
+        self.cursor += killed.chars().count();
+        self.selection = 0;
+    }
+
     fn up(&mut self) {
         if let Some(matches) = self.palette() {
             self.selection = self.selection.saturating_sub(1).min(matches.len() - 1);
@@ -955,6 +1102,18 @@ impl App {
         }
         if line == "/model" {
             self.open_model();
+            return;
+        }
+        if line == "/keys" || line == "/hotkeys" {
+            self.push(Line::from(vec![
+                Span::styled("  ❯ ", Style::default().fg(CYAN)),
+                Span::styled(line.clone(), Style::default().fg(TEXT)),
+            ]));
+            self.modal = Some(Modal::Keys);
+            return;
+        }
+        if line == "/history" {
+            self.open_history();
             return;
         }
         if line == "/new" || line == "/reset" {
@@ -1070,12 +1229,69 @@ impl App {
         self.modal = Some(Modal::Model(ModelPick { selected }));
     }
 
+    fn open_history(&mut self) {
+        if self.history.is_empty() {
+            self.push(Line::from(Span::styled(
+                "  no history yet",
+                Style::default().fg(FAINT),
+            )));
+            return;
+        }
+        self.modal = Some(Modal::History {
+            query: String::new(),
+            selected: 0,
+        });
+    }
+
+    /// Newest first, filtered by the same fuzzy subsequence the picker draws.
+    fn history_matches(&self, query: &str) -> Vec<&String> {
+        matching_history(&self.history, query)
+    }
+
+    fn history_key(&mut self, key: KeyEvent, mut query: String, mut selected: usize) {
+        let count = self.history_matches(&query).len();
+        // Ctrl+R again walks to the next older match, as readline's reverse search does.
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('r') {
+            selected = (selected + 1).min(count.saturating_sub(1));
+            self.modal = Some(Modal::History { query, selected });
+            return;
+        }
+        match key.code {
+            KeyCode::Esc => return,
+            KeyCode::Up => selected = selected.saturating_sub(1),
+            KeyCode::Down => selected = (selected + 1).min(count.saturating_sub(1)),
+            KeyCode::Enter => {
+                let chosen = self
+                    .history_matches(&query)
+                    .get(selected.min(count.saturating_sub(1)))
+                    .map(|line| (*line).clone());
+                if let Some(line) = chosen {
+                    self.cursor = line.chars().count();
+                    self.input = line;
+                }
+                return;
+            }
+            KeyCode::Backspace => {
+                query.pop();
+                selected = 0;
+            }
+            KeyCode::Char(ch) => {
+                query.push(ch);
+                selected = 0;
+            }
+            _ => {}
+        }
+        self.modal = Some(Modal::History { query, selected });
+    }
+
     fn modal_key(&mut self, key: KeyEvent) {
         match self.modal.take() {
             Some(Modal::LoginList { selected }) => self.login_list_key(key, selected),
             Some(Modal::Login(form)) => self.login_key(key, form),
             Some(Modal::OAuth(state)) => self.oauth_key(key, state),
             Some(Modal::Model(pick)) => self.model_key(key, pick),
+            Some(Modal::History { query, selected }) => self.history_key(key, query, selected),
+            Some(Modal::Keys) => {}
             None => {}
         }
     }
@@ -1458,6 +1674,9 @@ impl App {
         if self.status.errors > 0 {
             return Some(format!("{} health error(s) — /status", self.status.errors));
         }
+        if self.unread > 0 && !self.follow {
+            return Some(format!("{} new line(s) · PgDn follows", self.unread));
+        }
         None
     }
 
@@ -1488,6 +1707,21 @@ impl App {
                 Style::default().fg(MUTED),
             ),
         ];
+        if self.open > 0 {
+            segments.push(Span::styled(
+                format!("{} open", self.open),
+                Style::default().fg(MUTED),
+            ));
+        }
+        if self.person > 0 {
+            segments.push(Span::styled(
+                format!("{} need you", self.person),
+                Style::default().fg(TIP),
+            ));
+        }
+        if let Some(repository) = &self.status.repository {
+            segments.push(Span::styled(repository.clone(), Style::default().fg(FAINT)));
+        }
         if self.status.paused {
             segments.push(Span::styled("paused", Style::default().fg(Color::Yellow)));
         }
@@ -1529,17 +1763,64 @@ impl App {
         }
     }
 
+    /// What the console is waiting on, in omp's working-row shape: spinner, elapsed, label.
+    fn activity(&mut self) -> Option<(String, Instant)> {
+        let active = if self.busy {
+            Some("working".to_owned())
+        } else if self.status.running > 0 {
+            Some(format!(
+                "the agent is working · {} running",
+                self.status.running
+            ))
+        } else if self.status.queued > 0 {
+            Some(format!("{} ticket(s) queued", self.status.queued))
+        } else if !self.pending.is_empty() {
+            Some("waiting for the agent's decision".to_owned())
+        } else if self
+            .tracked
+            .values()
+            .any(|tracked| tracked.stage == "working")
+        {
+            Some("the agent is working".to_owned())
+        } else {
+            None
+        };
+        match active {
+            Some(label) => {
+                let since = *self.work_since.get_or_insert_with(Instant::now);
+                Some((label, since))
+            }
+            None => {
+                self.work_since = None;
+                None
+            }
+        }
+    }
+
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
         let alert = self.alert_text(area.width);
         let alert_height = u16::from(alert.is_some());
-        let [alert_area, body, top, bottom] = Layout::vertical([
+        let working = self.activity();
+        // The palette owns the rows above the composer while it is open, spinner included.
+        let palette_open = self.palette().is_some();
+        let working_height = if palette_open {
+            0
+        } else {
+            u16::from(working.is_some())
+        };
+        let [alert_area, body, working_area, top, bottom] = Layout::vertical([
             Constraint::Length(alert_height),
             Constraint::Min(3),
+            Constraint::Length(working_height),
             Constraint::Length(1),
             Constraint::Length(1),
         ])
         .areas(area);
+
+        if let Some((label, since)) = working.filter(|_| !palette_open) {
+            draw_working(frame, working_area, &label, since);
+        }
 
         if let Some(text) = alert {
             frame.render_widget(
@@ -1558,6 +1839,10 @@ impl App {
             self.scroll = max_scroll;
         } else {
             self.scroll = self.scroll.min(max_scroll);
+            if self.scroll >= max_scroll {
+                self.follow = true;
+                self.unread = 0;
+            }
         }
         if self.lines.is_empty() && !self.busy {
             draw_splash(
@@ -1576,8 +1861,16 @@ impl App {
             );
         }
 
+        self.draw_composer(frame, top, bottom);
+
+        // The palette floats above the composer: painting it after the composer lets it cover
+        // the working row instead of sharing its cells.
         if let Some(matches) = self.palette() {
-            let shown = matches.len().min(8);
+            let room = top.y.saturating_sub(area.y) as usize;
+            let shown = matches.len().min(8).min(room.max(1));
+            let selected = self.selection.min(matches.len().saturating_sub(1));
+            // Keep the selection in view when the list is longer than its window (omp's list scrolls).
+            let offset = selected.saturating_sub(shown.saturating_sub(1));
             let width = area.width.saturating_sub(4).clamp(24, 82).min(area.width);
             let height = shown as u16;
             let rect = Rect {
@@ -1587,48 +1880,176 @@ impl App {
                 height,
             };
             frame.render_widget(Clear, rect);
-            let selected = self.selection.min(shown.saturating_sub(1));
+            let token = commands::query(&self.input);
             let lines: Vec<L> = matches
                 .iter()
-                .take(shown)
                 .enumerate()
+                .skip(offset)
+                .take(shown)
                 .map(|(index, (name, description))| {
                     let active = index == selected;
-                    Line::from(vec![
-                        Span::styled(if active { "❯ " } else { "  " }, Style::default().fg(CYAN)),
-                        Span::styled(
-                            format!("{name:<18}"),
-                            if active {
-                                Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
-                            } else {
-                                Style::default().fg(MUTED)
-                            },
-                        ),
-                        Span::styled(
-                            *description,
-                            Style::default().fg(if active { MUTED } else { FAINT }),
-                        ),
-                    ])
+                    let word = name.split_whitespace().next().unwrap_or("");
+                    let hit = commands::fuzzy(word, &token)
+                        .map(|(_, indices)| indices)
+                        .unwrap_or_default();
+                    let mut spans = vec![Span::styled(
+                        if active { "❯ " } else { "  " },
+                        Style::default().fg(CYAN),
+                    )];
+                    // The command word highlights the letters the fuzzy filter matched.
+                    for (position, ch) in name.chars().enumerate() {
+                        let matched = hit.contains(&position);
+                        let style = if matched {
+                            Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                        } else if active {
+                            Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(MUTED)
+                        };
+                        spans.push(Span::styled(ch.to_string(), style));
+                    }
+                    let pad = 18usize.saturating_sub(UnicodeWidthStr::width(*name));
+                    spans.push(Span::raw(" ".repeat(pad.max(1))));
+                    spans.push(Span::styled(
+                        *description,
+                        Style::default().fg(if active { MUTED } else { FAINT }),
+                    ));
+                    Line::from(spans)
                 })
                 .collect();
             frame.render_widget(Paragraph::new(lines), rect);
         }
 
-        self.draw_composer(frame, top, bottom);
-
         if let Some(modal) = &self.modal {
-            draw_modal(frame, area, modal, &self.store);
+            draw_modal(frame, area, modal, &self.store, &self.history);
         }
     }
 }
 
-fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, store: &Store) {
+fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, store: &Store, history: &[String]) {
     match modal {
         Modal::LoginList { selected } => draw_login_list(frame, area, *selected),
         Modal::Login(form) => draw_login(frame, area, form),
         Modal::OAuth(state) => draw_oauth(frame, area, state),
         Modal::Model(pick) => draw_model(frame, area, pick, store),
+        Modal::History { query, selected } => draw_history(frame, area, query, *selected, history),
+        Modal::Keys => draw_keys(frame, area),
     }
+}
+
+/// The shortcuts, as omp lists its hotkeys.
+const KEYS: &[(&str, &str)] = &[
+    ("Enter", "run the line; bare text goes to the agent"),
+    ("Tab", "complete the selected command"),
+    ("Ctrl+P", "open the command palette"),
+    ("Ctrl+R", "search the history"),
+    ("Ctrl+A / Ctrl+E", "start / end of the line"),
+    ("Alt+B / Alt+F", "move by word"),
+    ("Ctrl+W", "delete the word before"),
+    ("Ctrl+U / Ctrl+K", "delete to the start / end"),
+    ("Ctrl+Y", "paste the last deleted text"),
+    ("↑ ↓", "pick in the palette, or walk the history"),
+    ("PgUp / PgDn", "scroll the transcript"),
+    ("Ctrl+L", "clear the transcript"),
+    ("Ctrl+C", "quit"),
+];
+
+fn draw_keys(frame: &mut Frame, area: Rect) {
+    let width = area.width.saturating_sub(8).clamp(40, 66).min(area.width);
+    let height = (KEYS.len() as u16 + 3).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(" keys ", Style::default().fg(MUTED)));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    let mut lines: Vec<L> = KEYS
+        .iter()
+        .map(|(key, description)| {
+            Line::from(vec![
+                Span::styled(format!(" {key:<18}"), Style::default().fg(CYAN)),
+                Span::styled(*description, Style::default().fg(DIM)),
+            ])
+        })
+        .collect();
+    lines.push(Line::from(Span::styled(
+        " any key closes",
+        Style::default().fg(DIM),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn draw_history(frame: &mut Frame, area: Rect, query: &str, selected: usize, history: &[String]) {
+    let matches = matching_history(history, query);
+    let shown = matches.len().min(8);
+    let width = area.width.saturating_sub(8).clamp(40, 78).min(area.width);
+    let height = (shown as u16 + 3).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let block = Block::bordered()
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(
+            format!(" history · {} ", if query.is_empty() { "…" } else { query }),
+            Style::default().fg(MUTED),
+        ));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+
+    let mut lines: Vec<L> = Vec::new();
+    if matches.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " no matching line",
+            Style::default().fg(DIM),
+        )));
+    }
+    let offset = selected.saturating_sub(shown.saturating_sub(1));
+    for (index, line) in matches.iter().enumerate().skip(offset).take(shown) {
+        let active = index == selected;
+        lines.push(Line::from(vec![
+            Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+            Span::styled(
+                format::clip(line, width.saturating_sub(6) as usize),
+                if active {
+                    Style::default().fg(TEXT)
+                } else {
+                    Style::default().fg(DIM)
+                },
+            ),
+        ]));
+    }
+    lines.push(Line::from(Span::styled(
+        " Enter insert · Esc cancel",
+        Style::default().fg(DIM),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Newest first; a fuzzy subsequence keeps readline's Ctrl+R feeling without a second index.
+fn matching_history<'a>(history: &'a [String], query: &str) -> Vec<&'a String> {
+    let needle = query.to_ascii_lowercase();
+    history
+        .iter()
+        .rev()
+        .filter(|line| {
+            if needle.is_empty() {
+                return true;
+            }
+            let lowered = line.to_ascii_lowercase();
+            let mut chars = lowered.chars();
+            needle.chars().all(|want| chars.any(|have| have == want))
+        })
+        .collect()
 }
 
 fn draw_login(frame: &mut Frame, area: Rect, form: &LoginForm) {
@@ -1863,6 +2284,28 @@ fn clip_error(text: &str) -> String {
     format::clip(text, 70)
 }
 
+/// omp's working row: a braille spinner, the elapsed time, and what is being waited on.
+fn draw_working(frame: &mut Frame, area: Rect, label: &str, since: Instant) {
+    if area.height == 0 {
+        return;
+    }
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let elapsed = since.elapsed();
+    // 80 ms a frame, the cadence omp's loader uses.
+    let frame_index = (elapsed.as_millis() / 80) as usize % FRAMES.len();
+    let seconds = elapsed.as_secs();
+    let line = Line::from(vec![
+        Span::styled(
+            format!(" {}", FRAMES[frame_index]),
+            Style::default().fg(CYAN),
+        ),
+        Span::styled(format!(" {seconds}s"), Style::default().fg(FAINT)),
+        Span::styled(" · ", Style::default().fg(FAINT)),
+        Span::styled(label.to_owned(), Style::default().fg(TIP)),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
+}
+
 /// One structural line about a ticket the console opened: a stage, a report, or an end.
 fn ticket_line(text: &str) -> L {
     Line::from(vec![
@@ -2058,4 +2501,25 @@ fn draw_splash(
             .wrap(Wrap { trim: true }),
         rect,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_search_is_newest_first_and_fuzzy() {
+        let history = vec![
+            "/status".to_owned(),
+            "/keys".to_owned(),
+            "/tickets --state person".to_owned(),
+        ];
+        let found: Vec<&str> = matching_history(&history, "ks")
+            .iter()
+            .map(|line| line.as_str())
+            .collect();
+        assert_eq!(found, vec!["/tickets --state person", "/keys"]);
+        assert_eq!(matching_history(&history, "zzz").len(), 0);
+        assert_eq!(matching_history(&history, "").len(), 3);
+    }
 }

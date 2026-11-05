@@ -37,6 +37,8 @@ pub const PALETTE: &[(&str, &str)] = &[
     ("/retry <id>", "start a fresh assignment"),
     ("/pause", "stop the executor from taking work"),
     ("/resume", "let the executor take work"),
+    ("/keys", "the keyboard shortcuts, on one screen"),
+    ("/history", "search what you typed before (Ctrl+R)"),
     ("/refresh", "reload the header"),
     ("/clear", "clear the transcript"),
     ("/quit", "leave the console"),
@@ -152,17 +154,114 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
 
 /// Palette entries whose first word starts with what the user typed.
 pub fn matches(input: &str) -> Vec<(&'static str, &'static str)> {
-    let token = input
+    let token = query(input);
+    if token.is_empty() {
+        return PALETTE.to_vec();
+    }
+    let mut scored: Vec<(i32, usize, &'static str, &'static str)> = PALETTE
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (name, description))| {
+            let word = name.split_whitespace().next().unwrap_or("");
+            fuzzy(word, &token).map(|(score, _)| (score, index, *name, *description))
+        })
+        .collect();
+    // A higher score first; equal scores keep the palette's order.
+    scored.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    scored
+        .into_iter()
+        .map(|(_, _, name, description)| (name, description))
+        .collect()
+}
+
+/// The part of a line the palette filters on: the command word, without its slash.
+pub fn query(input: &str) -> String {
+    input
         .split_whitespace()
         .next()
         .unwrap_or_default()
-        .to_ascii_lowercase();
-    PALETTE
-        .iter()
-        .filter(|(name, _)| {
-            let first = name.split_whitespace().next().unwrap_or("");
-            token == "/" || first.starts_with(&token)
-        })
-        .copied()
-        .collect()
+        .trim_start_matches('/')
+        .to_ascii_lowercase()
+}
+
+/// Subsequence match of `query` in `candidate`, scored for consecutive and word-start hits.
+/// Returns the score and the matched char indices, or `None` when a char is missing.
+pub fn fuzzy(candidate: &str, query: &str) -> Option<(i32, Vec<usize>)> {
+    if query.is_empty() {
+        return Some((0, Vec::new()));
+    }
+    let chars: Vec<char> = candidate.chars().collect();
+    let wanted: Vec<char> = query.chars().collect();
+    let mut indices = Vec::with_capacity(wanted.len());
+    let mut score = 0i32;
+    let mut last: Option<usize> = None;
+    let mut from = 0usize;
+    for (position, want) in wanted.iter().enumerate() {
+        let lower = want.to_ascii_lowercase();
+        let found = chars
+            .iter()
+            .enumerate()
+            .skip(from)
+            .find(|(_, ch)| ch.to_ascii_lowercase() == lower)
+            .map(|(index, _)| index)?;
+        score += match last {
+            Some(previous) if found == previous + 1 => 6,
+            Some(previous) if found == previous + 2 => 2,
+            _ => 0,
+        };
+        // The first letter of a word and the first letter of the command score best.
+        if found == 0 || !chars[found - 1].is_alphanumeric() {
+            score += 8;
+        }
+        if position == 0 {
+            score += if found == 0 { 10 } else { 4 };
+        }
+        score -= found as i32 / 4;
+        indices.push(found);
+        last = Some(found);
+        from = found + 1;
+    }
+    Some((score, indices))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fuzzy_matches_subsequences_with_their_indices() {
+        let (score, indices) = fuzzy("/ticket", "tkt").unwrap();
+        assert_eq!(indices, vec![1, 4, 6]);
+        assert!(score > 0);
+        assert!(fuzzy("/ticket", "zzz").is_none());
+    }
+
+    #[test]
+    fn a_consecutive_match_beats_a_scattered_one() {
+        let (consecutive, _) = fuzzy("/status", "st").unwrap();
+        let (scattered, _) = fuzzy("/status", "ts").unwrap();
+        assert!(consecutive > scattered, "{consecutive} vs {scattered}");
+    }
+
+    #[test]
+    fn the_palette_ranks_and_filters() {
+        let names: Vec<&str> = matches("/tick").iter().map(|(name, _)| *name).collect();
+        assert!(
+            names.iter().any(|name| name.starts_with("/ticket")),
+            "{names:?}"
+        );
+        assert!(
+            !names.iter().any(|name| name.starts_with("/pause")),
+            "{names:?}"
+        );
+        assert_eq!(matches("/").len(), PALETTE.len());
+        assert_eq!(matches("   ").len(), PALETTE.len());
+    }
+
+    #[test]
+    fn query_strips_the_slash_and_arguments() {
+        assert_eq!(query("/ticket abc"), "ticket");
+        assert_eq!(query("TiCk"), "tick");
+        assert_eq!(query("/"), "");
+    }
 }

@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """A fixture server for the console: the management API routes, the same-origin guard, and
-one ticket, one thread and one decision. `python3 dev/mock-api.py 3899` then
+one ticket, one thread, one accepted decision and one ignored greeting. `python3 dev/mock-api.py 3899` then
 `booth --url http://127.0.0.1:3899`."""
-from urllib.parse import urlparse, parse_qs
+import json
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 ROW = {
  "id":"t-7f3a9c2e1b","title":"Fix the flaky retry test","state":"open","stage":"person",
@@ -36,7 +39,7 @@ DETAIL.update({
 })
 
 ROUTES = {
- "/orchestrator/api/state": {"paused":False,"masterId":"orchestrator-abc","health":{"runtime":{"state":"ready","detail":""},"github":{"state":"ready","detail":"last poll 20s ago"},"local":{"state":"ready","detail":"Waiting for an instruction"},"evals":{"state":"ready","detail":"no unavailable Eval"}},"load":{"running":1,"queued":0},"setup":{"problem":None,"accounts":{"repository":"o/r","agent":"agent-bot"}}},
+ "/orchestrator/api/state": {"paused":False,"masterId":"orchestrator-abc","health":{"runtime":{"state":"ready","detail":""},"github":{"state":"ready","detail":"last poll 20s ago"},"local":{"state":"ready","detail":"Waiting for an instruction"},"evals":{"state":"ready","detail":"no unavailable Eval"}},"load":{"running":1,"queued":0,"maxWorkers":4},"setup":{"problem":None,"accounts":{"repository":"o/r","agent":"agent-bot"}}},
  "/orchestrator/api/overview": {"problems":[{"kind":"source-error","source":{"id":"feishu","title":"Feishu","health":{"state":"error","detail":"bot CLI not configured"}}}],"person":[ROW],"executor":{"running":1,"queued":0,"maxWorkers":4,"idle":2},"flow":{"received":12,"filtered":3,"triggers":9,"judged":8,"accepted":2,"evaluating":1,"dropped":0},"policyVersion":"8f3a2c9d1e4b"},
  "/orchestrator/api/tickets": {"items":[ROW],"total":1,"next_offset":None},
  "/orchestrator/api/threads": {"items":[THREAD],"total":1,"next_offset":None},

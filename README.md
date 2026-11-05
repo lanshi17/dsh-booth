@@ -3,7 +3,9 @@
 A terminal console for a running [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype).
 Type `booth` and you get one screen: type an instruction and the agent takes it as a ticket,
 watch what the executor is doing, and pick commands from a palette that filters as you type —
-the frame, palette and composer of `omp`, not a web page.
+the frame, palette and composer of `omp`, not a web page. The top rail carries the provider,
+the executor load, how many tickets are open, how many want a person, and the repository; above
+the composer a braille spinner and elapsed time say what the console is waiting on.
 
 ```text
   ❯ 把 README 里 “booth up” 那句说明改成 “booth up starts the service”
@@ -115,6 +117,13 @@ check the deployment guide asks for.
 | Key | Does |
 | --- | --- |
 | `Enter` | Run the line; bare text sends the agent an instruction |
+| `Ctrl+P` | Open the command palette on an empty line |
+| `Ctrl+R` | Search the history (fuzzy, newest first) |
+| `Ctrl+A` `Ctrl+E` | Start / end of the line |
+| `Alt+B` `Alt+F` | Move by word |
+| `Ctrl+W` | Delete the word before |
+| `Ctrl+U` `Ctrl+K` | Delete to the start / end, kept for `Ctrl+Y` |
+| `Ctrl+Y` | Paste the last deleted text |
 | `Tab` | Complete the selected palette entry |
 | `↑` `↓` | Move in the palette, or walk the command history when it is closed |
 | `PgUp` `PgDn` | Scroll the transcript (new output snaps back to the bottom) |
@@ -125,7 +134,12 @@ check the deployment guide asks for.
 Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, plus
-`/send`, `/setup`, `/new`, `/model`, `/provider`, `/login`, `/clear` and `/quit`.
+`/send`, `/setup`, `/new`, `/model`, `/provider`, `/login`, `/keys`, `/history`, `/clear`
+and `/quit`.
+
+The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
+highlighted, and a selection past the eighth entry scrolls the window the way `omp`'s lists do.
+`/keys` lists every shortcut on one screen.
 
 ## Sending work
 
@@ -225,6 +239,12 @@ What lands on disk:
 falls back to the profile's own default model.
 
 ## Design notes
+
+- **The console borrows `omp`'s habits, not just its colours.** Palette entries are fuzzy and
+  the picker keeps the selection in view; the editor has readline motion and a kill ring
+  (`Ctrl+W`, `Ctrl+U`, `Ctrl+K`, `Ctrl+Y`, `Alt+B`/`F`); `Ctrl+R` searches history; `Ctrl+P`
+  opens the palette; the working row is a braille spinner, elapsed time and one label; `/keys`
+  lists the lot.
 
 - **One grammar, two front ends.** `commands::execute` returns transcript lines; the TUI
   appends them, `booth <command>` prints them. The palette, `/help` and the CLI read the same

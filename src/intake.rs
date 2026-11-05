@@ -247,10 +247,7 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
                     .get("sources")
                     .and_then(Value::as_array)
                     .and_then(|items| items.iter().find(|item| item.get("id") == Some(&json!(id)))),
-                None => settings
-                    .get("blocks")
-                    .and_then(|blocks| blocks.get(block))
-                    .map(|entry| entry),
+                None => settings.get("blocks").and_then(|blocks| blocks.get(block)),
             };
             let Some(entry) = entry else {
                 // The restart between two saves unregisters Sources for a moment.
