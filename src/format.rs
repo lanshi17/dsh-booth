@@ -254,6 +254,59 @@ fn problem_line(problem: &Value) -> L {
     }
 }
 
+/// `/agents`: who does what, how many run at once, and where their memory lives.
+///
+/// dsh-superagent already models the arrangement — a main Session that routes, one Executor
+/// Session per Ticket, a concurrency limit, and a store that outlives both — so this view
+/// reports it instead of inventing a second one.
+pub fn agents(view: &Overview, base: &str, sessions: usize, memory: &str) -> Vec<L> {
+    let mut lines = vec![
+        section("agents"),
+        kv("service", base.to_string()),
+        blank(),
+        section("how work moves"),
+        bullet("you → instruction → the console Source"),
+        bullet("router · the main Session decides: accept, attach, stop, ignore"),
+        bullet("worker · one Session per ticket, named worker-<ticket>"),
+        bullet(format!(
+            "parallel · up to {} workers at once, one extra slot for a person's message",
+            view.executor.max_workers
+        )),
+        bullet("report · the worker answers on the ticket's thread, the console shows it"),
+        blank(),
+        section("now"),
+        kv(
+            "workers",
+            format!(
+                "{} running · {} queued · {} idle",
+                view.executor.running, view.executor.queued, view.executor.idle
+            ),
+        ),
+        kv("need a person", view.person.len().to_string()),
+        kv("sessions", sessions.to_string()),
+        blank(),
+        section("memory"),
+        kv("sessions", memory.to_string()),
+        bullet("the router Session keeps the tickets, threads and decisions it judged"),
+        bullet("a worker keeps its own conversation when a later message resumes its ticket"),
+        bullet("both outlive the console: restart it and the history is still there"),
+        blank(),
+        section("when a person is told"),
+        bullet("the agent works free of a person; a ticket reaches `person` only for an answer or a review"),
+        bullet("/overview lists exactly those; everything else stays quiet"),
+        blank(),
+        section("what starts work"),
+        bullet("console instructions, GitHub Issues and comments, Feishu messages"),
+        bullet("/requeue <id> puts a dropped or unavailable instruction back"),
+    ];
+    if !view.problems.is_empty() {
+        lines.push(blank());
+        lines.push(section(format!("problems ({})", view.problems.len())));
+        lines.extend(view.problems.iter().map(problem_line));
+    }
+    lines
+}
+
 pub fn overview(view: &Overview, base: &str) -> Vec<L> {
     let mut lines = vec![
         section("overview"),

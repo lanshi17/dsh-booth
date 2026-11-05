@@ -294,6 +294,13 @@ pub fn reset_sessions(cfg: &Config) -> Result<Option<PathBuf>, String> {
     Ok(Some(target))
 }
 
+/// How many sessions the state directory holds, router and workers together.
+pub fn session_count(cfg: &Config) -> usize {
+    fs::read_dir(session_root(cfg))
+        .map(|entries| entries.flatten().count())
+        .unwrap_or(0)
+}
+
 pub fn logs(cfg: &Config, lines: usize) -> Result<(), String> {
     tail(cfg, lines);
     Ok(())

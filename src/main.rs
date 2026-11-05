@@ -87,6 +87,11 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// How work is routed, run in parallel and remembered.
+    Agents {
+        #[arg(long)]
+        json: bool,
+    },
     /// Problems, tickets waiting for a person, executor load, 24h flow.
     Overview {
         #[arg(long)]
@@ -274,6 +279,21 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             api.state().map_err(String::from)?,
             format::status,
         ),
+        Command::Agents { json } => {
+            let cfg = service::Config::from_env()?;
+            let view = api.overview().map_err(String::from)?;
+            if json {
+                print_json(&view)
+            } else {
+                print_lines(format::agents(
+                    &view,
+                    api.base(),
+                    service::session_count(&cfg),
+                    &service::session_root(&cfg).display().to_string(),
+                ));
+                Ok(())
+            }
+        }
         Command::Overview { json } => show(
             &api,
             json,

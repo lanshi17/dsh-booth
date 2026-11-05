@@ -9,6 +9,7 @@ use ratatui::text::{Line, Span};
 pub const PALETTE: &[(&str, &str)] = &[
     ("/overview", "what needs a person, problems, executor load"),
     ("/status", "health entries, pause state, accounts"),
+    ("/agents", "how work is routed, run in parallel, remembered"),
     ("/model", "switch the worker model, or add a provider"),
     ("/provider", "which provider the agent runs with"),
     (
@@ -76,6 +77,16 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
         "/help" | "/?" => format::help(),
         "/overview" => format::overview(&api.overview()?, api.base()),
         "/status" => format::status(&api.state()?, api.base()),
+        "/agents" => format::agents(
+            &api.overview()?,
+            api.base(),
+            crate::service::Config::from_env()
+                .map(|cfg| crate::service::session_count(&cfg))
+                .unwrap_or(0),
+            &crate::service::Config::from_env()
+                .map(|cfg| crate::service::session_root(&cfg).display().to_string())
+                .unwrap_or_else(|_| "unknown".into()),
+        ),
         "/tickets" => {
             let state = if argument.is_empty() {
                 "open"
