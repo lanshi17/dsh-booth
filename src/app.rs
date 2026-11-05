@@ -3174,7 +3174,8 @@ mod editor_tests {
         // The poll runs on its own thread and answers with a message; a mutant that makes the
         // method do nothing leaves the console on "connecting" forever.
         let (mut app, dir, _env) = editor("refresh");
-        app.status = Status::connecting(&app.api.base().to_owned());
+        let base = app.api.base().to_owned();
+        app.status = Status::connecting(&base);
         app.refresh_status();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         loop {
