@@ -151,7 +151,7 @@ The console follows what it sent:
   ◇ ticket 2457786b · working
   ◇ ticket 2457786b · needs a person · review
   ◆ agent  2457786b
-    [PR #2](https://github.com/lanshi17/booth-sandbox/pull/2) 已按改后的措辞加上…，可审阅。
+    [PR #2](https://github.com/owner/repo/pull/2) 已按改后的措辞加上…，可审阅。
 ```
 
 - **A greeting is not work.** The agent answers `hi` with a reason, not a ticket:
