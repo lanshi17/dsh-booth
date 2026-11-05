@@ -2,9 +2,9 @@
 
 - **Spec approval:** obtained. The user replied "批准，按这个范围做（推荐）" to the SPEC question.
   One revision was made afterwards (v2, the dependency swap) and is recorded in `SPEC.md`.
-- **Source state:** `37e2fbb` on `release/0.1.0` (17 commits ahead of `origin/master`'s `33126f3`).
-  Every number below comes from a run against that tree; the final gauntlet run is the last thing
-  executed before this file was written.
+- **Source state:** `72cd975` on `release/0.1.0` (25 commits ahead of `origin/master`'s `33126f3`).
+  Every number below comes from one `tools/gauntlet.sh` run against that tree, executed after the
+  last code edit: exit 0, every layer `PASS`.
 - **Toolchain:** `tools/versions.txt` (rustc 1.93.0, cargo-mutants 27.1.0, cargo-audit 0.22.2,
   cargo-llvm-cov 0.9.1, python 3.14.4, GNU tar 1.35).
 - **Entry point:** `tools/gauntlet.sh` reruns every layer below (`tools/gauntlet.sh quick` for the
@@ -46,7 +46,7 @@ The task was "通过代码审查，随后可以推送发布第一版". The SPEC 
 | E: LICENSE 存在且为 GPL-3.0 | read by eye: first line is `GNU GENERAL PUBLIC LICENSE`, `Cargo.toml` says `GPL-3.0-only` | pass |
 | **Must NOT: 不改 superagent 子模块** | `git diff --submodule` against the merge base: no submodule entry | pass |
 | **Must NOT: 不改管理 API 调用语义** | `api.rs` diff adds `put`/`save`/`settings`/`block`/`set` only; no route or header changed | pass |
-| **Must NOT: 不删不弱化测试（≥34）** | 34 tests at the start, 93 at the end, none removed (0 deletions in test modules) | pass |
+| **Must NOT: 不删不弱化测试（≥34）** | 34 tests at the start, 97 at the end, none removed (0 deletions in test modules) | pass |
 | **Must NOT: 不引入新 crate** | revised in SPEC v2: two transitive deps were *replaced* (see below); `cargo tree` shows no crate that was not there before except maintained equivalents | pass |
 | **Must NOT: 不改 TUI 视觉** | `git diff` shows no colour, layout or keybinding constant changed; `app.rs` changes are tests | pass |
 | **Must NOT: 不提交凭据** | `tools/secrets.sh` (with a negative control) | pass |
@@ -56,14 +56,14 @@ The task was "通过代码审查，随后可以推送发布第一版". The SPEC 
 
 | Layer | Command | Result |
 |---|---|---|
-| Tests | `cargo test` | 93 passed, 0 failed |
+| Tests | `cargo test` | 97 passed, 0 failed |
 | Types | `cargo check --all-targets` | 0 errors |
 | Lint | `cargo clippy --all-targets -- -D warnings` | 0 warnings |
 | Format | `cargo fmt --check` | clean |
-| Changed-line coverage | `cargo llvm-cov` + `tools/changed_lines.py` | 884/893 changed executable lines, 9 listed exclusions, 0 unexplained |
-| Mutation | `cargo mutants --in-diff` via `tools/mutants.sh` | see the run below |
+| Changed-line coverage | `cargo llvm-cov` + `tools/changed_lines.py` | 1232/1255 changed executable lines, 23 listed exclusions, 0 unexplained |
+| Mutation | `cargo mutants --in-diff` via `tools/mutants.sh` | 79 caught, 3 listed equivalents, 0 uncaught, 0 unviable-to-judge, 3 unviable |
 | Property-based | not used | **N-A**: the changed code has no algebraic invariant; the parsers are pinned by cases instead |
-| Real execution | `tools/smoke.sh` + a live service | every one-shot command ran against the fixture; a real sign-in, a real instruction and a real ticket were checked against `127.0.0.1:3082` |
+| Real execution | `tools/smoke.sh` + a live service | every one-shot command ran against the fixture (exit 0); a live instruction was accepted, ran to `person / review` and opened PR #8, checked and then closed; `booth restart` stopped and started the real service |
 | Supply chain | `cargo audit --deny warnings` | 0 vulnerabilities, 0 warnings |
 | Suite health | `cargo test -- --test-threads=1`, then 3 repeats | **SUBSTITUTED**: no randomized-order runner for cargo; serial order plus repeats cannot detect whole-suite order dependence |
 
@@ -75,6 +75,20 @@ The task was "通过代码审查，随后可以推送发布第一版". The SPEC 
 `serde_yaml → unsafe-libyaml 0.2.11` (RUSTSEC-2024-0449, unmaintained).
 `ratatui` is now 0.30 and `serde_norway` 0.9 replaces `serde_yaml`; both are the same API surface
 for this code (no call site changed beyond the crate name). The audit is clean.
+
+### Mutation detail
+
+`cargo mutants --in-diff` against the trunk: **85 mutants, 79 caught, 0 timeout, 3 unviable, 3
+survivors that are listed as equivalents** in `tools/mutant_equivalents.txt`:
+
+| Survivor | Why it cannot be killed |
+|---|---|
+| `Tail::fresh -> Default::default()` | the body *is* `Self::default()`; the mutant is the same program |
+| `setup: < with <=` on the deadline | equality needs two clock reads to agree to the nanosecond |
+| `App::draw_composer -> ()` | draws into a ratatui `Frame`; only a pty observes it, and the pty run is below |
+
+The summary fails on any survivor that is not listed and on a listed name that stops surviving,
+so the list cannot rot into a blanket exemption.
 
 ## Layers not run as specified
 
@@ -115,9 +129,14 @@ for this code (no call site changed beyond the crate name). The audit is clean.
   exceeded any reasonable budget and reported "hit the time budget", which the script correctly
   treated as a failure rather than a pass. It was narrowed to `--in-diff`, which is the claim the
   layer is meant to support: the changed lines are noticed by tests.
-- **Mutation survivors in `intake.rs` remain, in branches that need a fault to reach** (an
-  interrupted read, a seek failure on a regular file). They are named in the exclusion file where
-  they are coverage misses; mutation survivors are listed in the run's `missed.txt`.
+- **Seventeen mutation survivors were worked down, not argued away.** The first diff-scoped run
+  caught 68 and left 13; each survivor became a test (the retry's pause, the positive `/proc`
+  case, the poll's reply message, `device_id`'s two paths, `LoginForm::value`, the history cap),
+  a code change that removed an unreachable tail, or a listed equivalence above. Two rounds also
+  exposed that a counter-based retry could be mutated into an infinite loop, so it is now a
+  bounded range.
+- **The coverage ledger is line-number sensitive** and reported three stale entries after edits;
+  the stale check is what surfaced them, and they were re-mapped by hand rather than widened.
 - **`booth stop` cannot be tested against a real `dsh` in the suite** — that would spawn the
   service. The matcher is tested directly and the live restart covered the rest.
 - **Known limit (not a defect):** a judgement can take minutes; the console now waits instead of
