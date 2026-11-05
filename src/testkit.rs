@@ -20,6 +20,8 @@ pub struct FakeApi {
     pub settings: Arc<Mutex<Value>>,
     /// Statuses to return for the next PUTs, one per call, before answering normally.
     pub failures: Arc<Mutex<Vec<(u16, String)>>>,
+    /// How many `/state` answers to refuse before the service "comes back".
+    pub state_failures: Arc<Mutex<usize>>,
     pub puts: Puts,
     #[allow(dead_code)]
     /// Bodies for the other GET routes, by path; the tests that need one extend this.
@@ -33,6 +35,7 @@ impl FakeApi {
         let settings = Arc::new(Mutex::new(default_settings()));
         let puts = Arc::new(Mutex::new(Vec::new()));
         let failures = Arc::new(Mutex::new(Vec::new()));
+        let state_failures = Arc::new(Mutex::new(0usize));
         let routes = Arc::new(Mutex::new(vec![
             (
                 "/state".to_owned(),
@@ -60,6 +63,7 @@ impl FakeApi {
             puts.clone(),
             routes.clone(),
             failures.clone(),
+            state_failures.clone(),
         );
         std::thread::spawn(move || serve(listener, shared));
         Self {
@@ -67,7 +71,20 @@ impl FakeApi {
             settings,
             puts,
             failures,
+            state_failures,
             routes,
+        }
+    }
+
+    /// Makes `/state` refuse this many times first, as a restarting service does.
+    pub fn refuse_state(&self, times: usize) {
+        *self.state_failures.lock().unwrap() = times;
+    }
+
+    /// Replaces the Source list, so a test can model a registry that is not ready.
+    pub fn set_sources(&self, sources: Value) {
+        if let Some(list) = self.settings.lock().unwrap().get_mut("sources") {
+            *list = sources;
         }
     }
 
@@ -108,8 +125,11 @@ pub fn default_settings() -> Value {
 
 type Failures = Arc<Mutex<Vec<(u16, String)>>>;
 
-fn serve(listener: TcpListener, shared: (Arc<Mutex<Value>>, Puts, Routes, Failures)) {
-    let (settings, puts, routes, failures) = shared;
+fn serve(
+    listener: TcpListener,
+    shared: (Arc<Mutex<Value>>, Puts, Routes, Failures, Arc<Mutex<usize>>),
+) {
+    let (settings, puts, routes, failures, state_failures) = shared;
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
         let (settings, puts, routes, failures) = (
@@ -118,6 +138,7 @@ fn serve(listener: TcpListener, shared: (Arc<Mutex<Value>>, Puts, Routes, Failur
             routes.clone(),
             failures.clone(),
         );
+        let state_failures = state_failures.clone();
         std::thread::spawn(move || {
             let mut raw = Vec::new();
             let mut buffer = [0u8; 8192];
@@ -156,9 +177,11 @@ fn serve(listener: TcpListener, shared: (Arc<Mutex<Value>>, Puts, Routes, Failur
 
             // A queued failure answers this PUT instead of the normal handler. Only a PUT pops
             // one: a GET must not swallow a failure meant for the save that follows it.
-            let forced = (method == "PUT")
-                .then(|| failures.lock().ok().and_then(|mut queue| queue.pop()))
-                .flatten();
+            let forced: Option<(u16, String)> = if method == "PUT" {
+                failures.lock().ok().and_then(|mut queue| queue.pop())
+            } else {
+                None
+            };
             let (status, payload) = if !guarded {
                 (
                     403,
@@ -183,6 +206,22 @@ fn serve(listener: TcpListener, shared: (Arc<Mutex<Value>>, Puts, Routes, Failur
                             (404, json!({ "error": "Source not found" }))
                         }
                     }
+                }
+            } else if path.ends_with("/state") {
+                let mut left = state_failures.lock().unwrap();
+                if *left > 0 {
+                    *left -= 1;
+                    (503, json!({ "error": "restarting" }))
+                } else {
+                    drop(left);
+                    let body = routes
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|(known, _)| known == "/state")
+                        .map(|(_, body)| body.clone())
+                        .unwrap_or(Value::Null);
+                    (200, body)
                 }
             } else if path.ends_with("/settings") {
                 (200, settings.lock().unwrap().clone())
