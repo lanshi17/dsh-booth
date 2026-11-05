@@ -118,7 +118,7 @@ check the deployment guide asks for.
 | --- | --- |
 | `Enter` | Run the line; bare text sends the agent an instruction |
 | `Ctrl+P` | Open the command palette on an empty line |
-| `Ctrl+R` | Search the history (fuzzy, newest first) |
+| `Ctrl+R` | Search the history (fuzzy, newest first; it survives restarts) |
 | `Ctrl+A` `Ctrl+E` | Start / end of the line |
 | `Alt+B` `Alt+F` | Move by word |
 | `Ctrl+W` | Delete the word before |

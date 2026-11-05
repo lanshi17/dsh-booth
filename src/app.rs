@@ -319,6 +319,7 @@ impl App {
         let status = Status::connecting(api.base());
         let config = service::Config::from_env().ok();
         let store = config.as_ref().map(Store::load).unwrap_or_default();
+        let history = config.as_ref().map(intake::history).unwrap_or_default();
         let continues = config
             .as_ref()
             .and_then(intake::follow)
@@ -340,7 +341,7 @@ impl App {
             lines: Vec::new(),
             input: String::new(),
             cursor: 0,
-            history: Vec::new(),
+            history,
             hist: None,
             selection: 0,
             busy: false,
@@ -1097,8 +1098,11 @@ impl App {
             return;
         }
         self.history.push(line.clone());
-        if self.history.len() > 200 {
+        if self.history.len() > 500 {
             self.history.remove(0);
+        }
+        if let Some(config) = &self.config {
+            intake::remember(config, &line);
         }
         if line == "/model" {
             self.open_model();
