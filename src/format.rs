@@ -746,7 +746,7 @@ pub fn help() -> Vec<L> {
     }
     lines.push(blank());
     lines.push(muted(
-        "Bare text sends an instruction to the agent; /send does the same. Enter runs, Tab completes, ↑↓ walks history, Esc clears.",
+        "Bare text sends an instruction to the agent; /send does the same. Ctrl+P palette · Ctrl+R history · /keys lists the shortcuts.",
     ));
     lines
 }
