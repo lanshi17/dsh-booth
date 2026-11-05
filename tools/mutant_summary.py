@@ -12,6 +12,8 @@ reason, so nothing is silently excused.
 import json
 import sys
 
+EQUIVALENTS = "tools/mutant_equivalents.txt"
+
 
 def load(path: str) -> dict:
     try:
@@ -27,6 +29,24 @@ def load(path: str) -> dict:
     return report
 
 
+def equivalents() -> dict[str, str]:
+    """Surviving mutants known to be equivalent, with the reason, from the listing file."""
+    listed: dict[str, str] = {}
+    try:
+        with open(EQUIVALENTS) as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # `<mutant name> — <reason>`: the em dash separates name from reason.
+                name, _, reason = line.partition(" — ")
+                listed[name.strip()] = reason.strip() or "(no reason given)"
+    except OSError as error:
+        print(f"cannot read {EQUIVALENTS}: {error}")
+        sys.exit(1)
+    return listed
+
+
 def main() -> int:
     path = sys.argv[1] if len(sys.argv) > 1 else "target/mutants/mutants.out/outcomes.json"
     report = load(path)
@@ -38,20 +58,40 @@ def main() -> int:
     print(f"mutants: {caught} caught, {missed} missed, {timed_out} timeout, "
           f"{unviable} unviable, {total} total")
 
+    listed = equivalents()
     unfinished = 0
+    survivors: list[str] = []
     for outcome in report["outcomes"]:
         summary = outcome.get("summary")
-        if summary == "Missed":
-            print(f"  MISSED      {outcome.get('scenario')}")
-        elif summary in ("Timeout", "Failure"):
+        # cargo-mutants 27 uses `MissedMutant` / `CaughtMutant` / `Unviable`, and carries the
+        # mutant under either a dict with a "Mutant" key or a plain name string.
+        scenario = outcome.get("scenario")
+        if isinstance(scenario, dict):
+            name = (scenario.get("Mutant") or {}).get("name", str(scenario))
+        else:
+            name = str(scenario)
+        if summary in ("Missed", "MissedMutant"):
+            survivors.append(name)
+            if name in listed:
+                print(f"  equivalent  {name}")
+                print(f"              {listed[name]}")
+            else:
+                print(f"  MISSED      {name}")
+        elif summary in ("Timeout", "TimeoutMutant", "Failure", "Unfinished"):
             unfinished += 1
-            print(f"  {summary.upper():<11} {outcome.get('scenario')}")
+            print(f"  {summary.upper():<11} {name}")
+
+    unexplained = [name for name in survivors if name not in listed]
+    stale = [name for name in listed if name not in survivors]
+    for name in stale:
+        print(f"  STALE       {name} — no longer survives; remove it from {EQUIVALENTS}")
 
     # An unfinished run is not evidence of a clean layer.
-    if missed == 0 and timed_out == 0 and unfinished == 0:
-        print("every mutant was caught")
+    if not unexplained and not stale and timed_out == 0 and unfinished == 0:
+        print(f"every mutant was caught or is a listed equivalent ({len(listed)} listed)")
         return 0
-    print(f"{missed} survivor(s), {timed_out} timed out, {unfinished} unfinished")
+    print(f"{len(unexplained)} unexplained survivor(s), {timed_out} timed out, "
+          f"{unfinished} unfinished, {len(stale)} stale")
     return 1
 
 

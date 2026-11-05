@@ -1,0 +1,8 @@
+# Surviving mutants that cannot be killed because they are the same program, with the reason.
+# One entry per line as `<mutant name> — <reason>`; `tools/mutant_summary.py` fails on any
+# survivor NOT listed here and fails again when a listed name stops surviving, so this file
+# cannot rot into a blanket exemption. Excluding a mutant is a reviewable act, not a silence.
+
+src/intake.rs:107:9: replace Tail::fresh -> Self with Default::default() — the function body is `Self::default()`, so the mutant is the same program
+src/intake.rs:378:42: replace < with <= in setup — `Instant::now() < deadline` against a deadline set 20 s earlier; equality needs two clock reads to agree to the nanosecond
+src/app.rs:1780:9: replace App::draw_composer with () — draws into a ratatui Frame; only a pty can observe it, and the pty run is recorded in EVIDENCE
