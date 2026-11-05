@@ -118,10 +118,17 @@ pub fn wait_code(
 
 /// Parse a pasted `http://127.0.0.1:.../oauth/callback?code=..&state=..` URL.
 pub fn code_from_url(url: &str, state: &str) -> Result<String, String> {
+    // Terminals and chat clients add quotes, angle brackets, a fragment or extra spaces around
+    // a copied URL; strip those before looking for the parameters.
+    let url = url
+        .trim()
+        .trim_matches(|ch| matches!(ch, '<' | '>' | '"' | '\''));
     let query = url
         .split_once('?')
         .map(|(_, query)| query)
+        .or_else(|| url.contains("code=").then_some(url))
         .ok_or("that URL has no `?code=` part")?;
+    let query = query.split('#').next().unwrap_or(query);
     let mut code = None;
     let mut received = None;
     for pair in query.split('&') {
@@ -482,5 +489,25 @@ mod tests {
     fn rejects_a_url_without_a_code() {
         assert!(code_from_url("http://127.0.0.1:1/oauth/callback?state=b", "b").is_err());
         assert!(code_from_url("not a url", "b").is_err());
+    }
+}
+
+#[cfg(test)]
+mod more_tests {
+    use super::code_from_url;
+
+    #[test]
+    fn reads_a_callback_with_noise_around_it() {
+        let url = "<http://127.0.0.1:37029/oauth/callback?code=abc%2F123&state=st-1#done>";
+        assert_eq!(code_from_url(url, "st-1").unwrap(), "abc/123");
+        assert_eq!(code_from_url("code=abc&state=st-1", "st-1").unwrap(), "abc");
+    }
+
+    #[test]
+    fn explains_a_cut_or_foreign_callback() {
+        let error = code_from_url("http://127.0.0.1/x?code=abc", "st-1").unwrap_err();
+        assert!(error.contains("state"), "{error}");
+        let error = code_from_url("http://127.0.0.1/x?code=abc&state=other", "st-1").unwrap_err();
+        assert!(error.contains("another login"), "{error}");
     }
 }

@@ -223,9 +223,13 @@ OpenAI-compatible endpoint with the key behind a masked field; every field stays
 The account option runs the same PKCE flow as DSH's web panel: booth asks
 `platform.deepseek.com` for an authorize URL, listens on `127.0.0.1:37029/oauth/callback` for
 the redirect, and exchanges the code for the grant DSH's `deepseek-official` provider consumes.
-If the browser cannot reach the loopback port, paste the callback URL from the address bar into
-the same window and press Enter — the state is checked before the exchange. `BOOTH_OAUTH_PORT`
-picks another port. `/model` lists the providers already stored
+The authorize URL wraps in full instead of being cut, and is also written unwrapped to
+`oauth-url.txt` under the state directory: **Ctrl+O** opens it in a browser, **Ctrl+Y** copies
+it, and the file is there for any terminal that mangles line breaks. If the browser cannot
+reach the loopback port, paste the callback URL from the address bar into the same window and
+press Enter — quotes, a `#fragment` and a bare `code=…&state=…` are accepted, and a stale or
+foreign callback is named as such instead of being ignored. `BOOTH_OAUTH_PORT` picks another
+port. `/model` lists the providers already stored
 and switches the default model, or jumps to `/login` when there are none. Both save and
 restart the service in one step — no file editing, no second command.
 
