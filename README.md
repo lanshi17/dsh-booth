@@ -249,6 +249,8 @@ rules, prompts, concurrency) is there.
 
 ## Providers
 
+The providers come from the DSH profile itself; booth does not keep a separate copy of them.
+
 `/login` and `/model` follow Pi's shape.
 
 `/login` starts with the DeepSeek account, then offers DeepSeek, OpenAI, OpenRouter or a custom
