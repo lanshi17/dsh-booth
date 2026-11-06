@@ -113,8 +113,9 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
         "/sources" => format::sources(&api.sources()?),
         "/search" => format::search(&api.search(need("/search", argument)?)?),
         "/provider" => {
-            let cfg = crate::service::Config::from_env()?;
-            crate::intake::summary(&crate::provider::Store::load(&cfg))
+            // DSH's own catalog, not a booth-side list.
+            let catalog = crate::provider::Catalog::parse(&api.models()?);
+            crate::intake::summary(&catalog)
         }
         "/send" => {
             let cfg = crate::service::Config::from_env()?;

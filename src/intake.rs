@@ -8,7 +8,7 @@
 use crate::api::Api;
 use crate::format::L;
 use crate::oauth;
-use crate::provider::Store;
+use crate::provider::Catalog;
 use crate::service;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
@@ -271,46 +271,44 @@ pub fn remember(cfg: &service::Config, line: &str) {
 }
 
 /// The `/provider` view: which provider and model the agent runs with.
-pub fn summary(store: &Store) -> Vec<L> {
+pub fn summary(catalog: &Catalog) -> Vec<L> {
     let mut lines = Vec::new();
-    match store.current() {
-        Some(current) => {
-            lines.push(field(
-                "provider",
-                &format!("{} · {}", current.id, current.model),
-            ));
-            lines.push(field("base", &current.base));
-            lines.push(field("api", &current.api));
-            lines.push(field(
-                "key",
-                &format!(
-                    "{} (stored in provider.json, 0600)",
-                    crate::provider::key_env(&current.id)
-                ),
-            ));
+    match &catalog.default {
+        Some((provider, model)) => {
+            lines.push(field("model", &format!("{provider} · {model}")));
+            // The display name only adds something when it differs from the id.
+            if let Some(choice) = catalog.current() {
+                if choice.model_name != choice.model {
+                    lines.push(field("name", &choice.model_name));
+                }
+            }
         }
         None if oauth::account_signed_in() => {
-            lines.push(field(
-                "provider",
-                "DeepSeek account · profile default model",
-            ));
+            lines.push(field("model", "the profile's own default (signed in)"));
         }
-        None => lines.push(muted("no provider yet — /login adds one")),
+        None => lines.push(muted("no model yet — /login adds one")),
     }
-    let others: Vec<String> = store
-        .providers
-        .iter()
-        .filter(|item| {
-            store
-                .current()
-                .map(|current| current.id != item.id)
-                .unwrap_or(true)
-        })
-        .map(|item| format!("{}/{}", item.id, item.model))
+    let providers = catalog.providers();
+    if !providers.is_empty() {
+        lines.push(field(
+            "providers",
+            &providers
+                .iter()
+                .map(|(id, name)| format!("{id} ({name})"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
+    }
+    let stored: Vec<String> = catalog
+        .providers()
+        .into_iter()
+        .map(|(id, _)| id)
+        .filter(|id| crate::provider::has_ref(&crate::provider::key_ref(id)))
         .collect();
-    if !others.is_empty() {
-        lines.push(field("also", &others.join(", ")));
+    if !stored.is_empty() {
+        lines.push(field("keys", &format!("stored for {}", stored.join(", "))));
     }
+    lines.push(field("source", "the DSH profile · no booth-side file"));
     lines.push(field("switch", "/model picks one, or adds a provider"));
     lines
 }
@@ -1034,111 +1032,95 @@ mod api_tests {
     }
 
     #[test]
-    fn summary_shows_the_current_provider_and_never_the_key() {
-        let store = Store {
-            current: "deepseek".into(),
-            providers: vec![crate::provider::Provider {
-                id: "deepseek".into(),
-                base: "https://api.deepseek.com".into(),
-                api: "openai-completions".into(),
-                model: "deepseek-chat".into(),
-                key: "sk-must-not-appear".into(),
-            }],
-        };
-        let text: String = summary(&store)
+    fn summary_shows_the_catalog_the_service_reports() {
+        let catalog = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "deepseek-official", "model": "deepseek-flash" },
+            "groups": [{
+                "id": "deepseek-official",
+                "name": "DeepSeek",
+                "models": [{ "id": "deepseek-flash", "name": "DeepSeek-V4.1-Flash" }]
+            }]
+        }));
+        let text: String = summary(&catalog)
             .iter()
-            .map(|l| l.to_string())
+            .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(text.contains("deepseek · deepseek-chat"), "{text}");
-        assert!(text.contains("BOOTH_KEY_DEEPSEEK"), "{text}");
         assert!(
-            !text.contains("sk-must-not-appear"),
-            "the key must not be printed: {text}"
+            text.contains("deepseek-official · deepseek-flash"),
+            "{text}"
         );
+        assert!(text.contains("DeepSeek-V4.1-Flash"), "{text}");
+        // The view names where it comes from, so nobody looks for a booth-side file.
+        assert!(text.contains("no booth-side file"), "{text}");
     }
 
     #[test]
-    fn summary_lists_other_providers_and_says_which_one_is_current() {
-        let store = Store {
-            current: "deepseek".into(),
-            providers: vec![
-                crate::provider::Provider {
-                    id: "deepseek".into(),
-                    base: "https://api.deepseek.com".into(),
-                    api: "openai-completions".into(),
-                    model: "deepseek-chat".into(),
-                    key: "k1".into(),
-                },
-                crate::provider::Provider {
-                    id: "openai".into(),
-                    base: "https://api.openai.com/v1".into(),
-                    api: "openai-responses".into(),
-                    model: "gpt-5".into(),
-                    key: "k2".into(),
-                },
-            ],
-        };
-        let text: String = summary(&store)
+    fn summary_names_the_providers_whose_key_is_stored() {
+        // `keys` tells an operator which endpoint already has a secret, without printing it.
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-keys-{}", oauth::uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("DSH_HOME", &home);
+        std::fs::write(
+            home.join(".credentials.yaml"),
+            format!(
+                "version: 1\nrefs:\n  {}: sk-x\n",
+                crate::provider::key_ref("openrouter")
+            ),
+        )
+        .unwrap();
+        let catalog = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "openrouter", "model": "x/y" },
+            "groups": [{ "id": "openrouter", "name": "OpenRouter",
+                         "models": [{ "id": "x/y" }] }]
+        }));
+        let text: String = summary(&catalog)
             .iter()
-            .map(|l| l.to_string())
-            .collect::<Vec<_>>()
-            .join(
-                "
-",
-            );
-        // The current provider is named once, the other one under `also`, never twice.
-        assert_eq!(text.matches("deepseek-chat").count(), 1, "{text}");
-        assert!(text.contains("also"), "{text}");
-        assert!(text.contains("openai/gpt-5"), "{text}");
-    }
-
-    #[test]
-    fn summary_reports_the_account_only_when_a_grant_exists() {
-        let _env = env_lock();
-        let dir = scratch("summary-account");
-        let previous = std::env::var_os("DSH_HOME");
-        std::env::set_var("DSH_HOME", &dir);
-        // No grant file: no provider and no account.
-        let without: String = summary(&Store::default())
-            .iter()
-            .map(|l| l.to_string())
+            .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(without.contains("no provider"), "{without}");
-        assert!(!without.contains("DeepSeek account"), "{without}");
+        assert!(text.contains("stored for openrouter"), "{text}");
+        assert!(
+            !text.contains("sk-x"),
+            "the secret is never printed: {text}"
+        );
+        std::fs::remove_dir_all(&home).unwrap();
+    }
 
-        // The grant DSH's provider reads: the account branch answers instead.
+    #[test]
+    fn summary_reports_a_signed_in_profile_with_no_override() {
+        // After a sign-in there is no booth-side default: the profile's own rule applies.
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-signed-{}", oauth::uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("DSH_HOME", &home);
         std::fs::write(
-            dir.join(".credentials.yaml"),
+            home.join(".credentials.yaml"),
             "version: 1\nrecords:\n  deepseek-account-platform/default:\n    kind: grant\n    payload:\n      token: t\n",
         )
         .unwrap();
-        let with: String = summary(&Store::default())
+        let text: String = summary(&Catalog::default())
             .iter()
-            .map(|l| l.to_string())
+            .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(with.contains("DeepSeek account"), "{with}");
-        assert!(!with.contains("no provider"), "{with}");
-
-        match previous {
-            Some(value) => std::env::set_var("DSH_HOME", value),
-            None => std::env::remove_var("DSH_HOME"),
-        }
-        std::fs::remove_dir_all(dir).unwrap();
+        assert!(text.contains("the profile's own default"), "{text}");
+        std::fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]
-    fn summary_says_so_when_no_provider_is_configured() {
-        let text: String = summary(&Store::default())
+    fn summary_says_so_when_the_catalog_is_empty() {
+        let text: String = summary(&Catalog::default())
             .iter()
-            .map(|l| l.to_string())
-            .collect();
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
         assert!(
-            text.contains("no provider") || text.contains("DeepSeek account"),
+            text.contains("no model") || text.contains("the profile's own default"),
             "{text}"
         );
+        assert!(!text.contains("providers"), "{text}");
     }
 
     #[test]

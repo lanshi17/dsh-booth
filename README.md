@@ -81,7 +81,7 @@ booth up                           # start the service in the background
 booth down                         # stop the service booth started
 booth restart
 booth logs --lines 40
-booth provider                     # the model provider `up` starts with (no secret)
+booth provider                     # the model catalog the profile reports (no secret)
 booth status                       # one shot: health, pause, setup, accounts
 booth overview                     # problems, people waiting, executor load, 24h flow
 booth tickets --state person       # open | person | working | idle | ended
@@ -242,43 +242,54 @@ web panel.
 | `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and a follow-up message answers it |
 | `↑ sent …` and no further line | The console wrote the instruction but the service is down or still starting; `booth status`, `booth logs` |
 | `◇ agent · could not judge  timeout` | The assessment ran past the Eval timeout; the panel's Eval block raises `timeoutSeconds`, and `/requeue <id>` puts the instruction back |
-| `no adapter registered for provider …` in a session | The overlay no longer registers that provider; `/login` re-adds it, or `booth reset-sessions` starts fresh sessions — the second costs the conversation history, so prefer the first |
+| `no adapter registered for provider …` in a session | The profile layer no longer registers that provider; `/login` adds it back, or `booth reset-sessions` starts fresh sessions — the second costs the conversation history, so prefer the first |
 
 The web panel at the same port is the same service; anything the console cannot edit (policy
 rules, prompts, concurrency) is there.
 
 ## Providers
 
-`/login` and `/model` follow Pi's shape.
+**The providers are the profile's.** booth keeps no provider list of its own: what `/provider`
+and the header show is the service's `GET /models` answer — the same catalog the web panel
+renders — and a change is written into the layer DSH already composes
+(`~/.dsh/profiles/<name>/cordis.patch.yml`). So a provider added in the panel appears in booth,
+one added in booth appears in the panel, and `booth up` passes no `--patch` and no extra
+environment.
 
-`/login` starts with the DeepSeek account, then offers DeepSeek, OpenAI, OpenRouter or a custom
-OpenAI-compatible endpoint with the key behind a masked field; every field stays editable
-(`preset`, `id`, `base`, `model`, `api`, `key`).
+`/model` lists the catalog: provider, model id and its display name, with the current one
+marked and an **add provider** row at the end. Choosing one writes `agent-default-model` into
+the profile layer and restarts the service.
+
+`/login` follows Pi's shape. The first entry is the DeepSeek account; the others are
+API-key endpoints (DeepSeek, OpenAI, OpenRouter, or any OpenAI-compatible base URL), with every
+field editable. An API-key login writes:
+
+- an `llm-pi-ai.providers.<id>` entry in the profile layer — `apiKeyEnv`, `baseURL`, `api` and
+  the model — naming a credential ref, never the secret;
+- the key itself as `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml` (mode 0600), beside the
+  keys DSH already stores there;
+- `agent-default-model`, so the next start uses it.
 
 The account option runs the same PKCE flow as DSH's web panel: booth asks
 `platform.deepseek.com` for an authorize URL, listens on `127.0.0.1:37029/oauth/callback` for
 the redirect, and exchanges the code for the grant DSH's `deepseek-official` provider consumes.
-The authorize URL wraps in full instead of being cut, and is also written unwrapped to
-`oauth-url.txt` under the state directory: **Ctrl+O** opens it in a browser, **Ctrl+Y** copies
-it, and the file is there for any terminal that mangles line breaks. If the browser cannot
-reach the loopback port, paste the callback URL from the address bar into the same window and
-press Enter — quotes, a `#fragment` and a bare `code=…&state=…` are accepted, and a stale or
-foreign callback is named as such instead of being ignored. `BOOTH_OAUTH_PORT` picks another
-port. `/model` lists the providers already stored
-and switches the default model, or jumps to `/login` when there are none. Both save and
-restart the service in one step — no file editing, no second command.
+Signing in **removes** booth's `agent-default-model` entry, so the account is the default again
+by the profile's own rule rather than by an override. The authorize URL wraps in full instead of
+being cut, and is also written unwrapped to `oauth-url.txt` under the state directory:
+**Ctrl+O** opens it in a browser, **Ctrl+Y** copies it. If the browser cannot reach the loopback
+port, paste the callback URL into the same window and press Enter — quotes, a `#fragment` and a
+bare `code=…&state=…` are accepted. `BOOTH_OAUTH_PORT` picks another port.
 
-What lands on disk:
-
-- `provider.json` (mode 0600) under the state directory holds the keys;
-- `provider.yml` is a DSH patch overlay with `llm-pi-ai` and `agent-default-model`;
-- `booth up` passes `--patch provider.yml` and exports `BOOTH_KEY_<ID>` for each provider.
-
-`booth provider` prints what the service will use, never the secret. Deleting those two files
-falls back to the profile's own default model.
+A machine that ran an earlier booth is migrated once, on `booth up`: `provider.json` is turned
+into the profile entries and credential refs above, then renamed to `provider.json.migrated`
+and the stale `provider.yml` is deleted. `booth provider` prints the shared view and never a
+secret.
 
 ## Design notes
 
+- **One source for models.** booth reads the catalog the service reports and writes changes into
+  the profile layer DSH composes, so there is no second configuration to keep in step: no
+  `provider.json`, no generated `--patch` overlay, no injected key variables.
 - **The console borrows `omp`'s habits, not just its colours.** Palette entries are fuzzy and
   the picker keeps the selection in view; the editor has readline motion and a kill ring
   (`Ctrl+W`, `Ctrl+U`, `Ctrl+K`, `Ctrl+Y`, `Alt+B`/`F`); `Ctrl+R` searches history; `Ctrl+P`
