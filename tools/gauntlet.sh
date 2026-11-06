@@ -49,8 +49,9 @@ status "changed-line coverage"
 if command -v cargo-llvm-cov >/dev/null 2>&1; then
   cargo llvm-cov --json --output-path target/cov.json
   record "coverage report" $?
-  # Only the lines this branch changed matter; global coverage is vanity.
-  python3 tools/changed_lines.py "${GAUNTLET_BASE:-master}"
+  # Only the lines this change touched matter; global coverage is vanity. The base is the last
+  # release, so the check means "everything since the last release".
+  python3 tools/changed_lines.py ${GAUNTLET_BASE:+"$GAUNTLET_BASE"}
   record coverage $?
 else
   echo "cargo-llvm-cov is not installed (cargo install cargo-llvm-cov)"

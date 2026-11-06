@@ -19,6 +19,14 @@ WATCHED = ("src/intake.rs", "src/service.rs", "src/app.rs", "src/commands.rs", "
            "src/oauth.rs", "src/gh.rs", "src/format.rs", "src/main.rs", "src/api.rs", "src/model.rs")
 
 
+def default_base() -> str:
+    """The last release tag, or `master` when the repository has none."""
+    tag = subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0"], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    return tag or "master"
+
+
 def changed_lines(base: str) -> dict[str, set[int]]:
     """Line numbers this branch added, per file, from a zero-context diff."""
     diff = subprocess.run(
@@ -95,7 +103,8 @@ def excludes() -> dict[str, str]:
 
 
 def main() -> int:
-    base = sys.argv[1] if len(sys.argv) > 1 else "master"
+    # Default to the last release: on the trunk itself, `master` has no diff to show.
+    base = sys.argv[1] if len(sys.argv) > 1 else default_base()
     # Compare against where this branch left the trunk, so a long branch does not count the
     # trunk's own commits as its changes.
     merge_base = subprocess.run(
@@ -106,8 +115,9 @@ def main() -> int:
     report = sys.argv[2] if len(sys.argv) > 2 else "target/cov.json"
     changed = changed_lines(base)
     if not changed:
-        print(f"no changed source lines against {base}")
-        return 0
+        # Fail closed: an empty diff means the base is wrong, not that the change is risk-free.
+        print(f"no changed source lines against {base} — pass the commit this change started from")
+        return 1
     executable, covered = executable_and_covered(report)
     executable = {(relative(path), line) for path, line in executable}
     covered = {(relative(path), line) for path, line in covered}
