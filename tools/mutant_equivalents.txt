@@ -1,8 +1,16 @@
-# Surviving mutants that cannot be killed because they are the same program, with the reason.
-# One entry per line as `<mutant name> — <reason>`; `tools/mutant_summary.py` fails on any
-# survivor NOT listed here and fails again when a listed name stops surviving, so this file
-# cannot rot into a blanket exemption. Excluding a mutant is a reviewable act, not a silence.
+# Surviving mutants that cannot be killed, with the reason. One entry per line as
+# `<mutant name> — <reason>`. `tools/mutant_summary.py` fails on any survivor NOT listed here and
+# fails again when a listed name stops surviving, so this file cannot rot into a blanket
+# exemption. Excluding a mutant is a reviewable act, not a silence.
 
-src/intake.rs:107:9: replace Tail::fresh -> Self with Default::default() — the function body is `Self::default()`, so the mutant is the same program
-src/intake.rs:378:42: replace < with <= in setup — `Instant::now() < deadline` against a deadline set 20 s earlier; equality needs two clock reads to agree to the nanosecond
-src/app.rs:1780:9: replace App::draw_composer with () — draws into a ratatui Frame; only a pty can observe it, and the pty run is recorded in EVIDENCE
+src/app.rs:1928:9: replace App::draw with () — draws into a ratatui Frame; only a pty observes it, and the pty run is recorded in EVIDENCE
+src/app.rs:1980:48: replace && with || in App::draw — the splash's "no model" flag, which only changes what a frame shows
+src/app.rs:1980:51: delete ! in App::draw — the same splash flag
+src/app.rs:2057:5: replace draw_modal with () — pty only
+src/app.rs:2255:5: replace draw_model with () — pty only
+src/app.rs:2256:22: replace + with - in draw_model — the drawn row count; pty only
+src/app.rs:2256:22: replace + with * in draw_model — the same row count
+src/app.rs:2281:28: replace == with != in draw_model — the highlight of the current row; pty only
+src/app.rs:2283:38: replace == with != in draw_model — the same highlight
+src/app.rs:2311:29: replace >= with < in draw_model — which row is drawn as the add row; pty only
+src/main.rs:193:5: replace run -> Result<(), String> with Ok(()) — the CLI dispatcher, reached only through `main`

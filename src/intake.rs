@@ -1116,10 +1116,10 @@ mod api_tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(
-            text.contains("no model") || text.contains("the profile's own default"),
-            "{text}"
-        );
+        // Not signed in and no override: the console must say there is no model, not repeat the
+        // signed-in wording.
+        assert!(text.contains("no model yet"), "{text}");
+        assert!(!text.contains("the profile's own default"), "{text}");
         assert!(!text.contains("providers"), "{text}");
     }
 

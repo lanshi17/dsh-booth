@@ -17,12 +17,14 @@ if ! command -v cargo-mutants >/dev/null 2>&1; then
   exit 1
 fi
 
-# The diff against the trunk, written where cargo-mutants can read it.
-BASE=${GAUNTLET_BASE:-master}
+# The diff this review is about: everything since the last release, or since the trunk when no
+# release tag exists yet. Written where cargo-mutants can read it.
+BASE=${GAUNTLET_BASE:-$(git describe --tags --abbrev=0 2>/dev/null || echo master)}
 git diff "$(git merge-base HEAD "$BASE")" > target/review.diff
 if [ ! -s target/review.diff ]; then
-  echo "no diff against $BASE: nothing to mutate"
-  exit 0
+  # Fail closed: an empty diff here means the base is wrong, not that the change is risk-free.
+  echo "no diff against $BASE — pass GAUNTLET_BASE with the commit this change started from"
+  exit 1
 fi
 
 # A time budget keeps the layer usable; a timeout is reported as unfinished, not as a pass.

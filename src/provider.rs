@@ -414,6 +414,26 @@ mod tests {
     }
 
     #[test]
+    fn the_current_choice_needs_both_the_provider_and_the_model() {
+        // A shared model id must not make another provider look current.
+        let catalog = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "b", "model": "m-shared" },
+            "groups": [
+                { "id": "a", "name": "A", "models": [{ "id": "m-shared" }] },
+                { "id": "b", "name": "B", "models": [{ "id": "m-shared" }] }
+            ]
+        }));
+        assert_eq!(catalog.current().unwrap().provider, "b");
+
+        // A default the catalog does not list has no current choice.
+        let missing = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "a", "model": "nope" },
+            "groups": [{ "id": "a", "name": "A", "models": [{ "id": "m-a" }] }]
+        }));
+        assert!(missing.current().is_none());
+    }
+
+    #[test]
     fn an_empty_catalog_says_so_instead_of_panicking() {
         let catalog = Catalog::parse(&serde_json::json!({}));
         assert_eq!(catalog.default, None);
