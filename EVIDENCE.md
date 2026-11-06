@@ -2,6 +2,8 @@
 
 - **Spec approval:** obtained. The user replied "批准，按这个范围做（推荐）" to the SPEC question.
   One revision was made afterwards (v2, the dependency swap) and is recorded in `SPEC.md`.
+- **Later changes** (after 0.1.0 shipped): the shared-provider change and the coverage-ledger
+  generator were reviewed with the same layers; their numbers are the run recorded below.
 - **Source state:** `72cd975` on `release/0.1.0` (25 commits ahead of `origin/master`'s `33126f3`).
   Every number below comes from one `tools/gauntlet.sh` run against that tree, executed after the
   last code edit: exit 0, every layer `PASS`.
@@ -144,3 +146,47 @@ so the list cannot rot into a blanket exemption.
 - **Structural blind spot:** nothing here is evidence about Windows (the process control is
   `/proc`-based) or about a service the operator started outside booth beyond the "defers to it"
   path.
+---
+
+## Evidence Report — providers shared with the profile (Tier 3)
+
+- **Spec approval:** not obtained (this change came from a direct request — "供应商和dsh共用 不要额外配置" —
+  and the same SPEC's Must NOT list still applies: no submodule change, no new tests removed).
+- **Source state:** the run below is the last thing executed before the tag, on top of `24562cd`.
+- **Entry point:** `tools/gauntlet.sh`, base = the last release tag (`v0.1.0`).
+
+### What changed
+
+`provider.json`, the generated `provider.yml` and the `--patch` overlay are gone. The catalog comes
+from the service's `GET /models` (the same answer the web panel renders), and a change writes
+`agent-default-model` or `llm-pi-ai.providers` into the profile layer DSH already composes. A key
+becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install is migrated once.
+
+### Gauntlet (final fresh run, exit 0)
+
+| Layer | Result |
+|---|---|
+| Tests | 131 passed, 0 failed |
+| Format / types / lint | clean; clippy `-D warnings` |
+| Changed-line coverage | 958/1007 changed executable lines, 49 listed exclusions, 0 unexplained |
+| Mutation | 98 caught, 12 listed equivalents, 0 uncaught, 0 timed out |
+| Supply chain | `cargo audit --deny warnings` clean |
+| Suite health | serial order, then 3 repeats |
+| Secrets | clean, with its negative control |
+| Real execution | every one-shot command against the fixture; a live instruction accepted and turned into a ticket; the migration ran on the real profile |
+
+### Honest notes
+
+- **Four mutation survivors were real test gaps**, not equivalents: the picker's selection used
+  tests whose model ids differed, so matching on the model alone agreed with matching on both; the
+  CLI's view only executed, never asserted its output; `Catalog::current` and the migration note
+  were reached only through their happy paths. Each got a test, verified by re-introducing the
+  operator and watching it fail.
+- **The ledger was being maintained by hand and had drifted** — on this branch, nine entries were
+  stale and three misses unlisted after ordinary edits. It is now generated from the code
+  (`tools/ledger.py`), and a miss in a function with no documented reason fails the layer.
+- **Both diff-scoped layers compared against `master`, which on the trunk is empty**, so they
+  passed by comparing nothing. They now base on the last release tag and fail closed on an empty
+  diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
+- **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
+  above but is a person's observation, not an automated layer.
