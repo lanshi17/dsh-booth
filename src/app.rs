@@ -3550,15 +3550,17 @@ mod provider_view_tests {
     #[test]
     fn the_model_picker_opens_on_the_current_choice() {
         let (mut app, root, _env) = console();
+        // Both providers offer `m-shared`: matching on the model alone would land on the first
+        // row, so the provider is what has to decide.
         app.catalog = Catalog::parse(&serde_json::json!({
-            "default": { "provider": "b", "model": "m-b" },
+            "default": { "provider": "b", "model": "m-shared" },
             "groups": [
-                { "id": "a", "name": "A", "models": [{ "id": "m-a" }] },
-                { "id": "b", "name": "B", "models": [{ "id": "m-b" }] }
+                { "id": "a", "name": "A", "models": [{ "id": "m-shared" }] },
+                { "id": "b", "name": "B", "models": [{ "id": "m-shared" }] }
             ]
         }));
         app.open_model();
-        match app.modal {
+        match &app.modal {
             Some(Modal::Model(pick)) => {
                 assert_eq!(pick.selected, 1, "the current model is selected")
             }
