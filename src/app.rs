@@ -5,7 +5,7 @@ use crate::commands;
 use crate::format::{self, L};
 use crate::intake;
 use crate::oauth;
-use crate::provider::{self, Provider, Store};
+use crate::provider::{self, Catalog};
 use crate::service;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -75,6 +75,8 @@ enum Msg {
     Status(Status),
     Replies(Vec<intake::Reply>),
     Decisions(Vec<crate::model::Decision>),
+    /// The service's model catalog, fetched with every poll so the view is never stale.
+    Catalog(Box<Catalog>),
     Tickets(Vec<crate::model::TicketRow>),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
@@ -265,7 +267,8 @@ pub struct App {
     status: Status,
     started: Instant,
     config: Option<service::Config>,
-    store: Store,
+    /// The service's model catalog, read from `/models`: DSH's own answer, not a booth list.
+    catalog: Catalog,
     modal: Option<Modal>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
@@ -331,7 +334,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let status = Status::connecting(api.base());
         let config = service::Config::from_env().ok();
-        let store = config.as_ref().map(Store::load).unwrap_or_default();
+
         let history = config.as_ref().map(intake::history).unwrap_or_default();
         let continues = config
             .as_ref()
@@ -355,7 +358,7 @@ impl App {
         Self {
             api,
             config,
-            store,
+            catalog: Catalog::default(),
             modal: None,
             lines: Vec::new(),
             input: String::new(),
@@ -424,8 +427,18 @@ impl App {
         }
     }
 
+    /// Drains every message a poll thread has posted.
     fn drain(&mut self) {
         while let Ok(message) = self.rx.try_recv() {
+            self.apply(message);
+        }
+    }
+
+    /// Handles one message: the whole of what a poll result does to the console.
+    ///
+    /// Split from `drain` so a test can feed one poll result without a terminal.
+    fn apply(&mut self, message: Msg) {
+        {
             match message {
                 Msg::Lines(lines) => {
                     self.busy = false;
@@ -440,6 +453,7 @@ impl App {
                     )));
                 }
                 Msg::Status(status) => self.status = status,
+                Msg::Catalog(catalog) => self.catalog = *catalog,
                 Msg::Decisions(decisions) => {
                     for decision in decisions {
                         let Some(trigger) = decision
@@ -526,13 +540,15 @@ impl App {
                             ),
                         ]));
                         if let Some(cfg) = &self.config {
-                            // Keep every API-key provider registered and only drop the default
-                            // model, so the account becomes the default while sessions that name
-                            // an earlier provider keep their adapter. Deleting the overlay
-                            // instead would break those sessions and cost their history.
-                            let store = provider::Store::load(cfg);
-                            if let Err(error) = store.write_providers_only(cfg) {
-                                self.push(warn_line(&error));
+                            // The account is the profile's own default; an override left behind
+                            // would keep the agent on a provider that may no longer exist.
+                            match provider::forget_default(cfg) {
+                                Ok(true) => self.push(Line::from(Span::styled(
+                                    "the account is the default model again",
+                                    Style::default().fg(FAINT),
+                                ))),
+                                Ok(false) => {}
+                                Err(error) => self.push(warn_line(&error)),
                             }
                         }
                         self.restart_service();
@@ -900,6 +916,9 @@ impl App {
             if fetched {
                 let _ = tx.send(Msg::Tickets(rows));
             }
+            if let Ok(models) = polled.models() {
+                let _ = tx.send(Msg::Catalog(Box::new(Catalog::parse(&models))));
+            }
             let status = match api.state() {
                 Ok(state) => Status::from_state(&api, &state),
                 Err(error) => {
@@ -1215,7 +1234,9 @@ impl App {
                 Span::styled("  ❯ ", Style::default().fg(CYAN)),
                 Span::styled(line.clone(), Style::default().fg(TEXT)),
             ]));
-            self.push_lines(intake::summary(&self.store));
+            self.push_lines(intake::summary(&self.catalog));
+            // Refresh the catalog from the service so the view is never a stale copy.
+            self.refresh_status();
             return;
         }
         if let Some(rest) = line.strip_prefix("/send") {
@@ -1294,10 +1315,13 @@ impl App {
 
     fn open_model(&mut self) {
         let selected = self
-            .store
-            .providers
+            .catalog
+            .choices
             .iter()
-            .position(|item| item.id == self.store.current)
+            .position(|choice| {
+                Some(&choice.provider) == self.catalog.default.as_ref().map(|(p, _)| p)
+                    && Some(&choice.model) == self.catalog.default.as_ref().map(|(_, m)| m)
+            })
             .unwrap_or(0);
         self.modal = Some(Modal::Model(ModelPick { selected }));
     }
@@ -1605,34 +1629,33 @@ impl App {
     }
 
     fn model_key(&mut self, key: KeyEvent, mut pick: ModelPick) {
-        let count = self.store.providers.len() + 1;
+        let count = self.catalog.choices.len() + 1;
         match key.code {
             KeyCode::Esc => return,
             KeyCode::Up => pick.selected = pick.selected.saturating_sub(1),
-            KeyCode::Down => pick.selected = (pick.selected + 1).min(count - 1),
+            KeyCode::Down => pick.selected = (pick.selected + 1).min(count.saturating_sub(1)),
             KeyCode::Enter => {
-                if pick.selected >= self.store.providers.len() {
+                if pick.selected >= self.catalog.choices.len() {
                     self.open_login("");
                     return;
                 }
-                let chosen = self.store.providers[pick.selected].clone();
+                let chosen = self.catalog.choices[pick.selected].clone();
                 let Some(cfg) = self.config.clone() else {
                     return;
                 };
-                let mut store = self.store.clone();
-                store.current = chosen.id.clone();
-                match store.save(&cfg) {
+                // The default lives in the profile's own layer, which is where the web panel
+                // and DSH's own default-model plugin read it too.
+                match provider::set_default(&cfg, &chosen.provider, &chosen.model) {
                     Ok(()) => {
-                        self.store = store;
+                        self.catalog.default =
+                            Some((chosen.provider.clone(), chosen.model.clone()));
                         self.push(Line::from(vec![
                             Span::styled("model ", Style::default().fg(GREEN)),
                             Span::styled(
-                                format!("{} · {}", chosen.id, chosen.model),
+                                format!("{}/{}", chosen.provider, chosen.model),
                                 Style::default(),
                             ),
                         ]));
-                        // The overlay registers every stored provider, so sessions that still
-                        // name another one keep working and keep their history.
                         self.restart_service();
                     }
                     Err(error) => {
@@ -1681,23 +1704,30 @@ impl App {
             self.modal = Some(Modal::Login(form));
             return;
         };
-        let mut store = self.store.clone();
-        store.upsert(Provider {
-            id,
-            base,
-            api: form.api.clone(),
-            model,
-            key,
-        });
-        match store.save(&cfg) {
+        // The profile layer registers the provider and names its key's credential ref; the key
+        // itself goes into the shared credential store, where DSH's other keys live.
+        match provider::add_endpoint(
+            &cfg,
+            &provider::Endpoint {
+                id: id.clone(),
+                display: id.clone(),
+                base,
+                api: form.api.clone(),
+                model: model.clone(),
+                key,
+            },
+        ) {
             Ok(()) => {
-                let saved = store.current().cloned().unwrap_or_default();
-                self.store = store;
                 self.modal = None;
+                self.catalog.default = Some((id.clone(), model.clone()));
                 self.push(Line::from(vec![
                     Span::styled("provider ", Style::default().fg(GREEN)),
-                    Span::styled(format!("{} · {}", saved.id, saved.model), Style::default()),
+                    Span::styled(format!("{id} · {model}"), Style::default()),
                 ]));
+                self.push(Line::from(Span::styled(
+                    format!("key stored as {}", provider::key_ref(&id)),
+                    Style::default().fg(FAINT),
+                )));
                 self.restart_service();
             }
             Err(error) => {
@@ -1747,12 +1777,13 @@ impl App {
     }
 
     fn model_label(&self) -> String {
-        if let Some(current) = self.store.current() {
-            format!("{}/{}", current.id, current.model)
+        // The catalog is the profile's own answer, so this is the model the agent would run.
+        if self.catalog.default.is_some() {
+            self.catalog.label()
         } else if self.status.account {
             "deepseek account".into()
         } else {
-            "no provider".into()
+            "no model".into()
         }
     }
 
@@ -1946,7 +1977,7 @@ impl App {
                 body,
                 &self.status,
                 self.started.elapsed(),
-                self.store.current().is_none() && !self.status.account,
+                self.catalog.default.is_none() && !self.status.account,
             );
         } else {
             frame.render_widget(
@@ -2017,17 +2048,17 @@ impl App {
         }
 
         if let Some(modal) = &self.modal {
-            draw_modal(frame, area, modal, &self.store, &self.history);
+            draw_modal(frame, area, modal, &self.catalog, &self.history);
         }
     }
 }
 
-fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, store: &Store, history: &[String]) {
+fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, catalog: &Catalog, history: &[String]) {
     match modal {
         Modal::LoginList { selected } => draw_login_list(frame, area, *selected),
         Modal::Login(form) => draw_login(frame, area, form),
         Modal::OAuth(state) => draw_oauth(frame, area, state),
-        Modal::Model(pick) => draw_model(frame, area, pick, store),
+        Modal::Model(pick) => draw_model(frame, area, pick, catalog),
         Modal::History { query, selected } => draw_history(frame, area, query, *selected, history),
         Modal::Keys => draw_keys(frame, area),
     }
@@ -2219,9 +2250,11 @@ fn draw_login(frame: &mut Frame, area: Rect, form: &LoginForm) {
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, store: &Store) {
-    let rows = store.providers.len() + 1;
-    let width = area.width.saturating_sub(8).clamp(40, 72).min(area.width);
+fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, catalog: &Catalog) {
+    // The list is the service's own catalog; the last row is the way to add one.
+    let shown = catalog.choices.len().min(9);
+    let rows = shown + 1;
+    let width = area.width.saturating_sub(8).clamp(40, 78).min(area.width);
     let height = (rows as u16 + 3).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
@@ -2237,30 +2270,49 @@ fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, store: &Store) {
     frame.render_widget(block, rect);
 
     let mut lines: Vec<L> = Vec::new();
-    for (index, item) in store.providers.iter().enumerate() {
+    if catalog.choices.is_empty() {
+        lines.push(Line::from(Span::styled(
+            " the service lists no model — is it running?",
+            Style::default().fg(DIM),
+        )));
+    }
+    let offset = pick.selected.saturating_sub(shown.saturating_sub(1));
+    for (index, choice) in catalog.choices.iter().enumerate().skip(offset).take(shown) {
         let active = index == pick.selected;
-        let current = item.id == store.current;
+        let current =
+            catalog.default.as_ref() == Some(&(choice.provider.clone(), choice.model.clone()));
         lines.push(Line::from(vec![
             Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
             Span::styled(
-                format!("{}/{}", item.id, item.model),
+                choice.provider.clone(),
                 if active {
                     Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default()
+                    Style::default().fg(MUTED)
                 },
+            ),
+            Span::styled(" · ", Style::default().fg(FAINT)),
+            Span::styled(choice.model.clone(), Style::default()),
+            // The display name only adds something when it differs from the id.
+            Span::styled(
+                if choice.model_name == choice.model {
+                    String::new()
+                } else {
+                    format!("  {}", choice.model_name)
+                },
+                Style::default().fg(DIM),
             ),
             Span::styled(
                 if current { "  current" } else { "" },
-                Style::default().fg(DIM),
+                Style::default().fg(GREEN),
             ),
         ]));
     }
-    let add = pick.selected >= store.providers.len();
+    let add = pick.selected >= catalog.choices.len();
     lines.push(Line::from(vec![
         Span::styled(if add { "▶ " } else { "  " }, Style::default().fg(CYAN)),
         Span::styled(
-            "＋ add provider…",
+            "＋ add provider with an API key…",
             if add {
                 Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
             } else {
@@ -3227,29 +3279,19 @@ mod editor_tests {
     }
 
     #[test]
-    fn the_model_picker_lists_every_provider_plus_an_add_row() {
+    fn the_model_picker_lists_the_catalog_and_an_add_row() {
         let (mut app, dir, _env) = editor("model");
-        app.store = Store {
-            current: "a".into(),
-            providers: vec![
-                crate::provider::Provider {
-                    id: "a".into(),
-                    base: "https://a".into(),
-                    api: "openai-completions".into(),
-                    model: "m-a".into(),
-                    key: "ka".into(),
-                },
-                crate::provider::Provider {
-                    id: "b".into(),
-                    base: "https://b".into(),
-                    api: "openai-completions".into(),
-                    model: "m-b".into(),
-                    key: "kb".into(),
-                },
-            ],
-        };
+        // The list is whatever the service reported: no booth-side store to keep in step.
+        app.catalog = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "a", "model": "m-a" },
+            "groups": [
+                { "id": "a", "name": "A", "models": [{ "id": "m-a" }] },
+                { "id": "b", "name": "B", "models": [{ "id": "m-b" }] }
+            ]
+        }));
         app.modal = Some(Modal::Model(ModelPick { selected: 0 }));
-        // Down past the last provider lands on the add row, which opens the login form.
+
+        // Down past the last choice lands on the add row, which opens the login form.
         app.modal_key(key(KeyCode::Down));
         app.modal_key(key(KeyCode::Down));
         app.modal_key(key(KeyCode::Enter));
@@ -3257,6 +3299,10 @@ mod editor_tests {
             matches!(app.modal, Some(Modal::Login(_))),
             "the add row opens the login form"
         );
+
+        // The header shows the catalog's default, not a remembered one.
+        app.modal = None;
+        assert_eq!(app.model_label(), "a/m-a");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3334,5 +3380,236 @@ mod editor_tests {
         app.modal_key(key(KeyCode::Esc));
         assert!(app.modal.is_none(), "Esc closes the form");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use super::*;
+    use crate::testkit::FakeApi;
+
+    /// A console whose DSH home is a temp directory, so a write lands somewhere inspectable.
+    fn console() -> (App, std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
+        let guard = crate::testkit::env_lock();
+        let root = std::env::temp_dir().join(format!("booth-app-prov-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(root.join("profiles").join("superagent")).unwrap();
+        std::fs::create_dir_all(root.join("state")).unwrap();
+        std::env::set_var("DSH_HOME", &root);
+        std::env::set_var("BOOTH_STATE_DIR", root.join("state"));
+        let api = FakeApi::start();
+        (App::new(Api::new(&api.base)), root, guard)
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn text(app: &App) -> String {
+        app.lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn catalog() -> Catalog {
+        Catalog::parse(&serde_json::json!({
+            "default": { "provider": "a", "model": "m-a" },
+            "groups": [
+                { "id": "a", "name": "A", "models": [{ "id": "m-a" }, { "id": "m-a2" }] },
+                { "id": "b", "name": "B", "models": [{ "id": "m-b" }] }
+            ]
+        }))
+    }
+
+    #[test]
+    fn the_catalog_message_replaces_what_the_console_shows() {
+        let (mut app, root, _env) = console();
+        assert!(app.catalog.default.is_none());
+        app.apply(Msg::Catalog(Box::new(catalog())));
+        assert_eq!(app.model_label(), "a/m-a");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn choosing_a_model_writes_the_profiles_own_layer() {
+        let (mut app, root, _env) = console();
+        app.catalog = catalog();
+        app.modal = Some(Modal::Model(ModelPick { selected: 2 }));
+
+        app.modal_key(key(KeyCode::Enter));
+
+        let patch = crate::service::Patch::read(&app.config.clone().unwrap()).unwrap();
+        let entry = patch
+            .get("agent-default-model")
+            .expect("the default is written");
+        assert_eq!(entry["config"]["provider"], "b");
+        assert_eq!(entry["config"]["model"], "m-b");
+        assert!(text(&app).contains("model b/m-b"), "{}", text(&app));
+        // The console reflects the change without waiting for a restart.
+        assert_eq!(app.model_label(), "b/m-b");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_api_key_login_writes_the_profile_and_a_credential_ref() {
+        let (mut app, root, _env) = console();
+        let mut form = LoginForm::new(0);
+        form.id = "openrouter".into();
+        form.base = "https://openrouter.ai/api/v1".into();
+        form.model = "x/y".into();
+        form.key = "sk-test".into();
+
+        app.commit_login(form);
+
+        let cfg = app.config.clone().unwrap();
+        let patch = crate::service::Patch::read(&cfg).unwrap();
+        let provider = &patch.get("llm-pi-ai").unwrap()["config"]["providers"]["openrouter"];
+        assert_eq!(provider["apiKeyEnv"], "BOOTH_OPENROUTER_KEY");
+        assert_eq!(
+            patch.get("agent-default-model").unwrap()["config"]["provider"],
+            "openrouter"
+        );
+        let credentials = std::fs::read_to_string(root.join(".credentials.yaml")).unwrap();
+        assert!(credentials.contains("sk-test"), "{credentials}");
+        // The key never reaches the transcript.
+        assert!(!text(&app).contains("sk-test"), "{}", text(&app));
+        assert!(
+            text(&app).contains("BOOTH_OPENROUTER_KEY"),
+            "{}",
+            text(&app)
+        );
+        assert!(app.modal.is_none(), "a saved form closes");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn an_incomplete_login_form_stays_open_with_a_reason() {
+        let (mut app, root, _env) = console();
+        let mut form = LoginForm::new(0);
+        form.key = "sk-test".into();
+        form.base = "not-a-url".into();
+        app.commit_login(form);
+        match &app.modal {
+            Some(Modal::Login(form)) => {
+                assert!(form.error.as_deref().unwrap_or_default().contains("http"));
+            }
+            _ => panic!("the form stays open on a bad field"),
+        }
+        assert!(
+            !root.join(".credentials.yaml").exists(),
+            "nothing is written for an invalid form"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn signing_in_drops_booths_model_override() {
+        let (app, root, _env) = console();
+        let cfg = app.config.clone().unwrap();
+        crate::provider::set_default(&cfg, "a", "m-a").unwrap();
+        assert!(crate::service::Patch::read(&cfg)
+            .unwrap()
+            .get("agent-default-model")
+            .is_some());
+
+        // The same call the sign-in path makes.
+        assert!(crate::provider::forget_default(&cfg).unwrap());
+        assert!(crate::service::Patch::read(&cfg)
+            .unwrap()
+            .get("agent-default-model")
+            .is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod provider_view_tests {
+    use super::*;
+    use crate::testkit::FakeApi;
+
+    fn console() -> (App, std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
+        let guard = crate::testkit::env_lock();
+        let root = std::env::temp_dir().join(format!("booth-view-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(root.join("profiles").join("superagent")).unwrap();
+        std::fs::create_dir_all(root.join("state")).unwrap();
+        std::env::set_var("DSH_HOME", &root);
+        std::env::set_var("BOOTH_STATE_DIR", root.join("state"));
+        let api = FakeApi::start();
+        (App::new(Api::new(&api.base)), root, guard)
+    }
+
+    fn text(app: &App) -> String {
+        app.lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn the_model_picker_opens_on_the_current_choice() {
+        let (mut app, root, _env) = console();
+        app.catalog = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "b", "model": "m-b" },
+            "groups": [
+                { "id": "a", "name": "A", "models": [{ "id": "m-a" }] },
+                { "id": "b", "name": "B", "models": [{ "id": "m-b" }] }
+            ]
+        }));
+        app.open_model();
+        match app.modal {
+            Some(Modal::Model(pick)) => {
+                assert_eq!(pick.selected, 1, "the current model is selected")
+            }
+            _ => panic!("the picker opens"),
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn provider_and_model_read_from_the_service() {
+        let (mut app, root, _env) = console();
+        // `/provider` asks the service rather than showing a remembered copy.
+        app.spawn("/provider".to_owned());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline && !text(&app).contains("DSH profile") {
+            app.drain();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let shown = text(&app);
+        assert!(
+            shown.contains("deepseek-official · deepseek-flash"),
+            "{shown}"
+        );
+        assert!(shown.contains("no booth-side file"), "{shown}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn typing_provider_prints_the_shared_view() {
+        let (mut app, root, _env) = console();
+        app.catalog = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "deepseek-official", "model": "deepseek-flash" },
+            "groups": [{ "id": "deepseek-official", "name": "DeepSeek",
+                         "models": [{ "id": "deepseek-flash", "name": "DeepSeek-V4.1-Flash" }] }]
+        }));
+        app.input = "/provider".into();
+        app.submit();
+        let shown = text(&app);
+        assert!(
+            shown.contains("deepseek-official · deepseek-flash"),
+            "{shown}"
+        );
+        assert!(shown.contains("no booth-side file"), "{shown}");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_header_says_no_model_when_the_catalog_is_empty() {
+        let (app, root, _env) = console();
+        assert_eq!(app.model_label(), "no model");
+        assert!(!app.status.account);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -60,6 +60,18 @@ impl FakeApi {
                 }),
             ),
             (
+                "/models".to_owned(),
+                json!({
+                    "default": { "provider": "deepseek-official", "model": "deepseek-flash" },
+                    "routableProviders": ["deepseek-official", "deepseek-account"],
+                    "groups": [{
+                        "id": "deepseek-official",
+                        "name": "DeepSeek",
+                        "models": [{ "id": "deepseek-flash", "name": "DeepSeek-V4.1-Flash" }]
+                    }]
+                }),
+            ),
+            (
                 "/overview".to_owned(),
                 json!({
                     "problems": [],

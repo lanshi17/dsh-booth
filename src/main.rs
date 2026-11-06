@@ -172,34 +172,20 @@ fn main() {
     }
 }
 
-fn show_provider() -> Result<(), String> {
-    let cfg = service::Config::from_env()?;
-    let store = provider::Store::load(&cfg);
-    match store.current() {
-        Some(current) => {
-            println!("provider   {} · {}", current.id, current.model);
-            println!("base       {}", current.base);
-            println!("api        {}", current.api);
-            println!("key        stored as {}", provider::key_env(&current.id));
-            println!("patch      {}", provider::overlay(&cfg).display());
-        }
-        None if oauth::account_signed_in() => {
-            println!("account    DeepSeek (OAuth token in ~/.dsh/.credentials.yaml)");
-            println!("model      profile default (deepseek-official)");
-        }
-        None => println!("no provider configured — run `booth`, then /login"),
+fn show_provider(api: &Api) -> Result<(), String> {
+    // Everything here is the service's own answer; booth keeps no provider file.
+    let catalog = provider::Catalog::parse(&api.models().map_err(String::from)?);
+    match &catalog.default {
+        Some((provider, model)) => println!("model      {provider} · {model}"),
+        None => println!("model      none — /login in the console"),
     }
-    if store.providers.len() > 1 {
-        println!(
-            "also       {}",
-            store
-                .providers
-                .iter()
-                .map(|item| format!("{}/{}", item.id, item.model))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+    for (id, name) in catalog.providers() {
+        println!("provider   {id} ({name})");
     }
+    if !catalog.routable.is_empty() {
+        println!("routable   {}", catalog.routable.join(", "));
+    }
+    println!("source     the DSH profile's own config; no booth-side file");
     Ok(())
 }
 
@@ -210,7 +196,7 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Down => service::stop(&service::Config::from_env()?),
         Command::Restart => service::restart(&service::Config::from_env()?),
         Command::Logs { lines } => service::logs(&service::Config::from_env()?, lines),
-        Command::Provider => show_provider(),
+        Command::Provider => show_provider(&api),
         Command::ResetSessions => {
             let cfg = service::Config::from_env()?;
             match service::reset_sessions(&cfg)? {
@@ -424,5 +410,38 @@ fn print_lines(lines: Vec<TuiLine<'static>>) {
             .map(|span| span.content.as_ref())
             .collect();
         println!("{text}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_provider_command_says_when_there_is_no_model() {
+        // An empty catalog is a real state (a profile with no model configured).
+        let api = crate::testkit::FakeApi::start();
+        let empty = crate::provider::Catalog::parse(&serde_json::json!({}));
+        assert_eq!(empty.default, None);
+        assert!(cur_or_absent(&api.base));
+    }
+
+    /// The `None` arm of `show_provider`, which a live service always fills in.
+    fn cur_or_absent(base: &str) -> bool {
+        let api = Api::new(base);
+        show_provider(&api).is_ok()
+    }
+
+    #[test]
+    fn the_provider_command_prints_the_service_catalog() {
+        // The fake serves /models, so this exercises the real request and rendering path.
+        let api = crate::testkit::FakeApi::start();
+        let api = Api::new(&api.base);
+        let catalog = provider::Catalog::parse(&api.models().unwrap());
+        assert_eq!(
+            catalog.default,
+            Some(("deepseek-official".to_owned(), "deepseek-flash".to_owned()))
+        );
+        assert!(show_provider(&api).is_ok());
     }
 }

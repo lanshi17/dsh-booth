@@ -56,7 +56,7 @@ impl Config {
         self.dsh_home.join("profiles").join(&self.profile)
     }
 
-    fn patch(&self) -> PathBuf {
+    pub fn patch(&self) -> PathBuf {
         self.profile_dir().join("cordis.patch.yml")
     }
 
@@ -144,6 +144,16 @@ pub fn start(cfg: &Config) -> Result<(), String> {
     if !cfg.patch().is_file() {
         return Err("the profile has no booth config yet; run `booth init` first".into());
     }
+    // An earlier booth kept providers in its own file; move them into the profile on the way up.
+    match crate::provider::migrate(cfg) {
+        Ok(moved) if !moved.is_empty() => println!(
+            "moved {} provider(s) into the profile: {}",
+            moved.len(),
+            moved.join(", ")
+        ),
+        Ok(_) => {}
+        Err(error) => println!("could not migrate the old provider file: {error}"),
+    }
     if !linked(cfg, "dsh-booth-local") {
         println!("the booth console Source is not linked into the profile; run `booth init` to install it");
     }
@@ -159,7 +169,8 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         .try_clone()
         .map_err(|error| format!("cannot open the log twice: {error}"))?;
 
-    let store = crate::provider::Store::load(cfg);
+    // No `--patch` and no injected keys: the profile's own layer is where models live, so the
+    // service starts with exactly the configuration the web panel and the profile share.
     // A session of its own: the service must outlive the terminal that started it, including
     // a terminal that closes while `booth restart` is still running inside it.
     let mut command = if which("setsid") {
@@ -172,18 +183,12 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         command
     };
     command.args(["--profile", cfg.profile.as_str()]);
-    if !store.providers.is_empty() && crate::provider::overlay(cfg).is_file() {
-        command.arg("--patch").arg(crate::provider::overlay(cfg));
-    }
     command
         .arg("--no-open")
         .current_dir(&cfg.bundle)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors));
-    for (name, value) in store.environment() {
-        command.env(name, value);
-    }
     let child = command
         .spawn()
         .map_err(|error| format!("cannot start dsh: {error}"))?;
@@ -308,6 +313,151 @@ pub fn session_count(cfg: &Config) -> usize {
     fs::read_dir(session_root(cfg))
         .map(|entries| entries.flatten().count())
         .unwrap_or(0)
+}
+
+/// The profile's own patch layer, which DSH composes without any `--patch` flag.
+pub struct Patch {
+    /// Leading comments, kept verbatim across a rewrite.
+    header: String,
+    entries: Vec<serde_json::Value>,
+}
+
+impl Patch {
+    /// Reads the layer, refusing anything a YAML parser cannot reproduce.
+    ///
+    /// Refusing matters: the write below re-serializes the whole list, so a layer holding
+    /// something this cannot parse — a `!!js` expression, say — would lose it.
+    pub fn read(cfg: &Config) -> Result<Self, String> {
+        let path = cfg.patch();
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self {
+                    header: String::new(),
+                    entries: Vec::new(),
+                })
+            }
+            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+        };
+        let (header, body) = split_header(&text);
+        // A tag expression cannot survive re-serialization, so the layer is left alone rather
+        // than quietly rewritten without it.
+        if body.contains("!!") {
+            return Err(format!(
+                "{} holds a YAML tag expression, which a rewrite would drop; edit it by hand",
+                path.display()
+            ));
+        }
+        if body.trim().is_empty() {
+            return Ok(Self {
+                header,
+                entries: Vec::new(),
+            });
+        }
+        let entries: Vec<serde_json::Value> = serde_norway::from_str(&body)
+            .map_err(|error| format!("cannot parse {}: {error}", path.display()))?;
+        Ok(Self { header, entries })
+    }
+
+    pub fn write(&self, cfg: &Config) -> Result<(), String> {
+        let path = cfg.patch();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+        }
+        let body = serde_norway::to_string(&self.entries)
+            .map_err(|error| format!("cannot render {}: {error}", path.display()))?;
+        let text = if self.header.is_empty() {
+            body
+        } else {
+            format!("{}{body}", self.header)
+        };
+        fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+    }
+
+    pub fn get(&self, id: &str) -> Option<&serde_json::Value> {
+        self.entries
+            .iter()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some(id))
+    }
+
+    /// Sets one entry's `config`, merging into whatever it already holds.
+    pub fn set_config(&mut self, id: &str, config: serde_json::Value) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some(id))
+        {
+            entry["config"] = config;
+            return;
+        }
+        self.entries.push(serde_json::json!({
+            "id": id,
+            "config": config,
+        }));
+    }
+
+    /// Sets one value inside an entry's config, creating the entry or the key as needed.
+    pub fn set_value(&mut self, id: &str, path: &[&str], value: serde_json::Value) {
+        let config = self
+            .get(id)
+            .and_then(|entry| entry.get("config"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let mut config = if config.is_object() {
+            config
+        } else {
+            serde_json::json!({})
+        };
+        let mut cursor = &mut config;
+        for part in &path[..path.len() - 1] {
+            if !cursor[*part].is_object() {
+                cursor[*part] = serde_json::json!({});
+            }
+            cursor = &mut cursor[*part];
+        }
+        if let Some(last) = path.last() {
+            cursor[*last] = value;
+        }
+        self.set_config(id, config);
+    }
+
+    /// Removes one entry by id; returns whether it was there.
+    pub fn remove(&mut self, id: &str) -> bool {
+        let before = self.entries.len();
+        self.entries
+            .retain(|entry| entry.get("id").and_then(|value| value.as_str()) != Some(id));
+        before != self.entries.len()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub fn ids(&self) -> Vec<String> {
+        self.entries
+            .iter()
+            .filter_map(|entry| entry.get("id").and_then(|value| value.as_str()))
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+/// Splits leading comment lines from the YAML document that follows them.
+fn split_header(text: &str) -> (String, String) {
+    let mut header = String::new();
+    let mut body = String::new();
+    let mut in_header = true;
+    for line in text.lines() {
+        if in_header && (line.trim_start().starts_with('#') || line.trim().is_empty()) {
+            if !line.trim().is_empty() {
+                header.push_str(line);
+                header.push('\n');
+            }
+            continue;
+        }
+        in_header = false;
+        body.push_str(line);
+        body.push('\n');
+    }
+    (header, body)
 }
 
 pub fn logs(cfg: &Config, lines: usize) -> Result<(), String> {
@@ -708,8 +858,18 @@ mod tests {
                 "/home/me/.bun/bin/dsh",
                 "--profile",
                 "superagent",
+                "--no-open",
+            ]),
+            "superagent"
+        ));
+        // A hand-written `--patch` overlay does not change what the process is.
+        assert!(serves_profile(
+            &cmdline(&[
+                "dsh",
+                "--profile",
+                "superagent",
                 "--patch",
-                "/home/me/.dsh/state/superagent/provider.yml",
+                "/tmp/extra.yml",
                 "--no-open",
             ]),
             "superagent"
@@ -891,5 +1051,165 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "- id: something-else\n  config: {}\n").unwrap();
         assert!(write_patch(&cfg).is_err());
+    }
+}
+
+#[cfg(test)]
+mod patch_tests {
+    use super::*;
+
+    fn config(name: &str) -> Config {
+        let root = std::env::temp_dir().join(format!("booth-patch-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("profiles").join("superagent")).unwrap();
+        Config {
+            profile: "superagent".into(),
+            port: 3082,
+            dsh_home: root.join("profiles").parent().unwrap().to_path_buf(),
+            state_dir: root.join("state"),
+            bundle: root.join("superagent"),
+        }
+    }
+
+    #[test]
+    fn sets_and_keeps_entries_a_profile_already_holds() {
+        let cfg = config("set");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(
+            cfg.patch(),
+            "# written by hand\n- id: webserver\n  config:\n    port: 3082\n",
+        )
+        .unwrap();
+
+        let mut patch = Patch::read(&cfg).unwrap();
+        patch.set_value(
+            "agent-default-model",
+            &["provider"],
+            serde_json::json!("openrouter"),
+        );
+        patch.set_value("agent-default-model", &["model"], serde_json::json!("x/y"));
+        patch.write(&cfg).unwrap();
+
+        let text = fs::read_to_string(cfg.patch()).unwrap();
+        assert!(text.starts_with("# written by hand\n"), "{text}");
+        let entries: Vec<serde_json::Value> = serde_norway::from_str(&text).unwrap();
+        assert_eq!(entries.len(), 2, "{text}");
+        let reloaded = Patch::read(&cfg).unwrap();
+        assert_eq!(
+            reloaded.get("agent-default-model").unwrap()["config"]["provider"],
+            "openrouter"
+        );
+        // The entry that was already there is untouched.
+        assert_eq!(reloaded.get("webserver").unwrap()["config"]["port"], 3082);
+    }
+
+    #[test]
+    fn merges_into_an_existing_config_instead_of_replacing_it() {
+        let cfg = config("merge");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(
+            cfg.patch(),
+            "- id: llm-pi-ai\n  config:\n    providers:\n      a:\n        api: openai-completions\n",
+        )
+        .unwrap();
+        let mut patch = Patch::read(&cfg).unwrap();
+        patch.set_value(
+            "llm-pi-ai",
+            &["providers", "a", "baseURL"],
+            serde_json::json!("https://a"),
+        );
+        patch.write(&cfg).unwrap();
+        let reloaded = Patch::read(&cfg).unwrap();
+        let config = &reloaded.get("llm-pi-ai").unwrap()["config"];
+        assert_eq!(
+            config["providers"]["a"]["api"], "openai-completions",
+            "the old key survives"
+        );
+        assert_eq!(config["providers"]["a"]["baseURL"], "https://a");
+    }
+
+    #[test]
+    fn removes_only_the_named_entry() {
+        let cfg = config("remove");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(
+            cfg.patch(),
+            "- id: agent-default-model\n  config:\n    provider: a\n    model: b\n- id: webserver\n  config:\n    port: 3082\n",
+        )
+        .unwrap();
+        let mut patch = Patch::read(&cfg).unwrap();
+        assert!(patch.remove("agent-default-model"));
+        assert!(
+            !patch.remove("agent-default-model"),
+            "removing twice changes nothing"
+        );
+        patch.write(&cfg).unwrap();
+        assert_eq!(
+            Patch::read(&cfg).unwrap().ids(),
+            vec!["webserver".to_owned()]
+        );
+    }
+
+    #[test]
+    fn refuses_a_layer_it_cannot_reproduce() {
+        // A `!!js` expression would be lost by a rewrite, so reading refuses rather than
+        // silently dropping the operator's own entry.
+        let cfg = config("tags");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(
+            cfg.patch(),
+            "- id: hmr\n  config:\n    root: !!js process.env.X\n",
+        )
+        .unwrap();
+        match Patch::read(&cfg) {
+            Ok(patch) => panic!("a layer with !!js must not be rewritten: {:?}", patch.ids()),
+            Err(error) => assert!(error.contains("tag expression"), "{error}"),
+        }
+    }
+
+    #[test]
+    fn a_comment_only_layer_keeps_its_comment() {
+        let cfg = config("comment-only");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(cfg.patch(), "# nothing configured yet\n").unwrap();
+        let patch = Patch::read(&cfg).unwrap();
+        assert!(patch.ids().is_empty());
+        patch.write(&cfg).unwrap();
+        let text = fs::read_to_string(cfg.patch()).unwrap();
+        assert!(text.starts_with("# nothing configured yet"), "{text}");
+        assert!(text.contains("[]"), "the empty list is written: {text}");
+    }
+
+    #[test]
+    fn a_config_that_is_not_a_map_is_replaced_by_one() {
+        // A hand-written `config: something` would otherwise make the setter panic.
+        let cfg = config("odd-config");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(cfg.patch(), "- id: llm-pi-ai\n  config: not-a-map\n").unwrap();
+        let mut patch = Patch::read(&cfg).unwrap();
+        patch.set_value("llm-pi-ai", &["providers"], serde_json::json!({}));
+        patch.write(&cfg).unwrap();
+        let reloaded = Patch::read(&cfg).unwrap();
+        assert!(reloaded.get("llm-pi-ai").unwrap()["config"].is_object());
+    }
+
+    #[test]
+    fn an_unreadable_layer_is_reported_rather_than_ignored() {
+        let cfg = config("unreadable");
+        fs::create_dir_all(cfg.patch()).unwrap(); // a directory where the file belongs
+        match Patch::read(&cfg) {
+            Ok(patch) => panic!(
+                "a directory must not read as an empty layer: {:?}",
+                patch.ids()
+            ),
+            Err(error) => assert!(error.contains("cannot read"), "{error}"),
+        }
+    }
+
+    #[test]
+    fn a_missing_layer_is_empty_not_an_error() {
+        let cfg = config("missing");
+        let patch = Patch::read(&cfg).unwrap();
+        assert!(patch.ids().is_empty());
     }
 }

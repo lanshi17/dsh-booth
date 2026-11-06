@@ -114,6 +114,11 @@ impl Api {
         )
     }
 
+    /// The service's model catalog: the default model and the providers it can route to.
+    pub fn models(&self) -> Result<Value, ApiError> {
+        self.get("/models")
+    }
+
     pub fn settings(&self) -> Result<Value, ApiError> {
         self.get("/settings")
     }

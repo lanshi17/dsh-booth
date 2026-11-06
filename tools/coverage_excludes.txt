@@ -3,28 +3,55 @@
 # listed line stops being a miss, so this file cannot rot into a blanket exemption.
 #
 # Excluding a line is a visible, reviewable act: prefer a test whenever one is possible. Line
-# numbers move with edits; a stale entry is reported as a failure, not silently ignored.
+# numbers move with edits, and a stale entry is reported as a failure rather than ignored.
 
-src/app.rs:353 poisoned-mutex arm: reachable only if another thread panicked while holding the tail lock
-src/app.rs:2762 assertion failure message: evaluated only when that assertion fails
-src/app.rs:2909 assertion failure message: evaluated only when that assertion fails
-src/app.rs:3148 assertion failure message: evaluated only when that assertion fails
-src/app.rs:3167 assertion failure message: evaluated only when that assertion fails
-src/app.rs:3187 drain loop: a message other than Status cannot arrive on that channel after a poll
-src/app.rs:3188 drain loop: the still-waiting arm, reached only when the poll is slower than 5 s
-src/app.rs:3189 drain loop: the timeout panic, reachable only when the poll never answers
-src/app.rs:3219 drain loop: a message other than Replies cannot arrive on that channel after a poll
-src/app.rs:3220 drain loop: the still-waiting arm, reached only when the poll is slower than 5 s
-src/app.rs:3298 test helper: the arm that no test takes
-src/app.rs:3332 assertion failure message: evaluated only when that assertion fails
-src/app.rs:1826 composer segment drawn into a terminal frame; needs a pty, exercised by the pty run in EVIDENCE
-src/intake.rs:137 seek-failure arm: `seek` on a regular file does not fail, so this is defensive only
-src/intake.rs:616 post-loop arm: both passes return from inside the loop, so this is unreachable by construction
-src/intake.rs:754 assertion message behind a root-only branch: unprivileged runs skip it
-src/intake.rs:1127 test-only restore: the `None` arm runs when DSH_HOME was unset before the test
-src/oauth.rs:545 test-only restore: the `None` arm runs when DSH_HOME was unset before the test
-src/service.rs:571 llvm-cov attributes a continuation line of a multi-line expression to a later region; the enclosing behaviour is asserted
-src/service.rs:759 environment skip: the message printed when node is absent, which it is not here
-src/service.rs:760 environment skip: the early return taken when node is absent
-src/service.rs:761 environment skip: the cleanup in that skip path
-src/service.rs:237 llvm-cov attributes a continuation line of a multi-line `format!` to a later region; the enclosing error is asserted by stop_refuses_a_pid_file_pointing_at_another_program
+src/app.rs:545 the OAuth success branch calls `booth restart`, which would stop a real service from inside a unit test
+src/app.rs:546 same branch: the note pushed after signing in
+src/app.rs:548 same branch: the style of that note
+src/app.rs:550 same branch: the no-override arm
+src/app.rs:551 same branch: reporting a failed clear
+src/app.rs:921 the poll thread's catalog send; the parse it returns is covered directly through Catalog::parse
+src/app.rs:1980 splash flag drawn into a frame; only a pty observes it, and the pty run is recorded in EVIDENCE
+src/app.rs:2051 modal dispatch into a frame: pty only
+src/app.rs:2056 draw_modal: pty only
+src/app.rs:2061 the model arm of draw_modal: pty only
+src/app.rs:2253 draw_model: pty only
+src/app.rs:2255 draw_model: the row count it draws
+src/app.rs:2256 draw_model: the add row
+src/app.rs:2257 draw_model: the box width
+src/app.rs:2273 draw_model: the empty-catalog line
+src/app.rs:2274 draw_model: that line's style
+src/app.rs:2278 draw_model: closing the empty branch
+src/app.rs:2279 draw_model: the scroll offset
+src/app.rs:2280 draw_model: the visible window
+src/app.rs:2282 draw_model: the current-model marker
+src/app.rs:2283 draw_model: comparing against the default
+src/app.rs:2287 draw_model: the row's prompt column
+src/app.rs:2291 draw_model: the provider column style
+src/app.rs:2294 draw_model: the separator
+src/app.rs:2295 draw_model: the model column
+src/app.rs:2298 draw_model: the display-name column
+src/app.rs:2299 draw_model: hiding a name equal to the id
+src/app.rs:2301 draw_model: the current marker
+src/app.rs:2305 draw_model: the add row's selection arrow
+src/app.rs:2306 draw_model: the add row style
+src/app.rs:2307 draw_model: the add row label
+src/app.rs:2311 draw_model: the hint line
+src/app.rs:3480 assertion failure message: evaluated only when that assertion fails
+src/app.rs:3497 assertion failure message: evaluated only when that assertion fails
+src/app.rs:3565 assertion failure message: evaluated only when that assertion fails
+src/intake.rs:284 llvm-cov attributes the closing brace of the `name` block to a later region; the enclosing line is covered
+src/main.rs:180 the no-model arm of `booth provider`, reachable only from a service that reports no default
+src/main.rs:199 the CLI dispatch arm, reached only through `main`
+src/service.rs:148 the migration call inside `start`, which then spawns the service
+src/service.rs:149 the same call: reporting how many providers moved
+src/service.rs:151 the same call: the no-op arm
+src/service.rs:152 the same call: the empty move list
+src/service.rs:154 the same call: reporting a failed migration
+src/service.rs:155 the same call: the error message
+src/service.rs:367 llvm-cov attributes a closing brace of the empty-header arm to a later region
+src/service.rs:421 llvm-cov attributes a closing brace of set_value to a later region
+src/service.rs:453 llvm-cov attributes a closing brace of `ids` to a later region
+src/service.rs:1165 assertion failure message in a test: evaluated only when the assertion fails
+src/service.rs:1201 assertion failure message in a test: evaluated only when the assertion fails
+src/service.rs:1203 the argument of that failure message
