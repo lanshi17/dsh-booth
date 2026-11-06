@@ -190,3 +190,66 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
   diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
 - **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
   above but is a person's observation, not an automated layer.
+
+---
+
+## Evidence Report — startup and test hygiene (after 0.2.0)
+
+- **Request:** "优化此项目" — a direction to improve the project, not a feature request. The change
+  removes work that was never necessary, fixes defects the audit confirmed, and makes the checks
+  repeatable; it adds no feature, route or dependency.
+- **Source state:** branch `agent/project-optimization-8794ada0a458`, based on `30279cb`.
+- **Entry point:** `tools/gauntlet.sh quick` — the same command the new CI runs — plus
+  `tools/smoke.sh` and the startup measurements below.
+
+### What changed
+
+| # | Change | Why |
+|---|---|---|
+| A | `Tail::at_end` seeks to the last complete line by reading backwards a window at a time; `App::new` no longer parses the whole outbox | a restarted console parsed every message ever written and then discarded all but the last 20 ids, so startup grew with the deployment's age |
+| B | the gh-fallback test puts a too-old `gh` first on PATH and restores PATH before asserting | the test assumed the machine's `gh` was old; on a machine with gh 2.63 `gh::ensure` correctly preferred the system CLI and the test failed |
+| C | the unreachable-service hint and the `service` module note say `booth up` | they named `booth start`, which is not a subcommand |
+| D | `.github/workflows/ci.yml` runs `tools/gauntlet.sh quick` on pushes to `master` and on pull requests | the repository had one quality entry point and nothing that ran it |
+| E | `check_pending` marks each notice as said instead of re-arming it | after ten minutes the 20-second and 10-minute lines were pushed every two seconds forever, crowding out the transcript |
+| F | `short_at` falls back when the timestamp's byte slices are not character boundaries | a non-ASCII value in `at`/`lastAt`/`startedAt` panicked (`byte index 16 is not a char boundary`) |
+| G | `tail_lines` reads `booth.log` from the end, growing the window only when a record needs it | `booth logs` and a failed `booth up` loaded the whole, never-rotated log |
+| H | `alive` treats a zombie as not running | a `dsh` that exited at once stayed a zombie, so `booth up` waited the full 90 s and blamed the port |
+| I | the grant test takes `env_lock` and restores `DSH_HOME` | it mutated process-wide state without the lock the provider tests use |
+| J | the "no model" test asserts the line it names | it only re-checked the parse and called a service that has a model |
+
+### Measurements
+
+21 MB outbox with 120 000 messages, console started against `dev/mock-api.py`; RSS and CPU read
+from `/proc/<pid>` two seconds after start:
+
+| Revision | RSS | CPU after 2 s |
+|---|---|---|
+| `30279cb` | 46.7 MB | 0.56 s |
+| this branch | 11.6 MB | 0.08 s |
+
+A 20-message outbox measures 11.7 MB / 0.07 s on both revisions, so the removed work is exactly
+the part that grew with history. The transcript still starts empty; a message written after the
+console starts is still delivered.
+
+### Checks
+
+| Layer | Result |
+|---|---|
+| `cargo fmt --check` | clean |
+| `cargo check --all-targets` | 0 errors |
+| `cargo clippy --all-targets -- -D warnings` | 0 warnings |
+| `cargo test` | 140 passed, 0 failed (131 before; nine new) |
+| `tools/gauntlet.sh quick` | all quick layers passed |
+| `tools/smoke.sh` | every one-shot command ran against the fixture |
+| CI simulation | a copy with the submodule source but no `target/` or `node_modules/` passes all 140; without the submodule eight app tests fail, which is why the workflow checks it out |
+| CI | the workflow runs on this pull request |
+
+### Not run
+
+- **Coverage and mutation were not rerun for this pass.** No dependency, route or response shape
+  changed; the new code is exercised by nine tests and the 0.2.0 record remains the last full run.
+- **The interactive console was not driven through a pty for this pass.** The startup behaviour is
+  covered by `app::editor_tests::a_restarted_console_skips_the_outbox_it_found` and the four
+  `intake` tests beside `reads_only_what_was_appended`.
+- **The CI workflow's first run is the pull request itself**; the local quick gauntlet and the
+  submodule-present simulation are the evidence available before it runs.
