@@ -445,6 +445,74 @@ mod tests {
     }
 
     #[test]
+    fn an_entry_without_a_model_id_is_skipped() {
+        // A malformed catalog must not put an empty row in the picker.
+        let catalog = Catalog::parse(&serde_json::json!({
+            "groups": [{ "id": "a", "name": "A",
+                         "models": [{ "name": "no id" }, { "id": "m-a" }] }]
+        }));
+        assert_eq!(catalog.choices.len(), 1, "{:?}", catalog.choices);
+        assert_eq!(catalog.choices[0].model, "m-a");
+    }
+
+    #[test]
+    fn the_credentials_path_falls_back_to_home() {
+        let _env = crate::testkit::env_lock();
+        let previous = (std::env::var_os("DSH_HOME"), std::env::var_os("HOME"));
+        std::env::remove_var("DSH_HOME");
+        std::env::set_var("HOME", "/tmp/booth-home-probe");
+        let path = credentials_path().unwrap();
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/booth-home-probe/.dsh/.credentials.yaml")
+        );
+
+        std::env::remove_var("HOME");
+        let error = credentials_path().unwrap_err();
+        assert!(error.contains("HOME"), "{error}");
+
+        // Another test's environment is restored, not left as this one found it.
+        if let Some(value) = previous.0 {
+            std::env::set_var("DSH_HOME", value);
+        }
+        if let Some(value) = previous.1 {
+            std::env::set_var("HOME", value);
+        }
+    }
+
+    #[test]
+    fn a_credentials_file_that_is_not_a_map_is_replaced() {
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        fs::write(cfg.dsh_home.join(".credentials.yaml"), "just a string\n").unwrap();
+        write_ref("A_KEY", "secret").unwrap();
+        let text = fs::read_to_string(cfg.dsh_home.join(".credentials.yaml")).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["refs"]["A_KEY"], "secret");
+        assert_eq!(root["version"], 1);
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn a_migration_skips_entries_it_cannot_use() {
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        fs::write(
+            cfg.state_dir.join("provider.json"),
+            r#"{"providers":[{"base":"https://x","model":"m","key":"k"},{"id":"nokey","model":"m"},{"id":"ok","base":"https://o","model":"m","key":"k2"}]}"#,
+        )
+        .unwrap();
+        // The first entry has no id and the second no key: only the third is carried over.
+        assert_eq!(migrate(&cfg).unwrap(), vec!["ok".to_owned()]);
+        let patch = Patch::read(&cfg).unwrap();
+        assert!(patch.get("llm-pi-ai").unwrap()["config"]["providers"]["ok"].is_object());
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
     fn a_credential_ref_is_derived_from_the_provider_id() {
         assert_eq!(key_ref("deepseek"), "BOOTH_DEEPSEEK_KEY");
         assert_eq!(key_ref("my-endpoint.east"), "BOOTH_MY_ENDPOINT_EAST_KEY");
@@ -576,6 +644,7 @@ mod migration_tests {
         let _env = crate::testkit::env_lock();
         let cfg = config();
         std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        fs::create_dir_all(&cfg.state_dir).unwrap();
         fs::write(
             cfg.state_dir.join("provider.json"),
             r#"{"current":"deepseek","providers":[{"id":"deepseek","base":"https://api.deepseek.com","api":"openai-completions","model":"deepseek-chat","key":"sk-old"}]}"#,
