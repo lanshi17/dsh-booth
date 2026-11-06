@@ -145,14 +145,8 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         return Err("the profile has no booth config yet; run `booth init` first".into());
     }
     // An earlier booth kept providers in its own file; move them into the profile on the way up.
-    match crate::provider::migrate(cfg) {
-        Ok(moved) if !moved.is_empty() => println!(
-            "moved {} provider(s) into the profile: {}",
-            moved.len(),
-            moved.join(", ")
-        ),
-        Ok(_) => {}
-        Err(error) => println!("could not migrate the old provider file: {error}"),
+    if let Some(note) = migration_note(crate::provider::migrate(cfg)) {
+        println!("{note}");
     }
     if !linked(cfg, "dsh-booth-local") {
         println!("the booth console Source is not linked into the profile; run `booth init` to install it");
@@ -485,6 +479,19 @@ fn report(cfg: &Config) -> Result<(), String> {
         println!("hint: /setup owner/repo in the console, or `booth setup owner/repo`");
     }
     Ok(())
+}
+
+/// What to say about the one-time provider migration, if anything.
+fn migration_note(result: Result<Vec<String>, String>) -> Option<String> {
+    match result {
+        Ok(moved) if !moved.is_empty() => Some(format!(
+            "moved {} provider(s) into the profile: {}",
+            moved.len(),
+            moved.join(", ")
+        )),
+        Ok(_) => None,
+        Err(error) => Some(format!("could not migrate the old provider file: {error}")),
+    }
 }
 
 fn write_patch(cfg: &Config) -> Result<(), String> {
@@ -1165,6 +1172,16 @@ mod patch_tests {
             Ok(patch) => panic!("a layer with !!js must not be rewritten: {:?}", patch.ids()),
             Err(error) => assert!(error.contains("tag expression"), "{error}"),
         }
+    }
+
+    #[test]
+    fn the_migration_note_is_quiet_when_there_was_nothing_to_move() {
+        assert_eq!(migration_note(Ok(Vec::new())), None);
+        let moved = migration_note(Ok(vec!["a".into(), "b".into()])).unwrap();
+        assert!(moved.contains("2 provider(s)"), "{moved}");
+        assert!(moved.contains("a, b"), "{moved}");
+        let failed = migration_note(Err("bad file".into())).unwrap();
+        assert!(failed.contains("bad file"), "{failed}");
     }
 
     #[test]

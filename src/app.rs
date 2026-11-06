@@ -3587,6 +3587,42 @@ mod provider_view_tests {
     }
 
     #[test]
+    fn the_picker_moves_both_ways_and_stops_at_the_ends() {
+        let (mut app, root, _env) = console();
+        app.catalog = Catalog::parse(&serde_json::json!({
+            "default": { "provider": "a", "model": "m-a" },
+            "groups": [
+                { "id": "a", "name": "A", "models": [{ "id": "m-a" }] },
+                { "id": "b", "name": "B", "models": [{ "id": "m-b" }] }
+            ]
+        }));
+        app.modal = Some(Modal::Model(ModelPick { selected: 1 }));
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        app.modal_key(key(KeyCode::Up));
+        match &app.modal {
+            Some(Modal::Model(pick)) => assert_eq!(pick.selected, 0),
+            _ => panic!("the picker stays open"),
+        }
+        // Up at the first row stays there rather than wrapping below zero.
+        app.modal_key(key(KeyCode::Up));
+        match &app.modal {
+            Some(Modal::Model(pick)) => assert_eq!(pick.selected, 0),
+            _ => panic!("the picker stays open"),
+        }
+        // Esc closes without writing anything.
+        app.modal_key(key(KeyCode::Esc));
+        assert!(app.modal.is_none());
+        assert!(
+            crate::service::Patch::read(&app.config.clone().unwrap())
+                .unwrap()
+                .get("agent-default-model")
+                .is_none(),
+            "cancelling writes nothing"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn typing_provider_prints_the_shared_view() {
         let (mut app, root, _env) = console();
         app.catalog = Catalog::parse(&serde_json::json!({

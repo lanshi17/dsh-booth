@@ -172,20 +172,28 @@ fn main() {
     }
 }
 
-fn show_provider(api: &Api) -> Result<(), String> {
-    // Everything here is the service's own answer; booth keeps no provider file.
-    let catalog = provider::Catalog::parse(&api.models().map_err(String::from)?);
+/// What `booth provider` prints: the service's own catalog, never a secret.
+fn provider_lines(catalog: &provider::Catalog) -> Vec<String> {
+    let mut lines = Vec::new();
     match &catalog.default {
-        Some((provider, model)) => println!("model      {provider} · {model}"),
-        None => println!("model      none — /login in the console"),
+        Some((provider, model)) => lines.push(format!("model      {provider} · {model}")),
+        None => lines.push("model      none — /login in the console".into()),
     }
     for (id, name) in catalog.providers() {
-        println!("provider   {id} ({name})");
+        lines.push(format!("provider   {id} ({name})"));
     }
     if !catalog.routable.is_empty() {
-        println!("routable   {}", catalog.routable.join(", "));
+        lines.push(format!("routable   {}", catalog.routable.join(", ")));
     }
-    println!("source     the DSH profile's own config; no booth-side file");
+    lines.push("source     the DSH profile's own config; no booth-side file".into());
+    lines
+}
+
+fn show_provider(api: &Api) -> Result<(), String> {
+    let catalog = provider::Catalog::parse(&api.models().map_err(String::from)?);
+    for line in provider_lines(&catalog) {
+        println!("{line}");
+    }
     Ok(())
 }
 
@@ -426,10 +434,44 @@ mod tests {
         assert!(cur_or_absent(&api.base));
     }
 
-    /// The `None` arm of `show_provider`, which a live service always fills in.
+    /// The `None` arm, which a live service always fills in.
     fn cur_or_absent(base: &str) -> bool {
         let api = Api::new(base);
         show_provider(&api).is_ok()
+    }
+
+    #[test]
+    fn the_provider_lines_name_the_catalog_and_never_a_secret() {
+        let catalog = crate::provider::Catalog::parse(&serde_json::json!({
+            "default": { "provider": "openrouter", "model": "x/y" },
+            "routableProviders": ["openrouter"],
+            "groups": [{ "id": "openrouter", "name": "OpenRouter",
+                         "models": [{ "id": "x/y", "name": "X/Y" }] }]
+        }));
+        let lines = provider_lines(&catalog);
+        assert!(lines[0].contains("openrouter · x/y"), "{lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("provider   openrouter")),
+            "{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("routable   openrouter")),
+            "{lines:?}"
+        );
+        assert!(
+            lines.last().unwrap().contains("no booth-side file"),
+            "{lines:?}"
+        );
+        // No key value can reach this output: the catalog carries none.
+        assert!(!lines.iter().any(|line| line.contains("sk-")), "{lines:?}");
+
+        // An empty catalog says so instead of printing nothing.
+        let empty = provider_lines(&crate::provider::Catalog::default());
+        assert!(empty[0].contains("none"), "{empty:?}");
     }
 
     #[test]
