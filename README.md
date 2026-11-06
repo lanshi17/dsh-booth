@@ -169,7 +169,9 @@ keeps its adapter and its history.
 ## Sending work
 
 dsh-superagent accepts work only from a Source: GitHub, Feishu, or a kind a bundle adds.
-Booth ships a third one, `local-source/`, so the console itself is a front door:
+Booth ships a third one, `local-source/`, so the console itself is a front door. An instruction
+typed in the console goes through the same Policy and Eval as a GitHub issue or a Feishu
+message:
 
 - what you type without a slash (or `/send <text>`) is appended to
   `booth-inbox.jsonl` under the state directory;
