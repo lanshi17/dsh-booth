@@ -14,7 +14,7 @@ use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
@@ -91,48 +91,76 @@ pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<S
     Ok(id)
 }
 
-/// Reads every agent message the console has not shown yet; the caller decides which are new by id.
-/// Where the console's last outbox read stopped, and the file stamp it saw then.
+/// How many bytes before the offset are kept to recognize a rewritten file.
+const WITNESS: usize = 32;
+
+/// Where the console's last outbox read stopped, and the bytes it left behind.
 ///
-/// Length alone cannot tell a rewrite from an append when both have the same size, so the
-/// modification time is kept beside the offset.
-#[derive(Default, Clone, Copy)]
+/// Length alone cannot tell an append from a rewrite: a replaced file can be longer than the
+/// old one, so an offset kept from the old file would land in the middle of the new one. The
+/// bytes just before the offset are the witness — an append leaves them in place, a rewrite
+/// does not — so the next read knows whether to continue or start over.
+#[derive(Default, Clone)]
 pub struct Tail {
     offset: u64,
-    modified: Option<std::time::SystemTime>,
+    witness: Vec<u8>,
 }
 
 impl Tail {
     pub fn fresh() -> Self {
         Self::default()
     }
+
+    /// Forgets the offset, so the next read starts at the beginning of the file.
+    fn restart(&mut self) {
+        self.offset = 0;
+        self.witness.clear();
+    }
+
+    /// The last few bytes ending at `offset`, or `None` when they cannot be read.
+    fn bytes_before(file: &mut std::fs::File, offset: u64) -> Option<Vec<u8>> {
+        let length = (offset as usize).min(WITNESS);
+        let mut buffer = vec![0u8; length];
+        file.seek(SeekFrom::Start(offset - length as u64)).ok()?;
+        file.read_exact(&mut buffer).ok()?;
+        Some(buffer)
+    }
+
+    /// Whether the file still holds the bytes this tail stopped after.
+    ///
+    /// A tail positioned without reading (a fresh console that seeks to the end) has no witness
+    /// yet; its offset is trusted, and the next read records the bytes it stopped after.
+    fn still_there(&self, file: &mut std::fs::File) -> bool {
+        self.witness.is_empty()
+            || Self::bytes_before(file, self.offset)
+                .map(|bytes| bytes == self.witness)
+                .unwrap_or(false)
+    }
 }
 
 /// Reads the messages appended since `tail`, leaving it after the last complete line.
 ///
 /// The console polls every two seconds and the outbox only grows, so rereading it whole turns
-/// each poll into O(history) work (SPEC defect C). A file that shrank, or whose modification
-/// time moved without the offset reaching its end, was rewritten: the read restarts.
+/// each poll into O(history) work (SPEC defect C). A file that shrank, or that no longer holds
+/// the bytes the last read stopped after, was rewritten: the read restarts.
 pub fn replies_from(cfg: &service::Config, tail: &mut Tail) -> Vec<Reply> {
     let path = outbox(cfg);
     let Ok(meta) = std::fs::metadata(&path) else {
         return Vec::new();
     };
     let size = meta.len();
-    let modified = meta.modified().ok();
-    let rewritten = size < tail.offset
-        || (size == tail.offset && tail.modified.is_some() && modified != tail.modified);
-    if rewritten {
-        tail.offset = 0;
+    if size < tail.offset {
+        tail.restart();
     }
-    if size == tail.offset {
-        tail.modified = modified;
-        return Vec::new();
-    }
-    use std::io::{Read, Seek, SeekFrom};
     let Ok(mut file) = std::fs::File::open(&path) else {
         return Vec::new();
     };
+    if tail.offset > 0 && !tail.still_there(&mut file) {
+        tail.restart();
+    }
+    if size == tail.offset {
+        return Vec::new();
+    }
     if file.seek(SeekFrom::Start(tail.offset)).is_err() {
         return Vec::new();
     }
@@ -145,7 +173,12 @@ pub fn replies_from(cfg: &service::Config, tail: &mut Tail) -> Vec<Reply> {
         return Vec::new();
     };
     tail.offset += end as u64;
-    tail.modified = modified;
+    match Tail::bytes_before(&mut file, tail.offset) {
+        Some(bytes) => tail.witness = bytes,
+        // Without a witness the next read cannot tell an append from a rewrite, so it starts
+        // over rather than risk reading from the middle.
+        None => tail.restart(),
+    }
     parse_replies(&String::from_utf8_lossy(&raw[..end]))
 }
 
@@ -786,6 +819,55 @@ mod tests {
         let complete = replies_from(&cfg, &mut tail);
         assert_eq!(complete.len(), 1);
         assert_eq!(complete[0].id, "c");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_replaced_outbox_starts_over_even_when_it_grew() {
+        // SPEC scenario "文件被截断或替换": a replaced file can be *longer* than the old one.
+        // The offset then lands in the middle of a new record, so reading from it would drop
+        // everything before that point.
+        let dir = scratch("replace-grow");
+        let cfg = config(dir.clone());
+        let first = concat!(
+            "{\"id\":\"a\",\"kind\":\"reply\",\"text\":\"one\"}\n",
+            "{\"id\":\"b\",\"kind\":\"reply\",\"text\":\"two\"}\n",
+        );
+        std::fs::write(outbox(&cfg), first).unwrap();
+        let mut tail = Tail::fresh();
+        assert_eq!(replies_from(&cfg, &mut tail).len(), 2);
+        assert_eq!(tail.offset, first.len() as u64);
+
+        // A different, longer outbox replaces the file.
+        let replaced = concat!(
+            "{\"id\":\"x\",\"kind\":\"reply\",\"text\":\"a longer first record\"}\n",
+            "{\"id\":\"y\",\"kind\":\"reply\",\"text\":\"two\"}\n",
+            "{\"id\":\"z\",\"kind\":\"reply\",\"text\":\"three\"}\n",
+        );
+        assert!(replaced.len() > first.len());
+        std::fs::write(outbox(&cfg), replaced).unwrap();
+        let after = replies_from(&cfg, &mut tail);
+        let ids: Vec<&str> = after.iter().map(|reply| reply.id.as_str()).collect();
+        assert_eq!(ids, ["x", "y", "z"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_replaced_outbox_of_the_same_size_starts_over() {
+        // Same length as the file before, so only the bytes can tell that it was rewritten.
+        let dir = scratch("replace-same");
+        let cfg = config(dir.clone());
+        let first = "{\"id\":\"a\",\"kind\":\"reply\",\"text\":\"one\"}\n";
+        std::fs::write(outbox(&cfg), first).unwrap();
+        let mut tail = Tail::fresh();
+        assert_eq!(replies_from(&cfg, &mut tail).len(), 1);
+
+        let replaced = "{\"id\":\"b\",\"kind\":\"reply\",\"text\":\"two\"}\n";
+        assert_eq!(replaced.len(), first.len());
+        std::fs::write(outbox(&cfg), replaced).unwrap();
+        let after = replies_from(&cfg, &mut tail);
+        let ids: Vec<&str> = after.iter().map(|reply| reply.id.as_str()).collect();
+        assert_eq!(ids, ["b"]);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1472,6 +1554,31 @@ mod api_tests {
         .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        // The host may have a capable gh of its own; put an older one first on PATH so the
+        // fallback this test names is the branch it runs, whatever the machine installed.
+        struct PathGuard(Option<std::ffi::OsString>);
+        impl Drop for PathGuard {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var("PATH", value),
+                    None => std::env::remove_var("PATH"),
+                }
+            }
+        }
+        let saved = std::env::var_os("PATH");
+        let older = dir.join("older");
+        std::fs::create_dir_all(&older).unwrap();
+        let old_gh = older.join("gh");
+        std::fs::write(&old_gh, "#!/bin/sh\necho '      --paginate'\n").unwrap();
+        std::fs::set_permissions(&old_gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut paths = vec![older];
+        if let Some(saved) = &saved {
+            paths.extend(std::env::split_paths(saved));
+        }
+        let _path = PathGuard(saved);
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+
         let api = FakeApi::start();
         let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
         let text: String = lines
