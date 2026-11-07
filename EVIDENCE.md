@@ -190,3 +190,45 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
   diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
 - **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
   above but is a person's observation, not an automated layer.
+
+---
+
+## Evidence Report — outbox replacement and a hermetic gh test (after 0.2.0)
+
+- **Request:** a self-iteration pass: read the code and tests, fix one real defect, run the
+  relevant checks, open a PR for review.
+- **Source state:** branch `agent/self-iteration-fix-f046f55c6fff`, based on `30279cb`.
+- **Isolation:** a git worktree, with `BOOTH_SUPERAGENT_DIR` pointing at the populated submodule,
+  so the shared checkout's in-progress files were not touched.
+- **Entry point:** `tools/gauntlet.sh quick` (the same command CI runs) and `tools/smoke.sh`.
+
+### What changed
+
+| # | Change | Why |
+|---|---|---|
+| A | `Tail` keeps the 32 bytes before its offset and restarts when they are no longer there | a replaced outbox that is *longer* than the old file kept the stale offset, so the read began inside a new record and dropped every reply before it; size alone cannot tell an append from a rewrite |
+| B | the state-directory gh test puts an older `gh` first on PATH and restores PATH on drop | the test only made sense where the host's gh was too old; with gh 2.63 installed here, `cargo test` failed before any code change |
+
+### Reproduction
+
+On `30279cb`, `intake::tests::a_replaced_outbox_starts_over_even_when_it_grew` returns `["z"]`
+where the new file holds `["x","y","z"]`; it passes after A. B is what lets the suite run green on
+a host whose system gh is 2.63.2 instead of failing on it.
+
+### Gauntlet (quick)
+
+| Layer | Result |
+|---|---|
+| Format | clean |
+| Types | clean |
+| Lint | `clippy -D warnings` clean |
+| Tests | 133 passed, 0 failed |
+| Real execution | `tools/smoke.sh`: every command ran against the fixture |
+
+### Honest notes
+
+- The slower layers (changed-line coverage, mutation, supply chain, serial/repeated suite) and a
+  live-service run were not run for this pass; the change touches no route, dependency or
+  credential file.
+- The regression tests follow the documented SPEC scenario "文件被截断或替换"; the existing test
+  covered only a replacement shorter than the old file, which is the one case size alone detects.
