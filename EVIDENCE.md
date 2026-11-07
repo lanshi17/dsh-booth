@@ -190,3 +190,85 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
   diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
 - **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
   above but is a person's observation, not an automated layer.
+
+---
+
+## Evidence Report — the message results `/search` already returned (Tier 3)
+
+- **Request:** the second self-iteration round — find a different real defect from PR #12's
+  outbox reader, fix it, run the checks and open a separate pull request for review.
+- **Source state:** `30279cb` (`origin/master`) plus this branch. No submodule change.
+- **Entry point:** `tools/gauntlet.sh` with its default base, the last release tag (`v0.2.0`).
+
+### The defect
+
+The bundle's `GET /search` searches Triggers as well as tickets and threads, and returns those
+message hits in `items`. `format::search` rendered only `tickets` and `threads`, and decided
+"nothing matched" from those two alone. A query that matched only a message therefore reported
+silence even though the service had answered with the hit; `--json` printed it, so the console
+and the one-shot command disagreed about the same view.
+
+One-route fixture serving the bundle's shape with one `items` entry and no tickets or threads,
+`booth search 重试` on the baseline:
+
+```text
+search · 0 tickets · 0 threads
+  · nothing matched
+```
+
+while the same command's `--json` output printed the item under `items` at the same time.
+
+### What changed
+
+- `SearchView.items` now decodes the fields the console draws (`SearchItem`: actor, human, `at`,
+  preview, thread title, filter reason) and keeps every other served field in a flattened map, so
+  `--json` still carries the whole view.
+- `format::search` prints a `messages` section with time, actor (or source), preview, thread title
+  and filter reason; its header counts the hits; "nothing matched" now requires all three lists
+  to be empty. The console's `/search` runs the same formatter.
+- The palette and the CLI's help name messages rather than decisions/triggers, which is what the
+  route returns.
+
+The same fixture and command after the change:
+
+```text
+search · 0 tickets · 0 threads · 1 messages
+
+messages
+11-07 03:42 操作员           请重试一次部署，上一次卡在导出了  · 重试部署
+```
+
+The capture is the command's real plain-text output with the terminal's default colours.
+There is no layout or colour change to the console frame, so no TUI screenshot comparison
+applies; the console path is the same `format::search`, and the new tests pin it.
+
+### Gauntlet (final fresh run, exit 0)
+
+| Layer | Result |
+|---|---|
+| Tests | 134 passed, 0 failed (131 before; three new tests) |
+| Format / types / lint | clean; clippy `-D warnings` |
+| Changed-line coverage | 99/99 changed executable lines covered, 0 exclusions |
+| Mutation | 9 caught, 0 missed, 0 equivalents |
+| Supply chain | `cargo audit --deny warnings` clean |
+| Suite health | serial order, then 3 repeats |
+| Secrets | clean, with its negative control |
+| Real execution | every one-shot command against the fixture, including `search`; the before/after capture above |
+
+The two per-diff ledgers (`tools/coverage_excludes.txt`, `tools/mutant_equivalents.txt`) were
+regenerated for this change: neither has a miss or a survivor to explain, and the tools fail on
+last change's entries once they stop being misses/survivors, so those were removed. Their
+reasons remain in this file and in git history.
+
+### Material limitations
+
+- **A pre-existing test is host-dependent.** `intake::api_tests::setup_uses_a_capable_cli_installed_under_the_state_directory`
+  assumes the host `gh` is older than 2.57; this machine has 2.63.2, so `gh::ensure` correctly
+  prefers the system CLI and the test fails on unmodified `master`. Open PRs #11 and #12 fix that
+  test. The gauntlet run above put an old `gh` first on `PATH` — the condition the test means to
+  create — so every layer ran; this change does not touch that test or the outbox reader.
+- The bundle paginates search items at 20 and the console does not ask for more; that limit is
+  unchanged here.
+- Only the fields the console draws are typed; everything else in a served item is preserved for
+  `--json`, but a future view field still has to be added deliberately to be drawn.
+- A person merges this PR; the agent did not enable auto-merge.
