@@ -190,3 +190,58 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
   diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
 - **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
   above but is a person's observation, not an automated layer.
+
+---
+
+## Evidence Report — the provider migration keeps the selected model
+
+- **Spec approval:** not obtained; this is a third self-iteration round asked for directly on top
+  of `master`, and the standing Must NOT list still applies (no submodule change, no dependency).
+- **Source state:** `30279cb` (`v0.2.0`) plus the commit this section records.
+- **Entry point:** `tools/gauntlet.sh`; base `v0.2.0` (the last release tag).
+
+### What was wrong
+
+An earlier booth stored its providers as `{ "current": "<id>", "providers": [...] }`, and the old
+overlay wrote `agent-default-model` from `current`. The one-time migration registers each entry
+with `add_endpoint`, which also points the default at that entry, so the provider *last* in the
+file silently replaced the user's choice. Reproduction on `30279cb`:
+
+```text
+$ cargo test migration_keeps_the_provider_that_was_current
+...
+assertion `left == right` failed: the old current wins
+  left: String("second")
+ right: "first"
+```
+
+The migration now remembers the entry named by `current` and restores it with `set_default` after
+the loop. A file without `current`, or whose `current` entry has no key and is skipped, keeps the
+old behavior.
+
+### Gauntlet (final fresh run, exit 0)
+
+| Layer | Result |
+|---|---|
+| Tests | 132 passed, 0 failed |
+| Format / types / lint | clean; clippy `-D warnings` |
+| Changed-line coverage | 34/34 changed executable lines, 0 listed exclusions |
+| Mutation | 4 caught, 0 missed, 0 timed out, 0 unviable |
+| Supply chain | `cargo audit --deny warnings` clean |
+| Suite health | serial order, then 3 repeats |
+| Secrets | clean, with its negative control |
+| Real execution | every one-shot command against `dev/mock-api.py` |
+
+The per-diff ledgers were reset: both held entries from the previous change, and this diff has no
+miss or survivor to list.
+
+Host notes: the run exported `BOOTH_SUPERAGENT_DIR` because this worktree's `superagent/`
+submodule is not initialized, and put an older `gh` first on `PATH` because the existing gh test
+assumes that host condition (the same pre-existing failure recorded by PRs #12/#13). No test or
+code changed for either.
+
+### Honest notes
+
+- No live upgrade of a real old profile was run; the regression test builds the documented old
+  `provider.json` shape, and the existing migration tests still pass.
+- `README.md` now says the migration keeps `current`; no other user-facing behavior changed.
