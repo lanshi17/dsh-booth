@@ -190,3 +190,84 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
   diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
 - **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
   above but is a person's observation, not an automated layer.
+
+---
+
+## Evidence Report — an acknowledgement no longer hides a silent report
+
+- **Request:** the fourth self-iteration pass — find a different real defect from PR #12–#14's
+  areas, fix it, run the relevant checks and open a separate pull request for review.
+- **Source state:** `30279cb` (`origin/master`) plus this branch. No submodule or dependency
+  change. The change is confined to `App::push_agent` and its tests, a region none of the open
+  PRs (#11–#14) touches.
+- **Entry point:** `tools/gauntlet.sh quick` (the fast layers of the repository's single check
+  entry point) and `tools/smoke.sh`.
+
+### The defect
+
+`App::push_agent` recorded every agent message that named a ticket as that ticket's report. An
+acknowledgement names the ticket, so the normal accepted path — agent acknowledges, then ends the
+ticket without writing a reply — was treated as already reported. `show_tickets` then skipped its
+summary fallback and the console printed only `closed`; the outcome stayed invisible unless
+`/ticket <id>` was run. `README.md` promises the opposite: "A silent report is not lost. When the
+agent did not also send a reply, the console prints the ticket's own summary under
+`◇ ticket … · report`."
+
+Reproduction, driving the real console in a pty against a fixture where the agent acknowledges
+and the ticket ends with a summary but no outbox reply (100×30, same session and keys):
+
+Before (`30279cb`):
+
+```text
+◆ agent · accepted  abcdef12
+  收到，开始处理
+◇ ticket abcdef12 · closed
+```
+
+After (this branch):
+
+```text
+◆ agent · accepted  abcdef12
+  收到，开始处理
+◇ ticket abcdef12 · closed
+◇ ticket abcdef12 · report
+  Reproduced the race; the retry now waits for the queue.
+```
+
+The capture is the console's own screen output with ANSI sequences stripped; no colour, layout or
+key semantics changed, so there is no frame screenshot difference beyond the transcript line.
+
+### What changed
+
+- `push_agent` marks a ticket reported only for `reply` and `notice` messages; an acknowledgement
+  is shown as before but no longer stands in for the report.
+- `an_acknowledgement_does_not_hide_the_silent_report` is the regression test. On `30279cb` it
+  fails with the transcript above (`◇ ticket abcdef12 · closed` and no summary); it passes after
+  the change.
+- `an_agent_reply_names_its_ticket_and_kind` now pins both sides: an acknowledgement is displayed
+  but does not mark the ticket answered, a reply does.
+
+### Gauntlet (quick, final fresh run, exit 0)
+
+| Layer | Result |
+|---|---|
+| Format | clean |
+| Types | 0 errors |
+| Lint | `clippy --all-targets -- -D warnings` clean |
+| Tests | 132 passed, 0 failed (131 before; one new regression test) |
+| Real execution | `tools/smoke.sh`: every one-shot command ran against `dev/mock-api.py` |
+
+Host notes: the run exported `BOOTH_SUPERAGENT_DIR` because this worktree's `superagent/`
+submodule is not initialized, and put an older `gh` first on `PATH` because
+`intake::setup_uses_a_capable_cli_installed_under_the_state_directory` assumes the host `gh` is
+older than 2.57 (the same pre-existing host condition recorded by PRs #11–#14). No test or code
+changed for either.
+
+### Material limitations
+
+- No live agent produced the fixture transcript; the pty run uses a local fixture that serves the
+  same routes with the same same-origin guard. The unit tests pin the same two message types.
+- The slower gauntlet layers (changed-line coverage, mutation, supply chain, serial/repeated
+  suite) were not rerun for this pass: the change touches no route, dependency or credential
+  file, and the quick layers are the ones CI runs.
+- A person merges this PR; the agent did not enable auto-merge.
