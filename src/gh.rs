@@ -101,27 +101,101 @@ fn installing_hint(local: &Path) -> String {
     )
 }
 
+/// The asset GitHub publishes for a target: Linux is a `.tar.gz`, macOS is a `.zip`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Archive {
+    TarGz,
+    Zip,
+}
+
+impl Archive {
+    fn for_target(target: &str) -> Self {
+        if target.starts_with("macOS_") {
+            Self::Zip
+        } else {
+            Self::TarGz
+        }
+    }
+
+    fn suffix(self) -> &'static str {
+        match self {
+            Self::TarGz => ".tar.gz",
+            Self::Zip => ".zip",
+        }
+    }
+
+    /// Unpack only `member` from `archive`, landing it at `<state>/bin/gh`.
+    fn unpack(self, archive: &Path, member: &str, state_dir: &Path) -> Result<(), String> {
+        fs::create_dir_all(state_dir)
+            .map_err(|error| format!("cannot create {}: {error}", state_dir.display()))?;
+        match self {
+            Self::TarGz => {
+                // The archive holds gh_<version>_<target>/bin/gh; stripping its top directory
+                // lands it at `<state>/bin/gh`, beside other files the service owns.
+                let status = Command::new("tar")
+                    .args(["-xzf"])
+                    .arg(archive)
+                    .args(["-C"])
+                    .arg(state_dir)
+                    .args(["--strip-components", "1", member])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .map_err(|error| format!("cannot run tar: {error}"))?;
+                if !status.success() {
+                    return Err(format!("tar could not unpack {member}"));
+                }
+                Ok(())
+            }
+            Self::Zip => {
+                // `unzip -p` writes the member to stdout, so only the binary is unpacked instead
+                // of the release's manual pages and license. The write is renamed into place
+                // afterwards, so a failed unpack cannot leave a half-written CLI behind.
+                let bin = state_dir.join("bin");
+                fs::create_dir_all(&bin)
+                    .map_err(|error| format!("cannot create {}: {error}", bin.display()))?;
+                let partial = bin.join(format!("gh-{}.partial", std::process::id()));
+                let file = fs::File::create(&partial)
+                    .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
+                let status = Command::new("unzip")
+                    .arg("-p")
+                    .arg(archive)
+                    .arg(member)
+                    .stdout(Stdio::from(file))
+                    .stderr(Stdio::null())
+                    .status()
+                    .map_err(|error| format!("cannot run unzip: {error}"))?;
+                if !status.success() {
+                    let _ = fs::remove_file(&partial);
+                    return Err(format!("unzip could not unpack {member}"));
+                }
+                fs::rename(&partial, bin.join("gh")).map_err(|error| {
+                    format!("cannot move {} into place: {error}", partial.display())
+                })?;
+                Ok(())
+            }
+        }
+    }
+}
+
 /// Downloads the pinned release, checks its published checksum and unpacks only its `gh`.
 fn install(cfg: &service::Config) -> Result<(), String> {
     let target = target()?;
-    let archive = format!("gh_{VERSION}_{target}.tar.gz");
-    let base = format!("https://github.com/cli/cli/releases/download/v{VERSION}");
-    let bytes = fetch(&format!("{base}/{archive}"))?;
+    let format = Archive::for_target(target);
+    let asset = format!("gh_{VERSION}_{target}{}", format.suffix());
+    let base = release_base();
+    let bytes = fetch(&format!("{base}/{asset}"))?;
     let sums = fetch(&format!("{base}/gh_{VERSION}_checksums.txt"))?;
     let text =
         String::from_utf8(sums).map_err(|error| format!("checksums are not text: {error}"))?;
-    let expected = text
-        .lines()
-        .find(|line| line.trim_end().ends_with(&archive))
-        .and_then(|line| line.split_whitespace().next())
-        .ok_or_else(|| format!("no checksum for {archive}"))?;
+    let expected = checksum(&text, &asset)?;
     let actual = Sha256::digest(&bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    if !actual.eq_ignore_ascii_case(expected) {
+    if !actual.eq_ignore_ascii_case(&expected) {
         return Err(format!(
-            "the {archive} download does not match its published checksum"
+            "the {asset} download does not match its published checksum"
         ));
     }
 
@@ -131,30 +205,33 @@ fn install(cfg: &service::Config) -> Result<(), String> {
     let _ = fs::remove_dir_all(&scratch);
     fs::create_dir_all(&scratch)
         .map_err(|error| format!("cannot create {}: {error}", scratch.display()))?;
-    let file = scratch.join(&archive);
+    let file = scratch.join(&asset);
     fs::write(&file, &bytes)
         .map_err(|error| format!("cannot write {}: {error}", file.display()))?;
-    // The archive holds gh_<version>_<target>/bin/gh; stripping its top directory lands it at
-    // `<state>/bin/gh`, beside other files the service owns.
     let member = format!("gh_{VERSION}_{target}/bin/gh");
-    let status = Command::new("tar")
-        .args(["-xzf"])
-        .arg(&file)
-        .args(["-C"])
-        .arg(&cfg.state_dir)
-        .args(["--strip-components", "1", &member])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|error| format!("cannot run tar: {error}"))?;
+    let unpacked = format.unpack(&file, &member, &cfg.state_dir);
     let _ = fs::remove_dir_all(&scratch);
-    if !status.success() {
-        return Err(format!("tar could not unpack {member}"));
-    }
+    unpacked?;
     let local = installed(cfg);
     fs::set_permissions(&local, fs::Permissions::from_mode(0o755))
         .map_err(|error| format!("cannot make {} executable: {error}", local.display()))?;
     Ok(())
+}
+
+/// The release host. The install test points this at a loopback fixture instead of GitHub; the
+/// download is still checked against the checksums served beside it.
+fn release_base() -> String {
+    std::env::var("BOOTH_GH_RELEASE_BASE")
+        .unwrap_or_else(|_| format!("https://github.com/cli/cli/releases/download/v{VERSION}"))
+}
+
+/// The checksum line for `asset` in the published checksums file.
+fn checksum(text: &str, asset: &str) -> Result<String, String> {
+    text.lines()
+        .find(|line| line.trim_end().ends_with(asset))
+        .and_then(|line| line.split_whitespace().next())
+        .map(str::to_owned)
+        .ok_or_else(|| format!("no checksum for {asset}"))
 }
 
 fn fetch(url: &str) -> Result<Vec<u8>, String> {
@@ -177,6 +254,10 @@ fn fetch(url: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn script(name: &str, body: &str) -> PathBuf {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -222,5 +303,280 @@ mod tests {
                 target().unwrap().starts_with("linux_") || target().unwrap().starts_with("macOS_")
             );
         }
+    }
+
+    const FIXTURE_GH: &str = "#!/bin/sh\necho fixture\n";
+
+    fn scratch(name: &str) -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("booth-gh-{name}-{}", crate::oauth::uuid_v4()));
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn config(root: &Path) -> crate::service::Config {
+        crate::service::Config {
+            profile: "test".into(),
+            port: 0,
+            dsh_home: root.to_path_buf(),
+            state_dir: root.join("state"),
+            bundle: root.to_path_buf(),
+        }
+    }
+
+    fn sha256(bytes: &[u8]) -> String {
+        Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    /// Pack the release tree the way GitHub publishes it: the top directory holds `bin/gh`.
+    fn fixture(root: &Path, target: &str, archive: Archive) -> (String, Vec<u8>) {
+        let top = format!("gh_{VERSION}_{target}");
+        let bin = root.join(&top).join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("gh"), FIXTURE_GH).unwrap();
+        fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+        let asset = format!("{top}{}", archive.suffix());
+        let path = root.join(&asset);
+        let status = match archive {
+            Archive::TarGz => Command::new("tar")
+                .args(["-czf"])
+                .arg(&path)
+                .args(["-C"])
+                .arg(root)
+                .arg(&top)
+                .status(),
+            Archive::Zip => Command::new("zip")
+                .args(["-qr"])
+                .arg(&path)
+                .arg(&top)
+                .current_dir(root)
+                .status(),
+        }
+        .expect("the fixture packer is installed");
+        assert!(status.success(), "cannot pack the {archive:?} fixture");
+        (asset, fs::read(&path).unwrap())
+    }
+
+    /// Serve the asset and its checksums over loopback, with the stop flag a test sets to end it.
+    fn serve_release(
+        asset: String,
+        bytes: Vec<u8>,
+        checksums: String,
+    ) -> (String, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let stop = Arc::new(AtomicBool::new(false));
+        let running = stop.clone();
+        let server = std::thread::spawn(move || {
+            while !running.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                        let mut buffer = [0u8; 2048];
+                        let size = stream.read(&mut buffer).unwrap_or(0);
+                        let request = String::from_utf8_lossy(&buffer[..size]).into_owned();
+                        let path = request.split_whitespace().nth(1).unwrap_or_default();
+                        // The installer asks for the asset and then the checksums; anything else
+                        // is answered with the checksums, which makes a wrong URL an honest
+                        // "no checksum for" failure instead of a silent success.
+                        let body = if path.ends_with(&asset) {
+                            bytes.clone()
+                        } else {
+                            checksums.clone().into_bytes()
+                        };
+                        let head = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                            body.len()
+                        );
+                        let _ = stream.write_all(head.as_bytes());
+                        let _ = stream.write_all(&body);
+                        let _ = stream.flush();
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(5)),
+                }
+            }
+        });
+        (base, stop, server)
+    }
+
+    fn set_release_base(base: &str) -> Option<std::ffi::OsString> {
+        let previous = std::env::var_os("BOOTH_GH_RELEASE_BASE");
+        std::env::set_var("BOOTH_GH_RELEASE_BASE", base);
+        previous
+    }
+
+    fn restore_release_base(previous: Option<std::ffi::OsString>) {
+        match previous {
+            Some(value) => std::env::set_var("BOOTH_GH_RELEASE_BASE", value),
+            None => std::env::remove_var("BOOTH_GH_RELEASE_BASE"),
+        }
+    }
+
+    #[test]
+    fn the_published_asset_follows_the_platform() {
+        assert_eq!(Archive::for_target("linux_amd64").suffix(), ".tar.gz");
+        assert_eq!(Archive::for_target("linux_arm64").suffix(), ".tar.gz");
+        assert_eq!(Archive::for_target("macOS_amd64").suffix(), ".zip");
+        assert_eq!(Archive::for_target("macOS_arm64").suffix(), ".zip");
+    }
+
+    #[test]
+    fn unpacks_the_asset_each_platform_publishes() {
+        for (target, archive) in [
+            ("linux_amd64", Archive::TarGz),
+            ("macOS_arm64", Archive::Zip),
+        ] {
+            let root = scratch("unpack");
+            let (asset, _) = fixture(&root, target, archive);
+            let state = root.join("state");
+            let member = format!("gh_{VERSION}_{target}/bin/gh");
+            archive.unpack(&root.join(&asset), &member, &state).unwrap();
+            assert_eq!(
+                fs::read_to_string(state.join("bin").join("gh")).unwrap(),
+                FIXTURE_GH
+            );
+            assert!(
+                !state
+                    .join("bin")
+                    .join(format!("gh-{}.partial", std::process::id()))
+                    .exists(),
+                "the partial write is renamed into place"
+            );
+            fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    #[test]
+    fn a_release_that_cannot_be_unpacked_leaves_nothing_behind() {
+        let root = scratch("broken");
+        let state = root.join("state");
+        fs::create_dir_all(&state).unwrap();
+        let broken = root.join("broken");
+        fs::write(&broken, "not an archive").unwrap();
+        let error = Archive::TarGz
+            .unpack(&broken, "gh_x/bin/gh", &state)
+            .unwrap_err();
+        assert!(error.contains("tar could not unpack"), "{error}");
+        let error = Archive::Zip
+            .unpack(&broken, "gh_x/bin/gh", &state)
+            .unwrap_err();
+        assert!(error.contains("unzip could not unpack"), "{error}");
+        assert!(!state.join("bin").join("gh").exists());
+        assert!(
+            fs::read_dir(state.join("bin")).unwrap().next().is_none(),
+            "a failed unpack leaves no partial binary"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_binary_that_cannot_be_moved_into_place_is_reported() {
+        let root = scratch("rename");
+        let (asset, _) = fixture(&root, "macOS_arm64", Archive::Zip);
+        let state = root.join("state");
+        // A directory named like the CLI cannot be replaced by the unpacked file.
+        fs::create_dir_all(state.join("bin").join("gh")).unwrap();
+        let member = format!("gh_{VERSION}_macOS_arm64/bin/gh");
+        let error = Archive::Zip
+            .unpack(&root.join(&asset), &member, &state)
+            .unwrap_err();
+        assert!(error.contains("cannot move"), "{error}");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn installs_the_release_for_this_platform() {
+        let _env = crate::testkit::env_lock();
+        let target = target().unwrap();
+        let root = scratch("install");
+        let (asset, bytes) = fixture(&root, target, Archive::for_target(target));
+        let published = format!(
+            "{}  gh_{VERSION}_other.tar.gz\n{}  {asset}\n",
+            "0".repeat(64),
+            sha256(&bytes)
+        );
+        let (base, stop, server) = serve_release(asset, bytes, published);
+        let previous = set_release_base(&base);
+        let result = install(&config(&root));
+        restore_release_base(previous);
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+
+        result.unwrap();
+        let local = config(&root).state_dir.join("bin").join("gh");
+        assert_eq!(fs::read_to_string(&local).unwrap(), FIXTURE_GH);
+        assert_eq!(
+            fs::metadata(&local).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+        assert!(
+            !config(&root).state_dir.join("gh-download").exists(),
+            "the download scratch is removed"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn refuses_a_download_without_a_matching_checksum() {
+        let _env = crate::testkit::env_lock();
+        let target = target().unwrap();
+        let root = scratch("mismatch");
+        let (asset, bytes) = fixture(&root, target, Archive::for_target(target));
+        let published = format!("{}  {asset}\n", "0".repeat(64));
+        let (base, stop, server) = serve_release(asset, bytes, published);
+        let previous = set_release_base(&base);
+        let result = install(&config(&root));
+        restore_release_base(previous);
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+
+        let error = result.unwrap_err();
+        assert!(
+            error.contains("does not match its published checksum"),
+            "{error}"
+        );
+        assert!(!config(&root).state_dir.join("bin").join("gh").exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn names_an_asset_without_a_published_checksum() {
+        let _env = crate::testkit::env_lock();
+        let target = target().unwrap();
+        let root = scratch("no-checksum");
+        let (asset, bytes) = fixture(&root, target, Archive::for_target(target));
+        let published = format!("{}  gh_{VERSION}_other.tar.gz\n", sha256(&bytes));
+        let (base, stop, server) = serve_release(asset, bytes, published);
+        let previous = set_release_base(&base);
+        let result = install(&config(&root));
+        restore_release_base(previous);
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+
+        let error = result.unwrap_err();
+        assert!(error.contains("no checksum for"), "{error}");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_release_host_defaults_to_the_pinned_tag_and_restores_an_override() {
+        let _env = crate::testkit::env_lock();
+        let previous = std::env::var_os("BOOTH_GH_RELEASE_BASE");
+        std::env::remove_var("BOOTH_GH_RELEASE_BASE");
+        let base = release_base();
+        restore_release_base(Some("http://previous".into()));
+        assert_eq!(
+            std::env::var("BOOTH_GH_RELEASE_BASE").as_deref(),
+            Ok("http://previous")
+        );
+        restore_release_base(previous);
+        assert_eq!(
+            base,
+            format!("https://github.com/cli/cli/releases/download/v{VERSION}")
+        );
     }
 }
