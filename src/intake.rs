@@ -315,19 +315,25 @@ pub fn summary(catalog: &Catalog) -> Vec<L> {
 
 /// `/setup`: names the repository, allows the people who may ask for work, and turns on the console's Source.
 pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>, String> {
-    let mut words = argument.split_whitespace();
-    let repository = match words.next() {
-        Some(value) if value.contains('/') => value.to_owned(),
-        Some(other) => {
+    // Only the first word names the repository; everything after it is the directory, so a
+    // path with spaces is kept whole instead of being cut at its first space.
+    let argument = argument.trim();
+    let (repository, directory) = match argument.split_once(char::is_whitespace) {
+        Some((first, rest)) => (first, rest.trim()),
+        None => (argument, ""),
+    };
+    let repository = match repository {
+        "" => infer_repository().ok_or(
+            "name the repository: /setup owner/repo — run it inside a checkout to infer it",
+        )?,
+        value if value.contains('/') => value.to_owned(),
+        other => {
             return Err(format!(
                 "{other} is not owner/name; use /setup owner/repo [directory]"
             ))
         }
-        None => infer_repository().ok_or(
-            "name the repository: /setup owner/repo — run it inside a checkout to infer it",
-        )?,
     };
-    let directory = words.next().map(str::to_owned);
+    let directory = (!directory.is_empty()).then(|| directory.to_owned());
 
     // A newer gh unlocks the GitHub front door; the system one still lets the agent push.
     // `BOOTH_NO_GH_INSTALL` keeps a test or an offline machine from a 13 MB download.
@@ -1165,6 +1171,40 @@ mod api_tests {
         assert_eq!(github.1["value"]["enabled"], true);
         let policy = puts.iter().find(|(name, _)| name == "policy").unwrap();
         assert!(policy.1["value"]["sources"]["local"]["allowed"][0]["id"].is_string());
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_keeps_a_directory_whose_path_has_spaces() {
+        let _env = env_lock();
+        let dir = scratch("setup-spaces");
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp  use with --paginate';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r /tmp/ticket work").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("/tmp/ticket work"), "{text}");
+        let executor = api
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| name == "executor")
+            .map(|(_, body)| body.clone())
+            .unwrap();
+        assert_eq!(executor["value"]["directory"], "/tmp/ticket work");
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
     }
