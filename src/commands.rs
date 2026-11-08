@@ -81,16 +81,21 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
         "/help" | "/?" => format::help(),
         "/overview" => format::overview(&api.overview()?, api.base()),
         "/status" => format::status(&api.state()?, api.base()),
-        "/agents" => format::agents(
-            &api.overview()?,
-            api.base(),
-            crate::service::Config::from_env()
-                .map(|cfg| crate::service::session_count(&cfg))
-                .unwrap_or(0),
-            &crate::service::Config::from_env()
-                .map(|cfg| crate::service::session_root(&cfg).display().to_string())
-                .unwrap_or_else(|_| "unknown".into()),
-        ),
+        "/agents" => {
+            let view = api.overview()?;
+            let cfg = crate::service::Config::from_env().ok();
+            let (sessions, memory) = match &cfg {
+                Some(cfg) => {
+                    let work = crate::service::execution_root(api, cfg);
+                    (
+                        crate::service::session_count(cfg, &work),
+                        crate::service::session_root(cfg).display().to_string(),
+                    )
+                }
+                None => (0, "unknown".into()),
+            };
+            format::agents(&view, api.base(), sessions, &memory)
+        }
         "/tickets" => {
             let state = if argument.is_empty() {
                 "open"

@@ -227,8 +227,8 @@ the system CLI. `booth gh` reports the choice; `booth gh --install` installs it 
 A session keeps the provider it was created with, so the overlay always registers **every** stored
 provider: signing in drops only the default model, which makes the DeepSeek account the default
 while sessions that still name an API-key provider keep their adapter and their history. Nothing
-is discarded on sign-in or on `/model`. `booth reset-sessions` moves the sessions aside by hand
-if a session ever ends up naming a provider that is genuinely gone.
+is discarded on sign-in or on `/model`. `booth reset-sessions` moves the orchestrator's session
+and every ticket's worker session aside if one ends up naming a provider that is genuinely gone.
 
 The concurrency limit, the worker model and the prompts stay where they were: `/model` and the
 web panel.
