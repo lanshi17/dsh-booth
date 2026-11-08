@@ -221,7 +221,9 @@ Before (`30279cb`):
 ```text
 ◆ agent · accepted  abcdef12
   收到，开始处理
+◇ ticket abcdef12 · working
 ◇ ticket abcdef12 · closed
+  · that ticket is closed; the next instruction starts a new one
 ```
 
 After (this branch):
@@ -229,9 +231,11 @@ After (this branch):
 ```text
 ◆ agent · accepted  abcdef12
   收到，开始处理
+◇ ticket abcdef12 · working
 ◇ ticket abcdef12 · closed
 ◇ ticket abcdef12 · report
   Reproduced the race; the retry now waits for the queue.
+  · that ticket is closed; the next instruction starts a new one
 ```
 
 The capture is the console's own screen output with ANSI sequences stripped; no colour, layout or
