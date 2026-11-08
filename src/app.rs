@@ -69,6 +69,18 @@ const LOGIN_METHODS: &[(&str, &str)] = &[
     ("Custom endpoint", "any OpenAI-compatible base URL"),
 ];
 
+/// One ticket poll: the open rows plus what a tracked ticket's detail said, the total behind the
+/// open page, and the person count when the page was too short to carry every open ticket.
+///
+/// The page is a window (`limit=50`), so its length is not the number of open tickets. Carrying
+/// the total lets the header say 120 open while the page holds 50, and a tracked ticket missing
+/// from the window is looked up by id instead of being called closed.
+struct TicketPoll {
+    rows: Vec<crate::model::TicketRow>,
+    open_total: u32,
+    person: Option<u32>,
+}
+
 enum Msg {
     Lines(Vec<L>),
     Error(String),
@@ -77,7 +89,7 @@ enum Msg {
     Decisions(Vec<crate::model::Decision>),
     /// The service's model catalog, fetched with every poll so the view is never stale.
     Catalog(Box<Catalog>),
-    Tickets(Vec<crate::model::TicketRow>),
+    Tickets(TicketPoll),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
@@ -494,7 +506,7 @@ impl App {
                         }
                     }
                 }
-                Msg::Tickets(rows) => self.show_tickets(rows),
+                Msg::Tickets(poll) => self.show_tickets(poll),
                 Msg::Replies(replies) => {
                     let mut fresh = Vec::new();
                     for reply in replies {
@@ -574,19 +586,17 @@ impl App {
 
     /// Reports the stage of the tickets this console opened, once per change; a report the agent
     /// did not also send as a reply is shown as a short fallback.
-    fn show_tickets(&mut self, rows: Vec<crate::model::TicketRow>) {
-        self.open = rows
-            .iter()
-            .filter(|row| row.state == "open")
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX);
-        self.person = rows
-            .iter()
-            .filter(|row| row.state == "open" && row.stage == "person")
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX);
+    fn show_tickets(&mut self, poll: TicketPoll) {
+        let rows = poll.rows;
+        // The page is a window: its length is not the number of open tickets.
+        self.open = poll.open_total;
+        self.person = poll.person.unwrap_or_else(|| {
+            rows.iter()
+                .filter(|row| row.state == "open" && row.stage == "person")
+                .count()
+                .try_into()
+                .unwrap_or(u32::MAX)
+        });
         let by_id: std::collections::HashMap<&str, &crate::model::TicketRow> =
             rows.iter().map(|row| (row.id.as_str(), row)).collect();
         let replied = self.replied.clone();
@@ -594,12 +604,9 @@ impl App {
         let mut done: Vec<String> = Vec::new();
         for (id, tracked) in self.tracked.iter_mut() {
             let short = short_id(id);
+            // A ticket the poll could not resolve (a failed lookup, say) is not a closure:
+            // keep following it and ask again on the next poll.
             let Some(row) = by_id.get(id.as_str()) else {
-                if tracked.stage != "closed" {
-                    tracked.stage = "closed".into();
-                    lines.push(ticket_line(&format!("{short} · closed")));
-                }
-                done.push(id.clone());
                 continue;
             };
             let stage = if row.state == "ended" {
@@ -903,18 +910,48 @@ impl App {
             }
             // Open tickets are the header's counts as well as the followed tickets' stages.
             let mut rows = Vec::new();
+            let mut open_total = 0;
+            let mut person = None;
             let mut fetched = false;
             if let Ok(page) = polled.tickets("open") {
+                open_total = page.total;
+                let complete = page.items.len() as u32 >= page.total;
                 rows.extend(page.items);
                 fetched = true;
-            }
-            if !tracked.is_empty() {
-                if let Ok(page) = polled.tickets("ended") {
-                    rows.extend(page.items);
+                if !complete {
+                    // The page carries only the first 50 of `total`; ask the overview for the
+                    // exact number of tickets waiting for a person instead of counting the window.
+                    if let Ok(view) = polled.overview() {
+                        person = Some(view.person.len() as u32);
+                    }
+                }
+                // A tracked ticket the page did not carry is not necessarily closed: the page is
+                // a window. Ask for the ticket itself, and let only a definite answer end it.
+                for id in &tracked {
+                    if rows.iter().any(|row| &row.id == id) {
+                        continue;
+                    }
+                    match polled.ticket(id) {
+                        Ok(detail) => rows.push(row_from_detail(&detail)),
+                        Err(crate::api::ApiError::Status(404, _)) => {
+                            rows.push(crate::model::TicketRow {
+                                id: id.clone(),
+                                state: "ended".into(),
+                                ..crate::model::TicketRow::default()
+                            });
+                        }
+                        // A transport or protocol failure says nothing about the ticket; the
+                        // next poll asks again rather than reporting a closure that did not happen.
+                        Err(_) => {}
+                    }
                 }
             }
             if fetched {
-                let _ = tx.send(Msg::Tickets(rows));
+                let _ = tx.send(Msg::Tickets(TicketPoll {
+                    rows,
+                    open_total,
+                    person,
+                }));
             }
             if let Ok(models) = polled.models() {
                 let _ = tx.send(Msg::Catalog(Box::new(Catalog::parse(&models))));
@@ -2518,6 +2555,28 @@ fn warn_line(text: &str) -> L {
     Line::from(Span::styled(format!("! {text}"), Style::default().fg(RED)))
 }
 
+/// A ticket detail reduced to the row fields the poll and the transcript read. The list routes
+/// omit the summary and the action of a ticket outside their page; the detail route has both.
+fn row_from_detail(detail: &crate::model::TicketDetail) -> crate::model::TicketRow {
+    crate::model::TicketRow {
+        id: detail.id.clone(),
+        title: detail.title.clone(),
+        state: detail.state.clone(),
+        stage: detail.stage.clone(),
+        action: detail.action.clone(),
+        note: detail.note.clone(),
+        summary: detail.summary.clone(),
+        directory: detail.directory.clone(),
+        session_id: detail.session_id.clone(),
+        created_at: detail.created_at.clone(),
+        updated_at: detail.updated_at.clone(),
+        strength: detail.strength.clone(),
+        attention: detail.attention.clone(),
+        actions: detail.actions.clone(),
+        ..crate::model::TicketRow::default()
+    }
+}
+
 /// The first eight characters of an id, for the one-line ticket markers. Counts characters,
 /// not bytes: a byte slice panics when it lands inside one (SPEC defect A).
 fn short_id(id: &str) -> String {
@@ -2789,6 +2848,17 @@ mod transcript_tests {
         }
     }
 
+    /// The poll a page holding exactly these rows stands for; the tests that drive
+    /// `show_tickets` directly do not go through the service.
+    fn tickets_poll(rows: Vec<TicketRow>) -> TicketPoll {
+        let open_total = rows.iter().filter(|row| row.state == "open").count() as u32;
+        TicketPoll {
+            rows,
+            open_total,
+            person: None,
+        }
+    }
+
     #[test]
     fn a_ticket_stage_is_reported_once_per_change() {
         let (mut app, dir, _env) = console("stages");
@@ -2798,16 +2868,20 @@ mod transcript_tests {
                 stage: "new".into(),
             },
         );
-        app.show_tickets(vec![row("abcdef1234567890", "working", None)]);
+        app.show_tickets(tickets_poll(vec![row("abcdef1234567890", "working", None)]));
         assert!(text(&app).contains("abcdef12 · working"), "{}", text(&app));
 
         // The same stage again says nothing new.
         let before = app.lines.len();
-        app.show_tickets(vec![row("abcdef1234567890", "working", None)]);
+        app.show_tickets(tickets_poll(vec![row("abcdef1234567890", "working", None)]));
         assert_eq!(app.lines.len(), before, "a repeated stage is not repeated");
 
         // A stage with an action names the action.
-        app.show_tickets(vec![row("abcdef1234567890", "person", Some("review"))]);
+        app.show_tickets(tickets_poll(vec![row(
+            "abcdef1234567890",
+            "person",
+            Some("review"),
+        )]));
         assert!(
             text(&app).contains("abcdef12 · needs a person · review"),
             "{}",
@@ -2830,12 +2904,12 @@ mod transcript_tests {
             ticket: "abcdef1234567890".into(),
         });
         app.replied.insert("abcdef1234567890".into());
-        app.show_tickets(vec![TicketRow {
+        app.show_tickets(tickets_poll(vec![TicketRow {
             id: "abcdef1234567890".into(),
             state: "ended".into(),
             stage: "idle".into(),
             ..TicketRow::default()
-        }]);
+        }]));
         assert!(text(&app).contains("abcdef12 · closed"), "{}", text(&app));
         // With a reply already shown, the summary is not printed twice.
         assert!(!text(&app).contains("report"), "{}", text(&app));
@@ -2853,13 +2927,13 @@ mod transcript_tests {
                 stage: "working".into(),
             },
         );
-        app.show_tickets(vec![TicketRow {
+        app.show_tickets(tickets_poll(vec![TicketRow {
             id: "abcdef1234567890".into(),
             state: "ended".into(),
             stage: "idle".into(),
             summary: Some("the worker changed the README".into()),
             ..TicketRow::default()
-        }]);
+        }]));
         let shown = text(&app);
         assert!(shown.contains("report"), "{shown}");
         assert!(shown.contains("the worker changed the README"), "{shown}");
@@ -3015,6 +3089,7 @@ mod transcript_tests {
 mod editor_tests {
     use super::*;
     use crate::testkit::FakeApi;
+    use serde_json::json;
 
     /// A console whose editor is driven directly; no terminal, no event loop.
     fn editor(name: &str) -> (App, std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
@@ -3026,6 +3101,47 @@ mod editor_tests {
         std::env::set_var("DSH_HOME", &dir);
         let api = FakeApi::start();
         (App::new(Api::new(&api.base)), dir, guard)
+    }
+
+    /// The same console, with the fake service kept so a test can replace its routes.
+    fn editor_with_api(
+        name: &str,
+    ) -> (
+        App,
+        std::path::PathBuf,
+        FakeApi,
+        std::sync::MutexGuard<'static, ()>,
+    ) {
+        let guard = crate::testkit::env_lock();
+        let dir =
+            std::env::temp_dir().join(format!("booth-editor-{name}-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("BOOTH_STATE_DIR", &dir);
+        std::env::set_var("DSH_HOME", &dir);
+        let api = FakeApi::start();
+        let app = App::new(Api::new(&api.base));
+        (app, dir, api, guard)
+    }
+
+    /// Waits for the poll's ticket message, which is what these tests drive.
+    fn next_tickets(app: &App) -> TicketPoll {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match app.rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(Msg::Tickets(poll)) => return poll,
+                Ok(_) => continue,
+                Err(_) if Instant::now() < deadline => continue,
+                Err(error) => panic!("the poll never sent tickets: {error}"),
+            }
+        }
+    }
+
+    fn rendered(app: &App) -> String {
+        app.lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -3275,6 +3391,187 @@ mod editor_tests {
         let replies = delivered.expect("the poll delivers what the agent wrote");
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].text, "done");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_header_counts_every_open_ticket_not_just_the_page() {
+        let (mut app, dir, api, _env) = editor_with_api("page-total");
+        // The service answers a window of 50, but 120 tickets are open and two want a person.
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({
+                "items": [
+                    { "id": "t-1", "title": "one", "state": "open", "stage": "working" }
+                ],
+                "total": 120,
+                "next_offset": 50
+            }),
+        );
+        api.set_route(
+            "/overview",
+            json!({
+                "problems": [],
+                "person": [
+                    { "id": "t-2", "title": "two", "state": "open", "stage": "person" },
+                    { "id": "t-3", "title": "three", "state": "open", "stage": "person" }
+                ],
+                "executor": { "running": 0, "queued": 0, "maxWorkers": 3, "idle": 0 },
+                "flow": {},
+                "policyVersion": "test"
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        assert_eq!(
+            app.open, 120,
+            "the header says the total, not the 1 row in the window"
+        );
+        assert_eq!(
+            app.person, 2,
+            "the person count comes from the overview, not the window"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_in_the_page_is_not_looked_up_again() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-in-page");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "new".into(),
+            },
+        );
+        // The page carries the tracked ticket; no detail route exists, so a lookup would 404
+        // and close it. Keeping it open is what proves the page was enough.
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({
+                "items": [
+                    { "id": "abcdef1234567890", "title": "in the page", "state": "open", "stage": "working" }
+                ],
+                "total": 120,
+                "next_offset": 50
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(shown.contains("abcdef12 · working"), "{shown}");
+        assert!(
+            app.tracked.contains_key("abcdef1234567890"),
+            "a page hit is not closed by a detail lookup"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_outside_the_page_is_looked_up_instead_of_closed() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-open");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({ "items": [], "total": 120, "next_offset": 50 }),
+        );
+        // The ticket is open, just past the first page: the detail route is the source of truth.
+        api.set_route(
+            "/tickets/abcdef1234567890",
+            json!({
+                "id": "abcdef1234567890",
+                "title": "still open",
+                "state": "open",
+                "stage": "person",
+                "action": "review"
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(!shown.contains("closed"), "{shown}");
+        assert!(
+            app.tracked.contains_key("abcdef1234567890"),
+            "the ticket is still followed"
+        );
+        assert!(shown.contains("needs a person · review"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_that_ended_outside_the_page_still_reports() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-ended");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({ "items": [], "total": 120, "next_offset": 50 }),
+        );
+        api.set_route(
+            "/tickets/abcdef1234567890",
+            json!({
+                "id": "abcdef1234567890",
+                "title": "finished",
+                "state": "ended",
+                "stage": "idle",
+                "summary": "the worker changed the README"
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(shown.contains("abcdef12 · closed"), "{shown}");
+        assert!(shown.contains("abcdef12 · report"), "{shown}");
+        assert!(shown.contains("the worker changed the README"), "{shown}");
+        assert!(app.tracked.is_empty(), "a closed ticket is not tracked");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_the_service_no_longer_has_is_closed() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-gone");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({ "items": [], "total": 120, "next_offset": 50 }),
+        );
+        // No detail route: the fake answers 404, which is the service saying it has no such ticket.
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(shown.contains("abcdef12 · closed"), "{shown}");
+        assert!(
+            app.tracked.is_empty(),
+            "a ticket the service dropped is closed"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
