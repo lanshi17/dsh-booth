@@ -190,3 +190,129 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
   diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
 - **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
   above but is a person's observation, not an automated layer.
+
+---
+
+## Evidence Report — worker sessions in `reset-sessions` and the session count (after 0.2.0)
+
+- **Request:** a sixth self-iteration pass in this repository; the five earlier fixes (outbox
+  replacement, search items, provider migration, silent reports, open-ticket pagination) stay
+  untouched, and the `superagent/` submodule is not modified.
+- **Source state:** branch `agent/self-iteration-round6-792775821782`, based on `30279cb`.
+- **Entry point:** `tools/gauntlet.sh quick` (the workflow's content) plus `tools/smoke.sh`.
+
+### The defect
+
+`service::session_root` assumed a deployment had one session tree: DSH's project directory for the
+orchestrator Session, keyed by the state directory. DSH actually keeps one project tree per
+session working directory, and a worker Session's working directory is the ticket worktree
+`<executor.directory>/<worktree>` (the bundle's default is `<state>/work/...`). As a result:
+
+- `booth reset-sessions` moved only the orchestrator's tree. Every ticket's worker Session — the
+  one that names the removed provider on its next turn — stayed where it was.
+- `/agents` printed `sessions 1` on a deployment with 21 worker project trees and 22 worker
+  sessions on disk; the doc comment said "router and workers together".
+
+The two symptoms were observed on the live deployment at `~/.dsh` before the change: the console
+printed `sessions 1`, while the store held one orchestrator session and 22 worker sessions.
+
+### What changed
+
+- `service::project_key` reproduces DSH's `projectKey` for a session's working directory
+  (separator runs collapse, unsafe UTF-16 code units become `~XXXX`, the leading dash run is
+  dropped, the result is wrapped in `--` and cut to 251 characters). Booth had re-implemented a
+  simplified version of this convention, which also missed spaces, `:` and trailing separators.
+- `service::execution_root` reads `executor.directory` from the profile's settings block, falling
+  back to `<state>/work` when the setting is empty or the service is unreachable.
+- `service::project_dirs` returns the orchestrator's tree plus every project tree under the
+  execution root, so the count and the move see the same set.
+- `booth reset-sessions` and `booth agents` (the CLI and `/agents`) pass that root through.
+- The README now says the command moves the orchestrator's session and every ticket's worker
+  session.
+
+### Before / after: the live deployment
+
+Same host, same service, same state directory; baseline `30279cb`, changed revision this branch.
+This is the real command run against the running deployment (not a fixture); only the `sessions`
+line differs.
+
+Before (`30279cb`):
+
+```text
+now
+workers       1 running · 0 queued · 1 idle
+need a person 5
+sessions      1
+```
+
+After (this branch):
+
+```text
+now
+workers       1 running · 0 queued · 1 idle
+need a person 5
+sessions      23
+```
+
+### Before / after: the move
+
+A synthetic `DSH_HOME` with one orchestrator tree, one worker tree under the state directory's
+`work/`, and one unrelated project tree; `booth reset-sessions --url http://127.0.0.1:1` (the
+service is down, so the default execution root applies). Same tree in both runs.
+
+Before (`30279cb`):
+
+```text
+before : --elsewhere--/orchestrator-bbb  --<state>--/orchestrator-aaa  --<state>-work-t-1--/worker-t-1
+sessions moved to $DEMO/home/state/superagent/sessions-1794124081
+after  : --elsewhere--/orchestrator-bbb  --<state>-work-t-1--/worker-t-1
+backup : sessions-1794124081/orchestrator-aaa
+```
+
+After (this branch):
+
+```text
+before : --elsewhere--/orchestrator-bbb  --<state>--/orchestrator-aaa  --<state>-work-t-1--/worker-t-1
+sessions moved to $DEMO/home/state/superagent/sessions-1794124081
+after  : --elsewhere--/orchestrator-bbb
+backup : sessions-1794124081/orchestrator-aaa  sessions-1794124081/worker-t-1
+```
+
+The unrelated tree is untouched in both runs.
+
+### Checks
+
+| Layer | Result |
+|---|---|
+| `cargo fmt --check` | clean |
+| `cargo check --all-targets` | 0 errors |
+| `cargo clippy --all-targets -- -D warnings` | 0 warnings |
+| `cargo test` | 134 passed, 0 failed |
+| `tools/gauntlet.sh quick` | all quick layers passed |
+| `tools/smoke.sh` | every one-shot command ran against the fixture |
+
+The suite was run with an old `gh` first on `PATH`, the pre-existing environment assumption in
+`intake::api_tests::setup_uses_a_capable_cli_installed_under_the_state_directory` (open PR #11
+fixes that test to do this itself). Without the shim, only that test fails here, on `30279cb`
+too.
+
+Coverage and mutation were not rerun: no route, response shape or dependency changed, and the
+repository's diff-scoped ledgers are maintained against the last release tag (open PRs #13 and
+#14 already edit those files).
+
+### Honest notes
+
+- **The count reports sessions on disk, including those of ended tickets** — that is what
+  "memory" means in this view. On the live deployment it reads 23 (one orchestrator, 22 workers),
+  not the number of currently running workers.
+- **A running service keeps its live Session objects.** Moving the files is what the next start
+  reads; this was already true of the orchestrator tree and is unchanged. The command is a file
+  move, as its help says.
+- **DSH's directory naming is lossy** (a path separator and a literal `-` produce the same
+  character), so the worker trees are matched by the encoded execution root's prefix. A project
+  directory whose path merely shares that prefix with the configured execution root would be
+  counted too; the deployment's own tree is the case this view exists for.
+- **The configured execution root is read from the service.** With the service down, a profile
+  that moved `executor.directory` outside the state directory counts only the orchestrator tree;
+  the default location is still covered.
+
