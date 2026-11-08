@@ -190,3 +190,70 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
   diff — the kind of fail-open the gauntlet exists to prevent, caught in the gauntlet itself.
 - **Known limit:** `draw_*` and the OAuth success branch remain pty-only; the pty run is recorded
   above but is a person's observation, not an automated layer.
+
+---
+
+## Evidence Report — `/thread` shows the tickets it counts (round 7)
+
+- **Request:** the seventh self-iteration round, which asks for one different real defect, a check
+  run, and a separate PR. The six PRs #12–#17 were out of scope by name.
+- **Source state:** branch `agent/self-iteration-round7-6128d7559fe7`, based on `30279cb`.
+- **Defect:** `format::thread_detail` printed `N subscribed · N pending`, but never the rows.
+  The bundle's `threadDetail` sends `tickets` (a full `ticketLine` per subscription), and the
+  palette says `/thread` shows "timeline, decisions, subscribed tickets". On `30279cb` the view
+  dropped the list and the operator saw only the count.
+- **Before / after:** actual `booth --url http://127.0.0.1:3901 thread 'github:o/r#12'` runs
+  against `dev/mock-api.py`, baseline `30279cb`, changed revision this branch. Only the fixture's
+  `THREAD.tickets` gained the fields the bundle already sends; the before run used that same
+  fixture so the omission is the console's.
+
+```text
+--- before (30279cb)
+tickets       1 subscribed · 0 pending
+
+timeline (1)
+11-04 09:00 爱丽丝           @agent please fix this
+
+--- after (this branch)
+tickets       1 subscribed · 0 pending
+
+tickets (1)
+person  t-7f3a9c2e Fix the flaky retry test  11-04 10:12
+           waiting for your answer on the design
+
+timeline (1)
+11-04 09:00 爱丽丝           @agent please fix this
+```
+
+### Change
+
+- `format::thread_detail` renders a `tickets (N)` section from `ThreadDetail.tickets` using the
+  same rows as `/tickets`, including the note a `person` ticket carries. A thread with no
+  subscriptions keeps the count and gets no empty section.
+- `a_thread_lists_the_tickets_subscribed_to_it` pins both cases, decoding the bundle's JSON shape
+  (a no-subscription thread must not gain a section).
+- `dev/mock-api.py` now sends a full ticket row in the thread detail, matching `ticketLine`
+  instead of the older `id/title/state` subset; this is what made the before capture honest
+  rather than a fixture that could not express the data.
+
+### Checks
+
+| Layer | Result |
+|---|---|
+| `cargo fmt --check` | clean |
+| `cargo check --all-targets` | 0 errors |
+| `cargo clippy --all-targets -- -D warnings` | 0 warnings |
+| `cargo test` | 132 passed, 0 failed (131 before; one new test) |
+| `tools/gauntlet.sh quick` | all quick layers passed |
+| `tools/smoke.sh` | every one-shot command ran against the fixture |
+
+Host note: the suite was run with a deliberately old `gh` first on `PATH`, because
+`setup_uses_a_capable_cli_installed_under_the_state_directory` assumes a host `gh` older than
+2.57. That assumption is present on `30279cb` and is fixed in the open PR #11, not here.
+
+### Not run
+
+- Changed-line coverage, mutation, supply chain and the serial/repeated suite were not rerun: the
+  change is a pure formatter addition with one test and no route, dependency or credential change.
+- The interactive TUI was not driven; `/thread` is one-shot text output and the before/after runs
+  above are the real binary against the fixture.

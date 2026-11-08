@@ -632,6 +632,16 @@ pub fn thread_detail(view: &ThreadDetail) -> Vec<L> {
                 .join(" · "),
         ));
     }
+    // The counts above are not the list: `/thread` promises the subscribed tickets too, and
+    // the bundle sends them, so a thread whose tickets were only counted left the operator
+    // without the one thing needed to open the work.
+    if !view.tickets.is_empty() {
+        lines.push(blank());
+        lines.push(section(format!("tickets ({})", view.tickets.len())));
+        for ticket in &view.tickets {
+            lines.extend(ticket_lines(ticket));
+        }
+    }
     lines.push(blank());
     lines.push(section(format!("timeline ({})", view.timeline.len())));
     for item in &view.timeline {
@@ -805,7 +815,8 @@ pub fn help() -> Vec<L> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{clip, reason, short_at};
+    use super::{clip, reason, short_at, thread_detail};
+    use crate::model::ThreadDetail;
     use serde_json::json;
 
     #[test]
@@ -837,5 +848,67 @@ mod tests {
             reason(&json!([{"code": "said", "values": {"text": "greeting"}}])),
             "greeting"
         );
+    }
+
+    #[test]
+    fn a_thread_lists_the_tickets_subscribed_to_it() {
+        let view: ThreadDetail = serde_json::from_value(json!({
+            "key": "github:o/r#12",
+            "source": "github",
+            "title": "Issue #12 flaky retry",
+            "stage": "subscribed",
+            "subscriptions": 2,
+            "pending": 0,
+            "tickets": [{
+                "id": "t-1",
+                "title": "Fix the flaky retry test",
+                "state": "open",
+                "stage": "person",
+                "action": "answer",
+                "note": "waiting for your answer on the design",
+                "updatedAt": "2026-11-04T10:12:00.000Z"
+            }, {
+                "id": "t-2",
+                "title": "Update the docs",
+                "state": "ended",
+                "stage": "ended",
+                "updatedAt": "2026-11-03T10:12:00.000Z"
+            }],
+            "timeline": [],
+            "decisions": []
+        }))
+        .expect("the bundle's thread view decodes");
+        let shown = thread_detail(&view)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The line the palette promises: each subscribed ticket, not just the count.
+        assert!(shown.contains("tickets (2)"), "{shown}");
+        assert!(shown.contains("person"), "{shown}");
+        assert!(shown.contains("t-1"), "{shown}");
+        assert!(shown.contains("Fix the flaky retry test"), "{shown}");
+        assert!(shown.contains("waiting for your answer"), "{shown}");
+        assert!(shown.contains("t-2"), "{shown}");
+        assert!(shown.contains("Update the docs"), "{shown}");
+
+        // A thread without subscriptions gets no empty section.
+        let empty: ThreadDetail = serde_json::from_value(json!({
+            "key": "github:o/r#13",
+            "source": "github",
+            "title": "A quiet thread",
+            "stage": "unsubscribed",
+            "tickets": [],
+            "timeline": [],
+            "decisions": []
+        }))
+        .unwrap();
+        let shown = thread_detail(&empty)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!shown.contains("tickets ("), "{shown}");
+        assert!(shown.contains("0 subscribed"), "{shown}");
     }
 }
