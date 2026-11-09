@@ -112,6 +112,53 @@ where
     )
 }
 
+/// Why a Source filtered a message, as the reason object `/search` serves for a message that
+/// reached no Thread, or as a plain string from an older route.
+///
+/// The bundle puts `disposition.filtered` on the search hit, and that value is a `Reason`
+/// (`{ "code": …, "values": … }`), not the string this console used to expect. One filtered
+/// message therefore failed the whole search view as `invalid type: map, expected a string`.
+fn filtered_or_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Text(String),
+        Reason {
+            code: String,
+            #[serde(default)]
+            values: BTreeMap<String, Value>,
+        },
+    }
+    Ok(
+        Option::<Raw>::deserialize(deserializer)?.map(|raw| match raw {
+            Raw::Text(text) => text,
+            Raw::Reason { code, values } => {
+                if values.is_empty() {
+                    code
+                } else {
+                    let shown = values
+                        .iter()
+                        .map(|(name, value)| {
+                            format!(
+                                "{name}={}",
+                                value
+                                    .as_str()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| value.to_string())
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{code} ({shown})")
+                }
+            }
+        }),
+    )
+}
+
 #[cfg(test)]
 mod note_tests {
     use super::{TicketDetail, TicketRow};
@@ -467,7 +514,9 @@ pub struct SearchItem {
     pub preview: String,
     /// The thread's title, when the bundle could name it.
     pub thread_title: Option<String>,
-    /// Why a Source filtered the message, when it did not reach a thread.
+    /// Why a Source filtered the message, when it did not reach a thread: the bundle's reason
+    /// object, or a plain string from an older route.
+    #[serde(default, deserialize_with = "filtered_or_text")]
     pub filtered: Option<String>,
     /// The rest of the served view, not rendered here but still printed by `--json`.
     #[serde(flatten)]
@@ -486,6 +535,59 @@ pub struct SearchView {
 mod tests {
     use super::SearchView;
     use serde_json::json;
+
+    #[test]
+    fn a_filtered_search_hit_decodes_the_reason_object_the_bundle_sends() {
+        // A Source-filtered message has no Thread, so `search()` puts the disposition's
+        // `Reason` object in the hit's `filtered`; treating it as a string made the whole
+        // view fail as `invalid type: map, expected a string`.
+        let served = json!({
+            "tickets": [],
+            "threads": [],
+            "items": [{
+                "id": "e9",
+                "source": "feishu",
+                "human": true,
+                "preview": "hello",
+                "filtered": { "code": "chat_not_allowed", "values": { "chat": "oc_other" } }
+            }, {
+                "id": "e10",
+                "source": "feishu",
+                "human": true,
+                "preview": "hi",
+                "filtered": { "code": "not_a_member" }
+            }]
+        });
+        let view: SearchView =
+            serde_json::from_value(served).expect("a filtered search hit decodes");
+        assert_eq!(
+            view.items[0].filtered.as_deref(),
+            Some("chat_not_allowed (chat=oc_other)")
+        );
+        assert_eq!(view.items[1].filtered.as_deref(), Some("not_a_member"));
+    }
+
+    #[test]
+    fn an_older_filtered_search_hit_string_still_decodes() {
+        // The fixture and routes before the structured Reason sent the sentence as one string.
+        let served = json!({
+            "tickets": [],
+            "threads": [],
+            "items": [{
+                "id": "e9",
+                "source": "github",
+                "human": true,
+                "preview": "hello",
+                "filtered": "sender is not on the allow-list"
+            }]
+        });
+        let view: SearchView =
+            serde_json::from_value(served).expect("a textual filter reason decodes");
+        assert_eq!(
+            view.items[0].filtered.as_deref(),
+            Some("sender is not on the allow-list")
+        );
+    }
 
     #[test]
     fn a_search_item_keeps_the_served_fields_this_view_does_not_render() {
