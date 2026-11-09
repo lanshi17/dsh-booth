@@ -13,11 +13,15 @@ import re
 import subprocess
 import sys
 
-# Source files whose changed lines this branch means to cover.
-EXCLUDES = "tools/coverage_excludes.txt"
+# Source files whose changed lines this branch means to cover: the whole source tree, not a
+# list of today's modules. A list silently ignores a module the branch adds, which is exactly
+# the unchecked code this gate exists to find. The test-only fixture is compiled into the test
+# binary, not the product.
+WATCHED = "src"
+TEST_ONLY = "src/testkit.rs"
 
-WATCHED = ("src/intake.rs", "src/service.rs", "src/app.rs", "src/commands.rs", "src/provider.rs",
-           "src/oauth.rs", "src/gh.rs", "src/format.rs", "src/main.rs", "src/api.rs", "src/model.rs")
+# Listed misses and their reasons, one `<file>:<line> <reason>` per line.
+EXCLUDES = "tools/coverage_excludes.txt"
 
 
 def default_base() -> str:
@@ -31,7 +35,7 @@ def default_base() -> str:
 def changed_lines(base: str) -> dict[str, set[int]]:
     """Line numbers this branch added, per file, from a zero-context diff."""
     diff = subprocess.run(
-        ["git", "diff", "--unified=0", base, "--", *WATCHED],
+        ["git", "diff", "--unified=0", base, "--", WATCHED],
         capture_output=True, text=True, check=False,
     )
     if diff.returncode != 0:
@@ -49,7 +53,8 @@ def changed_lines(base: str) -> dict[str, set[int]]:
                 continue
             start, count = int(match.group(1)), int(match.group(2) or 1)
             changed[current].update(range(start, start + count))
-    return {name: lines for name, lines in changed.items() if lines and name.endswith(".rs")}
+    return {name: lines for name, lines in changed.items()
+            if lines and name.endswith(".rs") and name != TEST_ONLY}
 
 
 def executable_and_covered(
