@@ -128,57 +128,55 @@ impl Archive {
         }
     }
 
-    /// Unpack only `member` from `archive`, landing it at `<state>/bin/gh`.
-    fn unpack(self, archive: &Path, member: &str, state_dir: &Path) -> Result<(), String> {
-        fs::create_dir_all(state_dir)
-            .map_err(|error| format!("cannot create {}: {error}", state_dir.display()))?;
+    /// The tool that reads this format, named on `PATH` and in its errors.
+    fn program(self) -> &'static str {
         match self {
-            Self::TarGz => {
-                // The archive holds gh_<version>_<target>/bin/gh; stripping its top directory
-                // lands it at `<state>/bin/gh`, beside other files the service owns.
-                let status = Command::new("tar")
-                    .args(["-xzf"])
-                    .arg(archive)
-                    .args(["-C"])
-                    .arg(state_dir)
-                    .args(["--strip-components", "1", member])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .map_err(|error| format!("cannot run tar: {error}"))?;
-                if !status.success() {
-                    return Err(format!("tar could not unpack {member}"));
-                }
-                Ok(())
-            }
-            Self::Zip => {
-                // `unzip -p` writes the member to stdout, so only the binary is unpacked instead
-                // of the release's manual pages and license. The write is renamed into place
-                // afterwards, so a failed unpack cannot leave a half-written CLI behind.
-                let bin = state_dir.join("bin");
-                fs::create_dir_all(&bin)
-                    .map_err(|error| format!("cannot create {}: {error}", bin.display()))?;
-                let partial = bin.join(format!("gh-{}.partial", std::process::id()));
-                let file = fs::File::create(&partial)
-                    .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
-                let status = Command::new("unzip")
-                    .arg("-p")
-                    .arg(archive)
-                    .arg(member)
-                    .stdout(Stdio::from(file))
-                    .stderr(Stdio::null())
-                    .status()
-                    .map_err(|error| format!("cannot run unzip: {error}"))?;
-                if !status.success() {
-                    let _ = fs::remove_file(&partial);
-                    return Err(format!("unzip could not unpack {member}"));
-                }
-                fs::rename(&partial, bin.join("gh")).map_err(|error| {
-                    format!("cannot move {} into place: {error}", partial.display())
-                })?;
-                Ok(())
-            }
+            Self::TarGz => "tar",
+            Self::Zip => "unzip",
         }
+    }
+
+    /// Unpack only `member` from `archive`, landing it at `<state>/bin/gh`.
+    ///
+    /// Both formats write only that member to stdout, so the CLI lands in a partial file that is
+    /// renamed into place afterwards. An extraction that fails partway — a full disk, an
+    /// interrupted `/setup` — therefore cannot leave a truncated CLI where the Source would run
+    /// it, and a re-install cannot truncate the binary it is replacing.
+    fn unpack(self, archive: &Path, member: &str, state_dir: &Path) -> Result<(), String> {
+        let bin = state_dir.join("bin");
+        fs::create_dir_all(&bin)
+            .map_err(|error| format!("cannot create {}: {error}", bin.display()))?;
+        let partial = bin.join(format!("gh-{}.partial", std::process::id()));
+        let file = fs::File::create(&partial)
+            .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
+        let mut command = Command::new(self.program());
+        match self {
+            // `tar -O` and `unzip -p` stream the named member instead of the whole archive.
+            Self::TarGz => command.args(["-xOzf"]),
+            Self::Zip => command.args(["-p"]),
+        };
+        let status = command
+            .arg(archive)
+            .arg(member)
+            .stdout(Stdio::from(file))
+            .stderr(Stdio::null())
+            .status();
+        if !matches!(status, Ok(ref status) if status.success()) {
+            let _ = fs::remove_file(&partial);
+            let why = status.map_or_else(|e| e.to_string(), |s| s.to_string());
+            return Err(format!(
+                "{} could not unpack {member}: {why}",
+                self.program()
+            ));
+        }
+        if let Err(error) = fs::rename(&partial, bin.join("gh")) {
+            let _ = fs::remove_file(&partial);
+            return Err(format!(
+                "cannot move {} into place: {error}",
+                partial.display()
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -528,6 +526,52 @@ mod tests {
     }
 
     #[test]
+    fn a_truncated_tar_archive_leaves_no_half_written_cli() {
+        // The published checksum rules out a bad download, but not an extraction that stops
+        // partway: a full disk or an interrupted `/setup` makes `tar` fail after it has written
+        // part of the member. That truncated file must not stay where the pinned CLI belongs.
+        let root = scratch("truncated");
+        let target = "linux_amd64";
+        let top = format!("gh_{VERSION}_{target}");
+        let bin = root.join(&top).join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        // Incompressible bytes, so halving the archive cuts through the member itself.
+        let mut seed = 0x1234_5678u32;
+        let body: Vec<u8> = (0..(1 << 20))
+            .map(|_| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (seed >> 24) as u8
+            })
+            .collect();
+        fs::write(bin.join("gh"), &body).unwrap();
+        let archive = root.join(format!("{top}.tar.gz"));
+        let packed = Command::new("tar")
+            .args(["-czf"])
+            .arg(&archive)
+            .args(["-C"])
+            .arg(&root)
+            .arg(&top)
+            .status()
+            .unwrap();
+        assert!(packed.success(), "cannot pack the fixture");
+        let whole = fs::read(&archive).unwrap();
+        fs::write(&archive, &whole[..whole.len() / 2]).unwrap();
+
+        let state = root.join("state");
+        let member = format!("gh_{VERSION}_{target}/bin/gh");
+        let error = Archive::TarGz
+            .unpack(&archive, &member, &state)
+            .unwrap_err();
+        assert!(error.contains("tar could not unpack"), "{error}");
+        assert!(!state.join("bin").join("gh").exists(), "{error}");
+        assert!(
+            fs::read_dir(state.join("bin")).unwrap().next().is_none(),
+            "a failed unpack leaves no partial binary"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
     fn a_binary_that_cannot_be_moved_into_place_is_reported() {
         let root = scratch("rename");
         let (asset, _) = fixture(&root, "macOS_arm64", Archive::Zip);
@@ -539,6 +583,13 @@ mod tests {
             .unpack(&root.join(&asset), &member, &state)
             .unwrap_err();
         assert!(error.contains("cannot move"), "{error}");
+        assert!(
+            !state
+                .join("bin")
+                .join(format!("gh-{}.partial", std::process::id()))
+                .exists(),
+            "a failed move leaves no partial binary"
+        );
         fs::remove_dir_all(&root).ok();
     }
 
