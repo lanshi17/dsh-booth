@@ -27,7 +27,7 @@ type Puts = Arc<Mutex<Vec<(String, Value)>>>;
 pub struct FakeApi {
     pub base: String,
     pub settings: Arc<Mutex<Value>>,
-    /// Statuses to return for the next PUTs, one per call, before answering normally.
+    /// Statuses to return for the next accepted PUTs, in queued order, before answering normally.
     pub failures: Arc<Mutex<Vec<(u16, String)>>>,
     /// How many `/state` answers to refuse before the service "comes back".
     pub state_failures: Remaining,
@@ -126,7 +126,8 @@ impl FakeApi {
         routes.push((path.to_owned(), body));
     }
 
-    /// Makes the next `times` PUTs fail with `status` and `message`.
+    /// Makes the next `times` accepted PUTs fail with `status` and `message`, in the order
+    /// queued; a PUT the same-origin guard refuses does not consume one.
     pub fn fail_next_puts(&self, times: usize, status: u16, message: &str) {
         let mut failures = self.failures.lock().unwrap();
         for _ in 0..times {
@@ -230,19 +231,20 @@ fn serve(
                 })
             });
 
-            // A queued failure answers this PUT instead of the normal handler. Only a PUT pops
-            // one: a GET must not swallow a failure meant for the save that follows it.
-            let forced: Option<(u16, String)> = if method == "PUT" {
-                failures.lock().ok().and_then(|mut queue| queue.pop())
-            } else {
-                None
-            };
+            // A queued failure answers the next accepted PUT instead of the normal handler. It
+            // is taken only after the guard lets the request through, since a refused request
+            // never reaches the service and must not swallow the failure meant for the save
+            // that follows; and it is taken from the front, in the order the test queued it.
             let (status, payload) = if !guarded {
                 (
                     403,
                     json!({ "error": "Same-origin management request required" }),
                 )
             } else if method == "PUT" {
+                let forced = failures
+                    .lock()
+                    .ok()
+                    .and_then(|mut queue| (!queue.is_empty()).then(|| queue.remove(0)));
                 match forced {
                     Some((status, message)) => (status, json!({ "error": message })),
                     None => {
@@ -387,5 +389,44 @@ mod tests {
         let response = raw(&api.base, &save_policy(Some("1"), body));
         assert_eq!(status(&response), 200, "{response}");
         assert_eq!(api.put_count(), 1);
+    }
+
+    #[test]
+    fn queued_put_failures_answer_in_the_order_they_were_queued() {
+        let api = FakeApi::start();
+        let body = r#"{"value":{"note":"a save"},"revision":0}"#;
+        api.fail_next_puts(1, 409, "the first conflict");
+        api.fail_next_puts(1, 400, "the second refusal");
+
+        let first = raw(&api.base, &save_policy(Some("1"), body));
+        let second = raw(&api.base, &save_policy(Some("1"), body));
+        let third = raw(&api.base, &save_policy(Some("1"), body));
+
+        assert_eq!(status(&first), 409, "{first}");
+        assert_eq!(status(&second), 400, "{second}");
+        assert_eq!(status(&third), 200, "{third}");
+        assert_eq!(
+            api.put_count(),
+            1,
+            "only the save that answered normally is recorded"
+        );
+    }
+
+    #[test]
+    fn a_request_the_guard_refuses_does_not_consume_a_queued_failure() {
+        let api = FakeApi::start();
+        let body = r#"{"value":{"note":"a save"},"revision":0}"#;
+        api.fail_next_puts(1, 503, "restarting");
+
+        let refused = raw(&api.base, &save_policy(None, body));
+        let save = raw(&api.base, &save_policy(Some("1"), body));
+
+        assert_eq!(status(&refused), 403, "{refused}");
+        assert_eq!(
+            status(&save),
+            503,
+            "the queued failure belongs to the first accepted save: {save}"
+        );
+        assert_eq!(api.put_count(), 0);
     }
 }
