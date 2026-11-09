@@ -41,6 +41,8 @@ REASONS = {
     "service_start": "spawns the service, so a unit test cannot reach it",
     "show_provider": "its only effect is printing; the lines it prints are tested through provider_lines",
     "run": "the CLI dispatcher, reached only through `main`",
+    # The exchange answers only over the network.
+    "exchange": "asks platform.deepseek.com; a unit test must not open that socket",
     # Assertions that only run when they fail.
     "the_model_picker_opens_on_the_current_choice": "assertion failure message",
     "the_picker_moves_both_ways_and_stops_at_the_ends": "assertion failure message",

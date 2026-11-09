@@ -172,7 +172,19 @@ impl Api {
     }
 
     pub fn sources(&self) -> Result<Vec<SourceStatus>, ApiError> {
-        self.get_as("/sources")
+        let mut value = self.get("/sources")?;
+        // A Source kind may report its title as a plain string, as channel labels did before the
+        // localized pair (see `Link::label`), and one such Source must not hide every Source.
+        if let Some(items) = value.as_array_mut() {
+            for item in items {
+                if let Some(title) = item.get_mut("title") {
+                    if let Some(text) = title.as_str() {
+                        *title = json!({ "zh": text, "en": text });
+                    }
+                }
+            }
+        }
+        serde_json::from_value(value).map_err(|error| ApiError::Protocol(error.to_string()))
     }
 
     pub fn search(&self, query: &str) -> Result<SearchView, ApiError> {
@@ -242,11 +254,34 @@ pub fn enc(segment: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use super::enc;
+    use super::{enc, Api};
+    use crate::testkit::FakeApi;
+    use serde_json::json;
 
     #[test]
     fn encodes_path_separators_but_not_ids() {
         assert_eq!(enc("t-abc_1.2~x"), "t-abc_1.2~x");
         assert_eq!(enc("github:o/r#12"), "github%3Ao%2Fr%2312");
+    }
+
+    #[test]
+    fn a_textual_source_title_is_a_label_not_a_protocol_error() {
+        let service = FakeApi::start();
+        service.routes.lock().unwrap().push((
+            "/sources".to_owned(),
+            json!([
+                // The fixture and older Source kinds name a title as one string.
+                { "id": "github", "kind": "github", "title": "GitHub",
+                  "enabled": true, "installed": true, "health": [] },
+                { "id": "feishu", "kind": "feishu", "title": { "zh": "飞书", "en": "Feishu" },
+                  "enabled": false, "installed": true, "health": [] }
+            ]),
+        ));
+        let sources = Api::new(&service.base)
+            .sources()
+            .expect("one textual title must not hide every source");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].title.text(), "GitHub");
+        assert_eq!(sources[1].title.text(), "飞书");
     }
 }

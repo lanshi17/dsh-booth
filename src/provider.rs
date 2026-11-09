@@ -227,7 +227,13 @@ fn write_ref(name: &str, secret: &str) -> Result<(), String> {
     let mut root: Value = match fs::read_to_string(&path) {
         Ok(text) => serde_norway::from_str(&text)
             .map_err(|error| format!("cannot parse {}: {error}", path.display()))?,
-        Err(_) => json!({ "version": 1, "refs": {}, "records": {} }),
+        // Only an absent file is a fresh store. Any other read failure — an unreadable mode, a
+        // truncated write, an I/O error — must not read as "empty": the write below would then
+        // replace the shared file and take every other ref and DSH's records with it.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            json!({ "version": 1, "refs": {}, "records": {} })
+        }
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
     if !root.is_object() {
         root = json!({ "version": 1, "refs": {}, "records": {} });
@@ -297,7 +303,8 @@ pub const APIS: &[&str] = &["openai-completions", "openai-responses"];
 ///
 /// Providers used to live in `<state>/provider.json` with their keys, and the service got them
 /// through a `--patch` overlay. Both are gone; this moves what the file still holds into the
-/// profile layer and the credential refs, then renames it so the migration runs once.
+/// profile layer and the credential refs, keeps the provider it marked `current`, then renames it
+/// so the migration runs once.
 pub fn migrate(cfg: &Config) -> Result<Vec<String>, String> {
     let legacy = cfg.state_dir.join("provider.json");
     let text = match fs::read_to_string(&legacy) {
@@ -307,6 +314,11 @@ pub fn migrate(cfg: &Config) -> Result<Vec<String>, String> {
     let value: Value = serde_json::from_str(&text)
         .map_err(|error| format!("cannot parse {}: {error}", legacy.display()))?;
     let mut moved = Vec::new();
+    let current = value
+        .get("current")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut chosen = None;
     for entry in value
         .get("providers")
         .and_then(Value::as_array)
@@ -320,6 +332,11 @@ pub fn migrate(cfg: &Config) -> Result<Vec<String>, String> {
         if key.is_empty() {
             continue;
         }
+        let model = entry
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         add_endpoint(
             cfg,
             &Endpoint {
@@ -339,15 +356,19 @@ pub fn migrate(cfg: &Config) -> Result<Vec<String>, String> {
                     .and_then(Value::as_str)
                     .unwrap_or("openai-completions")
                     .to_owned(),
-                model: entry
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
+                model: model.clone(),
                 key: key.to_owned(),
             },
         )?;
+        if current.as_deref() == Some(id) {
+            chosen = Some((id.to_owned(), model));
+        }
         moved.push(id.to_owned());
+    }
+    // `add_endpoint` makes each provider the default as it registers it, so the old file's
+    // `current` has to be restored after the loop or the last entry silently wins.
+    if let Some((id, model)) = chosen {
+        set_default(cfg, &id, &model)?;
     }
     // The overlay a `booth up` from an earlier version passed is no longer read.
     let _ = fs::remove_file(cfg.state_dir.join("provider.yml"));
@@ -491,6 +512,34 @@ mod tests {
         let root: Value = serde_norway::from_str(&text).unwrap();
         assert_eq!(root["refs"]["A_KEY"], "secret");
         assert_eq!(root["version"], 1);
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn a_credentials_file_it_cannot_read_is_not_replaced() {
+        // The shared store holds DSH's own refs and records, including the account grant. A
+        // read failure is not an empty store: rewriting it would drop all of that.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let path = cfg.dsh_home.join(".credentials.yaml");
+        fs::write(
+            &path,
+            "version: 1\nrefs:\n  KEEP_ME: keep\nrecords:\n  deepseek/grant:\n    kind: grant\n    payload:\n      token: t\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        // Readable by no one, writable by its owner: reading fails, rewriting would succeed.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o200)).unwrap();
+        let error = write_ref("NEW_KEY", "n").unwrap_err();
+        assert!(error.contains("cannot read"), "{error}");
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["refs"]["KEEP_ME"], "keep", "the other refs survive");
+        assert_eq!(root["records"]["deepseek/grant"]["payload"]["token"], "t");
+        assert!(root["refs"].get("NEW_KEY").is_none(), "no key was written");
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
     }
 
@@ -679,6 +728,37 @@ mod migration_tests {
             !cfg.patch().exists(),
             "nothing is written when there is nothing to move"
         );
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn migration_keeps_the_provider_that_was_current() {
+        // The old file named the provider the service ran with; moving every entry must not
+        // quietly leave the last one as the default.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        fs::write(
+            cfg.state_dir.join("provider.json"),
+            r#"{"current":"first","providers":[
+                {"id":"first","base":"https://first.example","api":"openai-completions","model":"m-first","key":"k1"},
+                {"id":"second","base":"https://second.example","api":"openai-completions","model":"m-second","key":"k2"}
+            ]}"#,
+        )
+        .unwrap();
+
+        let moved = migrate(&cfg).unwrap();
+        assert_eq!(moved, vec!["first".to_owned(), "second".to_owned()]);
+
+        let patch = Patch::read(&cfg).unwrap();
+        let default = &patch.get("agent-default-model").unwrap()["config"];
+        assert_eq!(default["provider"], "first", "the old current wins");
+        assert_eq!(default["model"], "m-first");
+        // Both providers are still registered.
+        let providers = &patch.get("llm-pi-ai").unwrap()["config"]["providers"];
+        assert!(providers.get("first").is_some(), "{providers}");
+        assert!(providers.get("second").is_some(), "{providers}");
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
     }
 }
