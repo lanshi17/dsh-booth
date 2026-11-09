@@ -152,16 +152,8 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         println!("the booth console Source is not linked into the profile; run `booth init` to install it");
     }
 
-    fs::create_dir_all(&cfg.state_dir)
-        .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
-    let log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(cfg.log())
-        .map_err(|error| format!("cannot open {}: {error}", cfg.log().display()))?;
-    let errors = log
-        .try_clone()
-        .map_err(|error| format!("cannot open the log twice: {error}"))?;
+    create_private_state_dir(cfg)?;
+    let (log, errors) = open_log(cfg)?;
 
     // No `--patch` and no injected keys: the profile's own layer is where models live, so the
     // service starts with exactly the configuration the web panel and the profile share.
@@ -215,6 +207,46 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         }
         sleep(Duration::from_millis(400));
     }
+}
+
+/// Creates the state directory, and keeps it private.
+///
+/// The directory holds the database, the message files and the service log; the log carries the
+/// web panel's access token (see `open_log`). `create_dir_all` uses the umask, so a new directory
+/// is normally world-traversable, and a directory created by an earlier booth keeps its mode.
+fn create_private_state_dir(cfg: &Config) -> Result<(), String> {
+    fs::create_dir_all(&cfg.state_dir)
+        .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&cfg.state_dir, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("cannot keep {} private: {error}", cfg.state_dir.display()))?;
+    }
+    Ok(())
+}
+
+/// Opens the service log, and the second handle dsh's stderr is redirected to.
+///
+/// The service prints its web panel URL, including the access token, while it starts; the log
+/// therefore holds a credential and must stay private. The file is created by this call, but an
+/// earlier booth or a hand-made log keeps whatever mode it had, so it is tightened every time.
+fn open_log(cfg: &Config) -> Result<(fs::File, fs::File), String> {
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cfg.log())
+        .map_err(|error| format!("cannot open {}: {error}", cfg.log().display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        log.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("cannot keep {} private: {error}", cfg.log().display()))?;
+    }
+    let errors = log
+        .try_clone()
+        .map_err(|error| format!("cannot open the log twice: {error}"))?;
+    Ok((log, errors))
 }
 
 pub fn stop(cfg: &Config) -> Result<(), String> {
@@ -991,6 +1023,53 @@ mod tests {
         assert!(start(&cfg).is_ok());
         // The stale pid file is cleared first, then the answering service is reported.
         assert!(!cfg.pid().exists(), "a stale pid file is removed");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_state_directory_is_private_even_when_it_already_existed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cfg = config("state-private");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        fs::set_permissions(&cfg.state_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        create_private_state_dir(&cfg).unwrap();
+        let mode = fs::metadata(&cfg.state_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "the state directory holds the database and the messages"
+        );
+
+        // A directory this run creates is private from the start, whatever the umask says.
+        fs::remove_dir_all(&cfg.state_dir).unwrap();
+        create_private_state_dir(&cfg).unwrap();
+        let mode = fs::metadata(&cfg.state_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "a fresh state directory is private");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_service_log_is_private_even_when_it_already_existed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cfg = config("log-private");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        // A log written by an earlier booth (or by hand) is group/world-readable; opening it for
+        // the next start must not leave the token-bearing file that way.
+        fs::write(cfg.log(), "old line\n").unwrap();
+        fs::set_permissions(cfg.log(), fs::Permissions::from_mode(0o644)).unwrap();
+
+        drop(open_log(&cfg).unwrap());
+        let mode = fs::metadata(cfg.log()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the service log holds the web token");
+
+        // A log this run creates is private from the start, whatever the umask says.
+        fs::remove_file(cfg.log()).unwrap();
+        drop(open_log(&cfg).unwrap());
+        let mode = fs::metadata(cfg.log()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "a fresh service log is private");
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
     }
 
