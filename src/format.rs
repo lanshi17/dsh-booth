@@ -551,6 +551,19 @@ pub fn ticket_detail(view: &TicketDetail) -> Vec<L> {
             delivered,
             clip(&body, 100)
         )));
+        // An input can be delivered and still have been handed back by this ticket: the bundle
+        // keeps the worker's reason beside the trigger. Without it the text view looks as if the
+        // message simply went to the worker, hiding what happened to it.
+        if let Some(reason) = input
+            .trigger
+            .as_ref()
+            .and_then(|trigger| trigger.handback.as_ref())
+            .and_then(|handback| handback.get("reason"))
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty())
+        {
+            lines.push(muted(format!("      handed back: {}", clip(reason, 100))));
+        }
     }
     if !view.threads.is_empty() {
         lines.push(blank());
