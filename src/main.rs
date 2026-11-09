@@ -135,7 +135,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Search tickets, threads and triggers.
+    /// Search tickets, threads and messages.
     Search {
         query: String,
         #[arg(long)]
