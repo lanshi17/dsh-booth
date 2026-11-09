@@ -1,0 +1,10 @@
+/workspace/
+/sessions/
+/target/
+/mutants/
+/*-events.jsonl
+/*-stderr.log
+/parent-harness-target/
+/parent-mutant-target-*/
+/__pycache__/
+/output/*/mutants/

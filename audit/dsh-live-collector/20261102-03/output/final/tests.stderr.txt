@@ -1,0 +1,11 @@
+   Compiling btae-eval v0.1.0 (/tmp/codex-forge-dsh-live-20261102/btae-eval)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.12s
+     Running unittests src/lib.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/btae_eval-1b8e4aba1ccf8696)
+     Running unittests src/main.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/btae_eval-71f1720792616372)
+     Running unittests src/bin/fixture_worker.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/btae_fixture_worker-0099ab80857e7771)
+     Running unittests src/bin/dsh_json_fixture.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/dsh_json_fixture-851bfd6a6f719396)
+     Running tests/cli.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/cli-70be1c94c6a91903)
+     Running tests/dsh_adapter.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/dsh_adapter-c84a1c654bd740c1)
+     Running tests/dsh_live.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/dsh_live-f7e93969be72f38e)
+     Running tests/invariants.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/invariants-6a1ee2cf9f8b3d70)
+     Running tests/runner.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/deps/runner-ae1468981de1d78d)

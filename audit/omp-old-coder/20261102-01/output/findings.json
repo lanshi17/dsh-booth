@@ -1,0 +1,108 @@
+{
+  "review": {
+    "phase": "blind (phase 1)",
+    "round": 1,
+    "date": "2026-11-02",
+    "source_state": {
+      "tree_sha256": "46d6c1801a41010f5bf5af249b0477c4dfdbd1fe6042e05c5c5fb52c6720c0c1",
+      "verified_before_and_after": true,
+      "verification_command": "python3 gauntlet.py --verify-only",
+      "files": 55,
+      "origin": "btae-eval untracked working source snapshot; Git HEAD does not describe these files"
+    },
+    "freshness": {
+      "task_context": "Only TASK-CONTRACT.md, SPEC.md, source-state.json and gauntlet.py were read as task inputs before results; protocol files instructions/SKILL.md, instructions/verifier.md, instructions/gauntlet.md read first as required.",
+      "no_prior_evidence": true,
+      "no_builder_conversation": true,
+      "spec_approval": "not obtained (retrospective autonomous SPEC declares this)",
+      "candidate_modified": false
+    },
+    "environment": {
+      "rustc": "1.95.0 (59807616e 2026-04-14)",
+      "cargo": "1.95.0 (f2d3ce0bd 2026-03-21)",
+      "python": "3.14.4",
+      "network": "offline",
+      "installs": "none",
+      "candidate_target_dir": "audit/target (outside frozen workspace)"
+    }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "class": "missing-assurance",
+      "severity_proposal": "low",
+      "file": "src/dsh.rs",
+      "lines": "958-962",
+      "symbol": "compute_step_usage reasoning/output subset check",
+      "trigger": "step_end usage {outputTokens:5, reasoningTokens:5, totalTokens:10}; reasoning == output is legal per DSH-ADAPTER.md ('reasoningTokens <= outputTokens').",
+      "observed": "Frozen candidate accepts and returns status=Complete (correct). Mutant m1 ('reasoning > output' -> 'reasoning >= output') rejects the same valid input with DshError::Usage('reasoningTokens exceeds outputTokens at event 4').",
+      "expected": "A behavioral regression that rejects reasoning == output should be killed by a test. It survives the full 54-test suite.",
+      "command": "copy to mutants/m1; sed one line; CARGO_TARGET_DIR=mutants/target-m1 cargo test --offline --all-targets -- --test-threads=4 (54 passed); mutants/target-m1/debug/examples/probe 1",
+      "impact": "The equality boundary of the reasoning-subset invariant is unpinned; a future off-by-one makes valid DSH usage fail closed and no test notices. Existing tests only cover reasoning > output (tests/dsh_adapter.rs:295-299) and reasoning < output.",
+      "status": "mutant survived; candidate behavior itself correct at this boundary"
+    },
+    {
+      "id": "F2",
+      "class": "missing-assurance",
+      "severity_proposal": "low",
+      "file": "src/dsh.rs",
+      "lines": "434-441",
+      "symbol": "DshAdapter::feed_inner total-bytes limit",
+      "trigger": "A valid session-only transcript of exactly max_total_bytes (35 bytes) with max_total_bytes=35.",
+      "observed": "Frozen candidate accepts (OK, bytes=35). Mutant m2 ('total > max' -> 'total >= max') rejects it with TotalBytesLimit. Mutant survives the full 54-test suite.",
+      "expected": "The inclusive limit boundary should be pinned by a test; the suite only tests 6 bytes against a 5-byte limit (tests/dsh_adapter.rs:349-357), never exact equality.",
+      "command": "copy to mutants/m2; one-line mutation; cargo test --offline --all-targets (54 passed); mutants/target-m2/debug/examples/probe 2",
+      "impact": "A boundary change that rejects a transcript exactly at the documented 16 MiB limit would silently break real maximal transcripts with no test failure.",
+      "status": "mutant survived; candidate behavior itself correct at this boundary"
+    },
+    {
+      "id": "F3",
+      "class": "missing-assurance",
+      "severity_proposal": "low-medium",
+      "file": "src/dsh.rs",
+      "lines": "885-887",
+      "symbol": "DshAdapter::on_status Phase::TurnEnd open-step guard",
+      "trigger": "session, turn_start, step_start(step=1), then turn_end(completed) with no step_end; EOF, finish(Some(0)).",
+      "observed": "Frozen candidate errors: 'dsh event 4 violates the transcript protocol: turn_end while a step is open'. Mutant m3 (delete the guard) returns Ok(completed=false, steps 0/1). Mutant survives the full 54-test suite.",
+      "expected": "The documented protocol order rule (turn_end while a step is open is rejected) should be pinned; no test contains turn_end with an open step (grep of tests/dsh_adapter.rs).",
+      "command": "copy to mutants/m3; delete 3-line guard; cargo test --offline --all-targets (54 passed); mutants/target-m3/debug/examples/probe 3",
+      "impact": "The fail-closed protocol check is unprotected. A regression would downgrade a hard error to an incomplete-but-Ok summary, changing the caller-visible API contract (Err vs Ok) for malformed transcripts.",
+      "status": "mutant survived; candidate behavior itself correct"
+    },
+    {
+      "id": "F4",
+      "class": "description",
+      "severity_proposal": "low",
+      "file": "src/dsh.rs",
+      "lines": "37-41",
+      "symbol": "USAGE_SCHEMA doc comment",
+      "trigger": "In-turn event {\"type\":\"thinking\",\"payload\":{\"newField\":1}} (also tool_call/tool_result/trace/tool) with an unknown field.",
+      "observed": "Accepted and counted; no error. The doc comment says 'A transcript that adds unknown event, status, session or usage fields is rejected rather than silently reinterpreted under a newer schema.'",
+      "expected": "Either reject unknown fields on every event type, or scope the sentence to status/session/usage and text/final (which use deny_unknown_fields).",
+      "command": "harness/src/bin/main.rs P3 (thinking with payload) and existing probe runs; dsh.rs:685-708 match arms count opaque events without field validation",
+      "impact": "The schema claim overstates fail-closed coverage for opaque event payloads; a newer DSH adding fields inside thinking/tool payloads is silently accepted while the doc implies rejection. DSH-ADAPTER.md is accurate ('opaque: only count'), so this is a source-comment description defect, not a behavioral defect.",
+      "status": "description mismatch; no candidate behavior change proposed by reviewer"
+    }
+  ],
+  "mutants": [
+    {"id": "m1", "file": "src/dsh.rs", "mutation": "reasoning > output  ->  reasoning >= output", "divergence_input": "usage {outputTokens:5,reasoningTokens:5,totalTokens:10}", "original_result": "OK completed=true status=Complete", "mutant_result": "ERR reasoningTokens exceeds outputTokens at event 4", "tests_run": "cargo test --offline --all-targets (54 tests)", "outcome": "SURVIVED"},
+    {"id": "m2", "file": "src/dsh.rs", "mutation": "total > max_total_bytes  ->  total >= max_total_bytes", "divergence_input": "session line of exactly 35 bytes, limit 35", "original_result": "OK bytes=35", "mutant_result": "ERR exceeds the 35-byte total limit", "tests_run": "cargo test --offline --all-targets (54 tests)", "outcome": "SURVIVED"},
+    {"id": "m3", "file": "src/dsh.rs", "mutation": "delete 'turn_end while a step is open' guard", "divergence_input": "session,turn_start,step_start, turn_end without step_end", "original_result": "ERR protocol: turn_end while a step is open", "mutant_result": "OK completed=false status=Unknown steps=0/1", "tests_run": "cargo test --offline --all-targets (54 tests)", "outcome": "SURVIVED"}
+  ],
+  "limits_and_untested": [
+    "Line/branch coverage: UNAVAILABLE (cargo llvm-cov/llvm-tools not installed; per SPEC not installed).",
+    "Fuzzing/property-based tooling: UNAVAILABLE. SUBSTITUTED by deterministic probes: bytewise vs whole-chunk equality, CRLF split across chunks, nesting depths 10/127/200/2000, boundary lengths.",
+    "Randomized test order: UNAVAILABLE on stable Rust (no cargo nextest shuffle / --shuffle). Not run; order dependence unassessed.",
+    "Tool-based mutation (cargo-mutants/mutmut): UNAVAILABLE; manual mutants used and each divergence proven.",
+    "Version matrix: UNAVAILABLE (single rustc 1.95.0; rust-version 1.85 not exercised).",
+    "Dependency audit: N/A (no dependency changes in candidate; Cargo.lock frozen in manifest). Capability review done by grep: dsh.rs contains no std::process/std::env/Command/File/fs/Tcp.",
+    "Cross-model/agent verification: not used (forbidden); human grading not obtained.",
+    "Optional canary: not requested and not run.",
+    "Real DSH CLI 0.2.1-rc.3 was not executed; only the two sanitized frozen fixtures. Other DSH versions/fixtures untested.",
+    "Opaque payload semantics (thinking/tool/trace) are counted but never validated; semantic correctness of those events is untested by design.",
+    "text_sha256 is SHA256 of concatenated text payloads without event-boundary encoding: two different event splits ('ab'+'c' vs 'a'+'bc') produce the same digest (observed ba7816bf...). Not reported as a finding because the doc says 'concatenated'; callers must not treat it as transcript identity.",
+    "No performance budget stated or tested; no concurrency surface in this module.",
+    "gauntlet.py checker scope: verifies frozen manifest and four fixed layers; it has no coverage/mutation/property layer and is not a full Tier 3 assurance claim. Negative control: gauntlet.verify({}) raises 'frozen source manifest mismatch' (fail-closed observed).",
+    "Mutants and probes live only under audit/mutants and audit/harness; the frozen candidate was re-hashed after all runs (46d6c180...)."
+  ]
+}

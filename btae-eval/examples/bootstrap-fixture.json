@@ -1,0 +1,22 @@
+[
+  {
+    "repository": "synthetic-0",
+    "treatment": 0.7,
+    "baseline": 0.6
+  },
+  {
+    "repository": "synthetic-1",
+    "treatment": 0.71,
+    "baseline": 0.61
+  },
+  {
+    "repository": "synthetic-2",
+    "treatment": 0.72,
+    "baseline": 0.62
+  },
+  {
+    "repository": "synthetic-3",
+    "treatment": 0.73,
+    "baseline": 0.63
+  }
+]

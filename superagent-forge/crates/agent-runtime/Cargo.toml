@@ -1,0 +1,27 @@
+[package]
+name = "forge-agent-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "forge-fake-worker"
+path = "src/bin/fake_worker.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-domain = { path = "../domain" }
+forge-agent-backend = { path = "../agent-backend" }
+forge-agent-protocol = { path = "../agent-protocol" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+forge-worktree = { path = "../worktree" }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

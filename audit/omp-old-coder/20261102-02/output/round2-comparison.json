@@ -1,0 +1,114 @@
+{
+  "phase": "round2-phase2-evidence-comparison",
+  "not_a_fresh_review": true,
+  "sealed_hashes": {
+    "output/ROUND2-BLIND.md": "981ae68354b69cf829b037c04fcf817197d97a514de1ae2643aecd4ee816286a",
+    "output/round2-findings.json": "df2a0cf1eb14dd82247eb8ea33a2fff3d52d3d2905f046eefd4f167e16017202",
+    "verified_against_seal": true,
+    "unchanged": true
+  },
+  "manifest": {
+    "files": 53,
+    "tree_recomputed": "eee74ab153cc739b0855e1613b19bc9c846ed0f83700d66abbc7cfb610554f70",
+    "tree_declared": "eee74ab153cc739b0855e1613b19bc9c846ed0f83700d66abbc7cfb610554f70",
+    "match": true
+  },
+  "late_input": {
+    "file": "TASK-CONTRACT.md",
+    "mtime": "2026-11-02 16:48:36 +0800",
+    "blind_read_time": "~2026-11-02 16:48:16 +0800",
+    "status": "not found during blind",
+    "limitation": "blind contract-vs-spec review cannot be restored; retrospective check only"
+  },
+  "claims": [
+    {
+      "claim": "source tree",
+      "draft": "eee74ab153cc739b0855e1613b19bc9c846ed0f83700d66abbc7cfb610554f70",
+      "blind": "same",
+      "match": true
+    },
+    {
+      "claim": "tests layer exit",
+      "draft": 0,
+      "blind": 0,
+      "match": true,
+      "blind_counts": "57 passed, 0 failed"
+    },
+    {
+      "claim": "lint layer exit",
+      "draft": 0,
+      "blind": 0,
+      "match": true
+    },
+    {
+      "claim": "format layer exit",
+      "draft": 0,
+      "blind": 0,
+      "match": true
+    },
+    {
+      "claim": "readiness exit",
+      "draft": 1,
+      "expected": 1,
+      "blind": 1,
+      "match": true
+    },
+    {
+      "claim": "manual mutants",
+      "draft": "3/3 KILLED, exit 101, named tests",
+      "blind": "3/3 independently rerun with isolated target dirs, same tests/panic lines",
+      "match": true
+    },
+    {
+      "claim": "mutant hashes",
+      "draft": [
+        "c540fc132e0ac1aaac928322b37842ddd76b78103cea4b97873555d5d9e298e3",
+        "f049f9ae59758fe2aa94c91f6c972a8d6f51a337913b993246e3181a2207297e",
+        "61358a88538ac550666451699b8149c65314e97fb5217f9cc7f692697659ef41"
+      ],
+      "blind": "identical",
+      "match": true
+    },
+    {
+      "claim": "assurance scope",
+      "draft": "full_old_coder_assurance false; formal_pilot NOT_RUN; listed limits",
+      "blind": "same limits plus non-equivalent survivor",
+      "match": true
+    },
+    {
+      "claim": "bounded test-gap claim",
+      "draft": "only 3 chosen mutants; no coverage/fuzz/random/min-Rust/approval",
+      "blind": "confirmed",
+      "match": true
+    }
+  ],
+  "manifest_path_difference": {
+    "draft_run_id": "0db19e70fb42",
+    "blind_run_id": "895188b66901",
+    "reason": "output-dir-derived run id",
+    "is_mismatch": false
+  },
+  "contract_spec_retrospective": {
+    "match": true,
+    "mapping": "contract three pins + opaque comment = SPEC S1-S4; prohibitions and autonomous no-approval match",
+    "blind_gap_repaired": false
+  },
+  "findings": [
+    {
+      "id": "F-R2-1",
+      "status": "open",
+      "class": "missing coverage / behavioural boundary untested",
+      "detail": "src/dsh.rs:613 >->>= survives 57/57; divergence proven max_line_bytes=5 feed(b\"12345\"); builder plans test after phase",
+      "draft_overclaims_this": false
+    }
+  ],
+  "human_spec_approval": false,
+  "human_finding_grading": false,
+  "verdict": {
+    "bounded_claims_match": true,
+    "global_pass": false,
+    "full_protocol": "blocked/incomplete",
+    "final_changed_state": "not performed at two-round cap",
+    "tier3_guarantee": false
+  }
+}

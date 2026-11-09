@@ -1,0 +1,72 @@
+{
+  "status": "ADAPTER_ACCEPTED_AFTER_PARENT_CORRECTION_EMPIRICAL_STUDY_NOT_RUN",
+  "date": "2026-11-02",
+  "task": "BTAE-DSH-ADAPTER-01",
+  "profile": "headless",
+  "cli_version": "0.2.1-rc.3",
+  "provider_configuration": "ark / deepseek-v4.1-flash",
+  "immutable_model_revision_verified": false,
+  "development_dispatches": [
+    {
+      "stage": "smoke",
+      "exit_code": 0,
+      "normal_cli_completion": true
+    },
+    {
+      "stage": "R0 implementation",
+      "exit_code": 0,
+      "normal_cli_completion": true,
+      "acceptance": "CHANGES_REQUESTED"
+    },
+    {
+      "stage": "R1 correction",
+      "exit_code": 124,
+      "timeout_seconds": 600,
+      "normal_cli_completion": false,
+      "parser_result": "REJECTED final before turn_end at event 356"
+    }
+  ],
+  "parent_correction": "R2 checks known token lower bounds even when usage is partial; source/tests/docs corrected after worker exit",
+  "tests": {
+    "project_passed": 54,
+    "existing_tests": 31,
+    "adapter_tests": 23,
+    "independent_local_probes_passed": 16,
+    "clippy": "PASS -D warnings",
+    "fmt_check": "PASS",
+    "check_ready_exit": 1
+  },
+  "usage_provenance": "dsh_cli_self_reported",
+  "billing_verified": false,
+  "r0_development_usage": {
+    "uncached_input": 92414,
+    "cache_read": 1779072,
+    "all_input": 1871486,
+    "output": 45968,
+    "total": 1917454
+  },
+  "scope": "Offline pure Rust parser and tests only; no DSH SDK/runtime product dependency, no live runner integration, no dataset/readiness/Cargo changes",
+  "research": {
+    "formal_five_arm_runs": 0,
+    "ablation_runs": 0,
+    "readiness": "BLOCKED / DRAFT"
+  },
+  "evidence_directory": "../../audit/btae-dsh-dispatch/20261102-01",
+  "evidence_sha256": {
+    "smoke-events.jsonl": "f4e24e2e57ea2e828b53ebb9f0e620c2032b0debd7e7b092e99ff37efcd90197",
+    "task-events.jsonl": "7ea82a81da9f96a57d816e38fadae9e0baa2ce74860ac29d67addfac90d7f580",
+    "revision-r1-events.jsonl": "abcd3a5735a6397191a5650cde9f9efb6e5ba76c7f4e92f395879cca60d976ae",
+    "task.md": "4a386425c21b543f1ca7e17e0037d27bbcc3b0ad878201fe29a78274897fc7e4",
+    "revision-r1-task.md": "af3bbc2adca80b76344f521ebef1e3f79fa3aced7bf9747753a572707be8de44",
+    "baseline.json": "a822ebd363807afeca0f6e05c80c41366be5044180e8cb3e1164023b9c9fc5f7",
+    "import-manifest.json": "d57a49e14b793c0f8a2706c119c73a2aa692c34803d3899236ec7cf0457a0d32",
+    "usage-schema-evidence.json": "978204d90d90acc64b9769166d774db3bff2af0156e4750763e87b221a5787b3",
+    "final-checks.json": "9ddb848869d58f2749c15898761a450021e0bbab98049af7126e5aa402d2a24e",
+    "final-test.stdout.txt": "b8afd7b9da137dba13a7c8fcc56ed4c6d524f3d726117d889a0106470ce61871",
+    "final-test.stderr.txt": "01c3c72f393cdd254f8603624ee29401e8f52259d0d06bd217e6237c41cf94bd",
+    "final-clippy.stderr.txt": "f7f7ecdff9e617923e7e048fc383d573f771d4679f2c7756fd2ce7d5a53235c7",
+    "final-fmt.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "independent-imported.stdout.txt": "9655a0aa8a0319a622207e4d4aa04446baa5ea0641883b6b202cac75243504d7",
+    "independent-imported.stderr.txt": "340b8d94d273d2d93b33fb40a67fe7f6dd360c00efd9e9685a113a9c99fd8176"
+  }
+}

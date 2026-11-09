@@ -1,0 +1,23 @@
+[package]
+name = "forge-application"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-domain = { path = "../domain" }
+forge-identity = { path = "../identity" }
+forge-persistence = { path = "../persistence" }
+forge-review = { path = "../review" }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+forge-identity = { path = "../identity" }
+forge-review = { path = "../review" }
+tempfile = { workspace = true }
+uuid = { workspace = true }

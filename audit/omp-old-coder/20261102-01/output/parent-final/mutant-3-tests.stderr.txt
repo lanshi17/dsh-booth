@@ -1,0 +1,49 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling version_check v0.9.5
+   Compiling generic-array v0.14.7
+   Compiling typenum v1.20.1
+   Compiling syn v3.0.9
+   Compiling serde_core v1.0.229
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle v1.0.14
+   Compiling zmij v1.0.23
+   Compiling anstyle-query v1.1.5
+   Compiling cfg_aliases v0.2.2
+   Compiling libc v0.2.191
+   Compiling colorchoice v1.0.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstream v1.0.0
+   Compiling nix v0.29.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling thiserror v2.0.21
+   Compiling heck v0.5.0
+   Compiling strsim v0.11.1
+   Compiling serde v1.0.229
+   Compiling cfg-if v1.0.5
+   Compiling serde_json v1.0.154
+   Compiling clap_lex v1.1.1
+   Compiling clap_derive v4.6.7
+   Compiling clap_builder v4.6.7
+   Compiling digest v0.10.7
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling cpufeatures v0.2.17
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+   Compiling bitflags v2.13.2
+   Compiling sha2 v0.10.9
+   Compiling clap v4.6.7
+   Compiling btae-eval v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/output/parent-final/mutants/m3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 7.65s
+     Running unittests src/lib.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/deps/btae_eval-14835d8b54919317)
+     Running unittests src/main.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/deps/btae_eval-feaeda711d86ba59)
+     Running unittests src/bin/fixture_worker.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/deps/btae_fixture_worker-f5da27525ed29cbe)
+     Running tests/cli.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/deps/cli-9e36e94c8b18dde5)
+     Running tests/dsh_adapter.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/deps/dsh_adapter-1dab5d246214cd74)
+     Running tests/invariants.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/deps/invariants-2883992c3680c207)
+     Running tests/runner.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/deps/runner-55d8ae554a4b5294)
+     Running unittests examples/probe.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-mutant-target-3/debug/examples/probe-a1afdf7b0cd64a85)
