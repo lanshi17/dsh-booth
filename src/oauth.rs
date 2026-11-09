@@ -9,7 +9,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -273,18 +273,39 @@ fn store_grant(token: &str, device: &str) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
+    replace_store(&path, &text)
+}
+
+/// Replace the shared store in one step. DSH and the other booth commands read this file too, so
+/// it must never be visible half-written: truncating it in place and then writing leaves a window
+/// where a crash, a full disk or a concurrent reader sees a truncated store. Stage the whole text
+/// as a sibling with exclusive create and the credential mode, then rename it over the store,
+/// which commits atomically on one filesystem. The staged name is removed on either outcome; a
+/// failed install leaves the old store exactly as it was.
+fn replace_store(path: &Path, text: &str) -> Result<(), String> {
+    let staged = path.with_file_name(format!(
+        "{}.{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        uuid_v4()
+    ));
+    let installed = write_staged(&staged, text).and_then(|()| fs::rename(&staged, path));
+    // On success the rename consumed the staged name and this is the harmless ENOENT; otherwise
+    // it clears the half-written sibling so no partial store outlives the failure.
+    let _ = fs::remove_file(&staged);
+    installed.map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+/// Write the complete replacement to a fresh inode. An exclusive create refuses a file already at
+/// the staged name, and the credential mode is set before the rename, so the replacement is never
+/// wider than the store it replaces.
+fn write_staged(staged: &Path, text: &str) -> std::io::Result<()> {
     let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(&path)
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    file.write_all(text.as_bytes())
-        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    // An existing file keeps its own mode through `mode()`, so tighten it explicitly.
-    fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("cannot restrict {}: {error}", path.display()))
+        .open(staged)?;
+    file.write_all(text.as_bytes())?;
+    fs::set_permissions(staged, fs::Permissions::from_mode(0o600))
 }
 
 fn device_id() -> Result<String, String> {
@@ -554,6 +575,46 @@ mod tests {
         assert_eq!(root["records"]["keep/me"]["kind"], "grant");
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "kept-token");
         assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "kept-device");
+
+        restore_dsh_home(previous);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The store DSH and the other booth commands share must never be truncated in place. A
+    /// directory it cannot stage a replacement in still lets its existing file be rewritten, so
+    /// the refusal has to happen before the old bytes are touched.
+    #[test]
+    fn a_store_it_cannot_stage_is_left_intact() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-staging-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join(".credentials.yaml");
+        std::fs::write(
+            &path,
+            format!(
+                "version: 1\nrecords:\n  keep/me:\n    kind: grant\n    payload: {{}}\n  {GRANT_KEY}:\n    kind: grant\n    payload:\n      token: kept-token\n  {DEVICE_KEY}:\n    kind: grant\n    payload:\n      id: kept-device\n"
+            ),
+        )
+        .unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+        use std::os::unix::fs::PermissionsExt;
+        // The file stays writable by its owner; only the directory cannot take a sibling.
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let error = store_grant("tok-new", "device-2").unwrap_err();
+        assert!(error.contains("cannot write"), "{error}");
+
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["records"]["keep/me"]["kind"], "grant");
+        assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "kept-token");
+        assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "kept-device");
+        let siblings: Vec<_> = std::fs::read_dir(&home)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(siblings, [".credentials.yaml"], "a staged sibling survived");
 
         restore_dsh_home(previous);
         std::fs::remove_dir_all(&home).ok();
