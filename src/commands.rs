@@ -37,6 +37,12 @@ pub const PALETTE: &[(&str, &str)] = &[
     ("/stop <id>", "withdraw a ticket's mandate"),
     ("/retry <id>", "start a fresh assignment"),
     (
+        "/requeue <id>",
+        "put a dropped or unavailable instruction back",
+    ),
+    ("/dismiss <id>", "dismiss a problem the overview lists"),
+    ("/unsubscribe <key>", "drop a thread's subscriptions"),
+    (
         "/eval [mode]",
         "off | observe | auto — what may start without a person",
     ),
@@ -305,6 +311,29 @@ mod tests {
         assert_eq!(query("/ticket abc"), "ticket");
         assert_eq!(query("TiCk"), "tick");
         assert_eq!(query("/"), "");
+    }
+
+    #[test]
+    fn help_and_the_palette_list_the_control_commands() {
+        // The table is what `format::help` prints and what the completer searches. A command the
+        // grammar runs but the table omits is neither documented by /help nor reachable by Tab,
+        // even though the README lists it among the commands and `/agents` points at /requeue.
+        let help: String = format::help()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for command in ["/requeue", "/dismiss", "/unsubscribe"] {
+            assert!(
+                help.contains(command),
+                "{command} missing from /help:\n{help}"
+            );
+            let names: Vec<&str> = matches(command).iter().map(|(name, _)| *name).collect();
+            assert!(
+                names.iter().any(|name| name.starts_with(command)),
+                "{command} not in the palette: {names:?}"
+            );
+        }
     }
 
     #[test]
