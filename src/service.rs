@@ -218,6 +218,14 @@ pub fn start(cfg: &Config) -> Result<(), String> {
 }
 
 pub fn stop(cfg: &Config) -> Result<(), String> {
+    stop_with_timeout(cfg, STOP_TIMEOUT)
+}
+
+/// Stops the service, giving it `timeout` to exit after SIGTERM before forcing it.
+///
+/// The timeout is a parameter so a test can reproduce the pid-reuse window below in a fraction of
+/// a second instead of paying the whole `STOP_TIMEOUT`.
+fn stop_with_timeout(cfg: &Config, timeout: Duration) -> Result<(), String> {
     let Some(pid) = read_pid(cfg) else {
         return Err("no pid file — the service was not started by booth".into());
     };
@@ -235,8 +243,14 @@ pub fn stop(cfg: &Config) -> Result<(), String> {
         ));
     }
     signal(pid, "TERM")?;
-    let deadline = Instant::now() + STOP_TIMEOUT;
-    while alive(pid) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        // The pid is not the identity: while this waits, the service can exit and the kernel can
+        // hand the pid to an unrelated program. Only a process that still carries this profile's
+        // command line may be signalled — the check keeps the SIGKILL below off a reused pid.
+        if !is_service(pid, &cfg.profile) {
+            break;
+        }
         if Instant::now() > deadline {
             signal(pid, "KILL")?;
             break;
@@ -975,6 +989,103 @@ mod tests {
         // The process is still there and the pid file is left for the operator to inspect.
         assert!(alive(me));
         assert!(cfg.pid().exists());
+    }
+
+    /// Runs `body` in a process whose command line looks like this profile's service, and touches
+    /// `ready` once `body` has installed its trap. The body can then replace the image, which is
+    /// how a pid is handed to another program without the kernel reusing it.
+    fn fake_service(cfg: &Config, name: &str, body: &str) -> (std::process::Child, PathBuf) {
+        let dir = cfg.state_dir.join("fake-service");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join(name);
+        let ready = dir.join("ready");
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/bash\n{body}\ntouch '{}'\nwhile :; do sleep 0.05; done\n",
+                ready.display()
+            ),
+        )
+        .unwrap();
+        let child = Command::new("bash")
+            .args([
+                "-c",
+                &format!(
+                    "exec -a node /bin/bash '{}' --profile superagent",
+                    script.display()
+                ),
+            ])
+            .spawn()
+            .expect("bash");
+        for _ in 0..100 {
+            if ready.exists() {
+                break;
+            }
+            sleep(Duration::from_millis(20));
+        }
+        assert!(ready.exists(), "the fake service did not become ready");
+        (child, dir)
+    }
+
+    /// Waits up to two seconds for a killed child to be reaped, then reports whether it is gone.
+    fn reaped(child: &mut std::process::Child, pid: u32) -> bool {
+        for _ in 0..100 {
+            if child.try_wait().unwrap().is_some() {
+                return !alive(pid);
+            }
+            sleep(Duration::from_millis(20));
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        false
+    }
+
+    #[test]
+    fn stop_leaves_a_pid_the_service_handed_to_another_program() {
+        // The service exits on TERM and its pid starts naming an unrelated program before the
+        // timeout. Only a process still carrying the service command line may be forced, so the
+        // program that inherited the pid must survive.
+        let cfg = config("stop-reused-pid");
+        let (mut child, dir) = fake_service(
+            &cfg,
+            "reused.sh",
+            "trap 'exec -a booth-innocent /bin/sleep 30' TERM",
+        );
+        let pid = child.id();
+        fs::write(cfg.pid(), pid.to_string()).unwrap();
+        let outcome = stop_with_timeout(&cfg, Duration::from_millis(400));
+        // SIGKILL takes effect asynchronously, so give a killed child time to become the zombie
+        // that `try_wait` reports. The helper sleeps longer than this on its own.
+        sleep(Duration::from_millis(200));
+        let survived = child.try_wait().unwrap().is_none();
+        let removed = !cfg.pid().exists();
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(survived, "the program that reused the pid was killed");
+        assert!(removed, "the pid file is cleared once the service is gone");
+    }
+
+    #[test]
+    fn stop_forces_a_service_that_ignores_term() {
+        // The identity check must not turn into a refusal to stop: a service that stays put past
+        // the timeout is still the same process and is killed.
+        let cfg = config("stop-force");
+        let (mut child, dir) = fake_service(&cfg, "ignore.sh", "trap '' TERM");
+        let pid = child.id();
+        fs::write(cfg.pid(), pid.to_string()).unwrap();
+        let outcome = stop_with_timeout(&cfg, Duration::from_millis(300));
+        let gone = reaped(&mut child, pid);
+        let removed = !cfg.pid().exists();
+        let _ = fs::remove_dir_all(&dir);
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert!(
+            gone,
+            "a service that ignores TERM is killed at the deadline"
+        );
+        assert!(removed);
     }
 
     #[test]
