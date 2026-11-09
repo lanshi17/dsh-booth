@@ -19,7 +19,9 @@ ROW = {
 THREAD = {
  "key":"github:o/r#12","source":"github","title":"Issue #12 flaky retry","stage":"subscribed",
  "lastAt":"2026-11-04T10:12:00.000Z","createdAt":"2026-11-03T08:00:00.000Z","subscriptions":1,"pending":0,
- "tickets":[{"id":ROW["id"],"title":ROW["title"],"state":"open"}],
+ # The bundle sends the full ticket row here, not just id/title/state: /thread shows the
+ # subscribed tickets with their stage, note and timestamp.
+ "tickets":[dict(ROW)],
  "latest":{"actor":{"source":"github","id":"alice","name":{"zh":"爱丽丝","en":"Alice"}},"human":True,"at":"2026-11-04T10:12:00.000Z","preview":"What about option B?"},
  "url":"https://github.com/o/r/issues/12",
 }
