@@ -67,8 +67,12 @@ pub fn version(program: &Path) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// The pinned release's path. It is handed to the Source, which runs it from its own working
+/// directory (the bundle's), so a state directory named relative to `/setup`'s directory is
+/// resolved here instead of leaking a path that would not exist for the service.
 fn installed(cfg: &service::Config) -> PathBuf {
-    cfg.state_dir.join("bin").join("gh")
+    let local = cfg.state_dir.join("bin").join("gh");
+    std::path::absolute(&local).unwrap_or(local)
 }
 
 /// The CLI the Source should use: `None` for the `gh` on PATH, or the path of a pinned release.
@@ -293,6 +297,27 @@ mod tests {
             "#!/bin/sh\necho 'gh version 2.63.2 (2024-12-05)'\n",
         );
         assert_eq!(version(&gh).as_deref(), Some("2.63.2"));
+    }
+
+    #[test]
+    fn a_selected_cli_is_absolute_even_from_a_relative_state_directory() {
+        // The Source runs the selected CLI from its own working directory (the bundle's), not
+        // from where `/setup` ran, so a state directory named relative to the caller must not
+        // reach it as a relative path.
+        let mut cfg = crate::service::Config {
+            profile: "test".into(),
+            port: 0,
+            dsh_home: PathBuf::from("home"),
+            state_dir: PathBuf::from("booth-state"),
+            bundle: PathBuf::from("bundle"),
+        };
+        let local = installed(&cfg);
+        assert!(local.is_absolute(), "{local:?}");
+        assert!(local.ends_with("booth-state/bin/gh"), "{local:?}");
+
+        // An absolute state directory already names what the Source can run.
+        cfg.state_dir = PathBuf::from("/var/lib/booth");
+        assert_eq!(installed(&cfg), PathBuf::from("/var/lib/booth/bin/gh"));
     }
 
     #[test]
