@@ -166,8 +166,28 @@ fn health_color(state: &str) -> Color {
     }
 }
 
+/// What an open `person` ticket waits for, or a queued `working` ticket. The bundle splits the
+/// stage into `stage` plus `action` (docs/003): printing only the stage made every `person`
+/// ticket look alike and called a ticket the executor had not started `working`.
+fn status_label<'a>(stage: &'a str, action: Option<&'a str>) -> &'a str {
+    match (stage, action) {
+        ("person", Some(action)) => action,
+        ("working", Some("queued")) => "queued",
+        _ => stage,
+    }
+}
+
+fn status_color(stage: &str, action: Option<&str>) -> Color {
+    match (stage, action) {
+        ("person", Some("failed")) => stage_color("error"),
+        ("working", Some("queued")) => stage_color("idle"),
+        _ => stage_color(stage),
+    }
+}
+
 pub fn ticket_line(ticket: &TicketRow) -> L {
     let id: String = ticket.id.chars().take(10).collect();
+    let status = status_label(&ticket.stage, ticket.action.as_deref());
     let at = ticket
         .updated_at
         .as_deref()
@@ -175,8 +195,8 @@ pub fn ticket_line(ticket: &TicketRow) -> L {
         .unwrap_or_default();
     let mut spans = vec![
         span(
-            format!("{:<8}", ticket.stage),
-            Style::default().fg(stage_color(&ticket.stage)),
+            format!("{status:<9}"),
+            Style::default().fg(status_color(&ticket.stage, ticket.action.as_deref())),
         ),
         span(format!("{id:<10} "), Style::default().fg(Color::DarkGray)),
         span(clip(&ticket.title, 64), Style::default()),
@@ -414,12 +434,13 @@ pub fn ticket_list(view: &Page<TicketRow>, state: &str) -> Vec<L> {
 }
 
 pub fn ticket_detail(view: &TicketDetail) -> Vec<L> {
+    let status = status_label(&view.stage, view.action.as_deref());
     let mut lines = vec![
         section(clip(&view.title, 90)),
         Line::from(vec![
             span(
-                format!("{:<8}", view.stage),
-                Style::default().fg(stage_color(&view.stage)),
+                format!("{status:<9}"),
+                Style::default().fg(status_color(&view.stage, view.action.as_deref())),
             ),
             span(
                 format!("{} ", view.state),
@@ -880,10 +901,9 @@ pub fn help() -> Vec<L> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{clip, reason, short_at, thread_detail, SearchView};
-    use crate::model::ThreadDetail;
+    use super::{clip, reason, short_at, thread_detail, ticket_detail, ticket_list, SearchView};
+    use crate::model::{Page, ThreadDetail, TicketDetail, TicketRow};
     use serde_json::json;
-
     #[test]
     fn clips_by_characters_not_bytes() {
         assert_eq!(clip("ab", 4), "ab");
@@ -904,6 +924,45 @@ mod tests {
         assert_eq!(short_at("1234567890T01😀"), "1234567890T01😀");
         // The fallback counts characters, so a long non-ASCII value truncates at 16 of them.
         assert_eq!(short_at(&"中".repeat(20)), "中".repeat(16));
+    }
+
+    #[test]
+    fn a_ticket_status_names_what_it_waits_for() {
+        // The bundle sends a `person` stage with the action that asks for a person, and
+        // `working` with `queued` before a slot starts it (docs/003). Those actions were
+        // decoded but never printed: a queued ticket read as working, and a review showed
+        // as a plain `person` row with no note, like an unanswered question.
+        let rows: Page<TicketRow> = serde_json::from_value(json!({
+            "total": 6,
+            "items": [
+                {"id": "t-review", "title": "Review it", "state": "open", "stage": "person", "action": "review"},
+                {"id": "t-queued", "title": "Start it", "state": "open", "stage": "working", "action": "queued"},
+                {"id": "t-answer", "title": "Answer it", "state": "open", "stage": "person", "action": "answer"},
+                {"id": "t-delivery", "title": "Deliver it", "state": "open", "stage": "person", "action": "delivery"},
+                {"id": "t-working", "title": "Running", "state": "open", "stage": "working"},
+                {"id": "t-person", "title": "Old shape", "state": "open", "stage": "person"}
+            ]
+        }))
+        .expect("the bundle's ticket list decodes");
+        let shown: Vec<String> = ticket_list(&rows, "open")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(shown[1].starts_with("review   t-review"), "{shown:?}");
+        assert!(shown[2].starts_with("queued   t-queued"), "{shown:?}");
+        assert!(shown[3].starts_with("answer   t-answer"), "{shown:?}");
+        // `delivery` is the longest action: the column still leaves a space before the id.
+        assert!(shown[4].starts_with("delivery t-delivery"), "{shown:?}");
+        // Without an action the stage is still the only thing to show.
+        assert!(shown[5].starts_with("working  t-working"), "{shown:?}");
+        assert!(shown[6].starts_with("person   t-person"), "{shown:?}");
+
+        let detail: TicketDetail = serde_json::from_value(json!({
+            "id": "t-review", "title": "Review it", "state": "open", "stage": "person", "action": "review"
+        }))
+        .expect("the bundle's ticket detail decodes");
+        let header = ticket_detail(&detail)[1].to_string();
+        assert!(header.starts_with("review   open"), "{header:?}");
     }
 
     #[test]
