@@ -1999,7 +1999,10 @@ impl App {
         }
 
         let height = body.height.max(1);
-        let total = self.lines.len() as u16;
+        // Scroll by what the paragraph actually renders, not by structural lines: a long line
+        // wraps into several rows, and counting it once would stop short of the newest row.
+        let transcript = Paragraph::new(self.lines.clone()).wrap(Wrap { trim: false });
+        let total = transcript.line_count(body.width).min(usize::from(u16::MAX)) as u16;
         let max_scroll = total.saturating_sub(height);
         if self.follow {
             self.scroll = max_scroll;
@@ -2019,12 +2022,7 @@ impl App {
                 self.catalog.default.is_none() && !self.status.account,
             );
         } else {
-            frame.render_widget(
-                Paragraph::new(self.lines.clone())
-                    .wrap(Wrap { trim: false })
-                    .scroll((self.scroll, 0)),
-                body,
-            );
+            frame.render_widget(transcript.scroll((self.scroll, 0)), body);
         }
 
         self.draw_composer(frame, top, bottom);
@@ -3374,6 +3372,34 @@ mod editor_tests {
             app.lines[0].to_string().contains("line 200"),
             "{}",
             app.lines[0]
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn following_the_bottom_shows_the_newest_wrapped_rows() {
+        use ratatui::backend::TestBackend;
+
+        let (mut app, dir, _env) = editor("wrapped-scroll");
+        app.follow = true;
+        // Each logical line wraps across several terminal rows, so a scroll offset counted in
+        // logical lines stops short of the true bottom and hides what just arrived.
+        for index in 0..6 {
+            app.push(Line::from(format!("line {index} {}", "x".repeat(120))));
+        }
+        app.push(Line::from("the newest line ends here TAIL"));
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let shown: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            shown.contains("TAIL"),
+            "following the bottom keeps the newest wrapped rows on screen:\n{shown}"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
