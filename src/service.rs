@@ -98,6 +98,17 @@ pub fn init(cfg: &Config) -> Result<(), String> {
     tool("dsh", "--version", "install DSH first")?;
     tool("pnpm", "--version", "install pnpm first")?;
 
+    // DSH creates the profile under its home, but the command below runs *from* that home. On a
+    // machine that never ran DSH — or with a fresh `DSH_HOME` — the directory does not exist yet,
+    // and the spawn would fail with a bare "No such file or directory" that blames `dsh` instead
+    // of the missing home. Create it first; the state directory below lives under it too.
+    fs::create_dir_all(&cfg.dsh_home).map_err(|error| {
+        format!(
+            "cannot create the DSH home {}: {error}",
+            cfg.dsh_home.display()
+        )
+    })?;
+
     if !cfg.profile_dir().exists() {
         println!("\ncreating profile `{}` from the web template", cfg.profile);
         run(
@@ -1038,6 +1049,93 @@ mod tests {
         // The stale pid file is cleared first, then the answering service is reported.
         assert!(!cfg.pid().exists(), "a stale pid file is removed");
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn init_creates_a_missing_dsh_home_before_running_dsh() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _env = crate::testkit::env_lock();
+        let root = std::env::temp_dir().join(format!("booth-init-home-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("superagent")).unwrap();
+        fs::create_dir_all(root.join("local-source")).unwrap();
+        fs::write(root.join("local-source").join("index.js"), "").unwrap();
+        let cfg = Config {
+            profile: "superagent".into(),
+            port: 3082,
+            dsh_home: root.join("home"), // a machine that never ran DSH
+            state_dir: root.join("state"),
+            bundle: root.join("superagent"),
+        };
+        // What `dsh --from-default-profile web --dump-config` leaves behind: the manifest the
+        // rest of init reads when it links the two bundles.
+        let manifest = root.join("manifest.json");
+        fs::write(&manifest, r#"{"dsh":{"profile":{"bundles":[]}}}"#).unwrap();
+
+        // A fake DSH records the directory it was run from and creates the profile there. The
+        // command below cannot even be spawned unless init created the home first, so the record
+        // is the assertion: on a missing home the process never starts.
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let ran = root.join("dsh-ran");
+        let dsh = bin.join("dsh");
+        fs::write(
+            &dsh,
+            format!(
+                "#!/bin/sh\n\
+                 case \"$1\" in\n\
+                   --version) exit 0 ;;\n\
+                 esac\n\
+                 if [ \"$2\" = \"--from-default-profile\" ]; then\n\
+                   here=$(pwd -P)\n\
+                   printf '%s' \"$here\" > '{ran}'\n\
+                   mkdir -p \"$here/profiles/{profile}\"\n\
+                   cp '{manifest}' \"$here/profiles/{profile}/package.json\"\n\
+                 fi\n\
+                 exit 0\n",
+                ran = ran.display(),
+                manifest = manifest.display(),
+                profile = cfg.profile,
+            ),
+        )
+        .unwrap();
+        let pnpm = bin.join("pnpm");
+        fs::write(&pnpm, "#!/bin/sh\nexit 0\n").unwrap();
+        for tool in [&dsh, &pnpm] {
+            fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let saved = std::env::var_os("PATH");
+        let mut paths = vec![bin];
+        if let Some(saved) = &saved {
+            paths.extend(std::env::split_paths(saved));
+        }
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+
+        let outcome = init(&cfg);
+
+        // Restore the machine's PATH before asserting: a failed expectation must not leak into
+        // the tests that spawn programs by name while this one runs.
+        match saved {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(
+            fs::canonicalize(fs::read_to_string(&ran).unwrap()).unwrap(),
+            fs::canonicalize(&cfg.dsh_home).unwrap(),
+            "dsh runs from a home that now exists"
+        );
+        assert!(cfg.patch().is_file(), "the profile layer is written");
+        let layers = fs::read_to_string(cfg.patch()).unwrap();
+        assert!(layers.contains("dsh-superagent"), "{layers}");
+        let manifest = fs::read_to_string(cfg.profile_dir().join("package.json")).unwrap();
+        assert!(manifest.contains("dsh-booth-local"), "{manifest}");
+        assert!(cfg.state_dir.is_dir(), "the state directory is created");
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[cfg(unix)]
