@@ -223,16 +223,25 @@ fn finish(response: Result<ureq::Response, ureq::Error>) -> Result<Value, ApiErr
             .map_err(|error| ApiError::Protocol(error.to_string())),
         Err(ureq::Error::Status(code, response)) => {
             let body = response.into_string().unwrap_or_default();
-            let message = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .unwrap_or(body);
-            Err(ApiError::Status(code, message))
+            let message = serde_json::from_str::<Value>(&body).ok().and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
+            match (code, message) {
+                // Every 404 dsh-superagent itself writes carries `{"error": …}`, including an
+                // unknown operation. A 404 without one is the DSH web server's fallback for a
+                // route whose owner has not registered yet (it starts listening first), so the
+                // management API is absent rather than answering "not found".
+                (404, None) => Err(ApiError::Transport(
+                    "the management API is not mounted yet; the service is starting or \
+                     restarting, or --url points at another server"
+                        .into(),
+                )),
+                (_, Some(message)) => Err(ApiError::Status(code, message)),
+                (_, None) => Err(ApiError::Status(code, body)),
+            }
         }
         Err(ureq::Error::Transport(error)) => Err(ApiError::Transport(error.to_string())),
     }
