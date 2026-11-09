@@ -5,7 +5,8 @@ Global coverage is vanity; the constraint is that the diff is exercised. Lines a
 `git diff <base> --unified=0` and the coverage report from `cargo llvm-cov --json`.
 
 Fails closed: a missing report, an unreadable diff, or a source file the report does not
-mention is a failure, never a pass.
+mention is a failure, never a pass. A run that completed prints its summary, which is how
+`ledger.py` tells findings (it may rewrite the ledger) from a measurement that never happened.
 """
 import json
 import re
@@ -51,20 +52,27 @@ def changed_lines(base: str) -> dict[str, set[int]]:
     return {name: lines for name, lines in changed.items() if lines and name.endswith(".rs")}
 
 
-def executable_and_covered(report_path: str) -> tuple[set, set]:
-    """Line -> ran in a test, keyed by the repo-relative path.
+def executable_and_covered(
+        report_path: str) -> tuple[set[tuple[str, int]], set[tuple[str, int]], set[str]]:
+    """Executable lines, covered lines, and the files the report names.
 
     The report names files absolutely while a diff names them relatively, so the suffix is what
     both can agree on. A segment is `[line, col, count, has_count, is_region_entry, is_gap]`;
     only a region entry is executable code, and a gap region on the same line is not.
     """
-    with open(report_path) as handle:
-        report = json.load(handle)
+    try:
+        with open(report_path) as handle:
+            report = json.load(handle)
+    except (OSError, json.JSONDecodeError) as error:
+        print(f"cannot read the coverage report {report_path}: {error}")
+        sys.exit(1)
     executable: set[tuple[str, int]] = set()
     covered: set[tuple[str, int]] = set()
+    mentioned: set[str] = set()
     for export in report.get("data", []):
         for entry in export.get("files", []):
             name = entry.get("filename", "")
+            mentioned.add(relative(name))
             for segment in entry["segments"]:
                 line, count = segment[0], segment[2]
                 # A segment is a region of code; `is_region_entry` marks its start, and a gap
@@ -76,7 +84,7 @@ def executable_and_covered(report_path: str) -> tuple[set, set]:
                 executable.add((name, line))
                 if count:
                     covered.add((name, line))
-    return executable, covered
+    return executable, covered, mentioned
 
 
 def relative(name: str) -> str:
@@ -118,9 +126,18 @@ def main() -> int:
         # Fail closed: an empty diff means the base is wrong, not that the change is risk-free.
         print(f"no changed source lines against {base} — pass the commit this change started from")
         return 1
-    executable, covered = executable_and_covered(report)
+    executable, covered, mentioned = executable_and_covered(report)
     executable = {(relative(path), line) for path, line in executable}
     covered = {(relative(path), line) for path, line in covered}
+
+    # Fail closed on a report that does not name every changed file. A changed line the report
+    # never mentions looks exactly like a comment, so without this a stale or partial report
+    # would pass the layer by counting new code as non-executable.
+    missing = sorted(name for name in changed if name not in mentioned)
+    if missing:
+        print(f"coverage report does not mention: {', '.join(missing)}")
+        print("regenerate it with `cargo llvm-cov --json --output-path target/cov.json`")
+        return 1
 
     total = hit = plain = 0
     misses: list[str] = []
@@ -148,8 +165,8 @@ def main() -> int:
             print(f"  excluded  {miss} — {listed[miss]}")
         else:
             print(f"  UNCOVERED {miss}")
-    for key in stale:
-        print(f"  STALE EXCLUSION {key} — this line is covered or gone; remove it from {EXCLUDES}")
+    for name in stale:
+        print(f"  STALE EXCLUSION {name} — this line is covered or gone; remove it from {EXCLUDES}")
     if unexplained or stale:
         print(f"{len(unexplained)} unexplained line(s), {len(stale)} stale exclusion(s)")
         return 1
