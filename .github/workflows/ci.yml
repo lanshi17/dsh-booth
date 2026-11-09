@@ -24,6 +24,11 @@ jobs:
           # `Config::from_env` resolves the bundle the service runs from, and the tests build a
           # console with it, so the pinned submodule is part of the test fixture.
           submodules: recursive
+      - name: Make sure the lockfile matches the manifest
+        # The layers below run plain `cargo check`, `cargo clippy` and `cargo test`, which resolve
+        # and rewrite a stale `Cargo.lock` on the runner and still pass; the committed lock could
+        # then be one a `--locked` build rejects. This fails the run instead.
+        run: cargo metadata --locked --format-version 1 > /dev/null
       - name: Make sure the lint and format components exist
         run: rustup component add clippy rustfmt
       - name: Run the quick layers
