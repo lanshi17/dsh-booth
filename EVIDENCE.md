@@ -193,63 +193,42 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
 
 ---
 
-## Evidence Report — startup and test hygiene (after 0.2.0)
+## Evidence Report — outbox replacement and a hermetic gh test (after 0.2.0)
 
-- **Request:** "优化此项目" — a direction to improve the project, not a feature request. The change
-  removes work that was never necessary, fixes defects the audit confirmed, and makes the checks
-  repeatable; it adds no feature, route or dependency.
-- **Source state:** branch `agent/project-optimization-8794ada0a458`, based on `30279cb`.
-- **Entry point:** `tools/gauntlet.sh quick` — the same command the new CI runs — plus
-  `tools/smoke.sh` and the startup measurements below.
+- **Request:** a self-iteration pass: read the code and tests, fix one real defect, run the
+  relevant checks, open a PR for review.
+- **Source state:** branch `agent/self-iteration-fix-f046f55c6fff`, based on `30279cb`.
+- **Isolation:** a git worktree, with `BOOTH_SUPERAGENT_DIR` pointing at the populated submodule,
+  so the shared checkout's in-progress files were not touched.
+- **Entry point:** `tools/gauntlet.sh quick` (the same command CI runs) and `tools/smoke.sh`.
 
 ### What changed
 
 | # | Change | Why |
 |---|---|---|
-| A | `Tail::at_end` seeks to the last complete line by reading backwards a window at a time; `App::new` no longer parses the whole outbox | a restarted console parsed every message ever written and then discarded all but the last 20 ids, so startup grew with the deployment's age |
-| B | the gh-fallback test puts a too-old `gh` first on PATH and restores PATH before asserting | the test assumed the machine's `gh` was old; on a machine with gh 2.63 `gh::ensure` correctly preferred the system CLI and the test failed |
-| C | the unreachable-service hint and the `service` module note say `booth up` | they named `booth start`, which is not a subcommand |
-| D | `.github/workflows/ci.yml` runs `tools/gauntlet.sh quick` on pushes to `master` and on pull requests | the repository had one quality entry point and nothing that ran it |
-| E | `check_pending` marks each notice as said instead of re-arming it | after ten minutes the 20-second and 10-minute lines were pushed every two seconds forever, crowding out the transcript |
-| F | `short_at` falls back when the timestamp's byte slices are not character boundaries | a non-ASCII value in `at`/`lastAt`/`startedAt` panicked (`byte index 16 is not a char boundary`) |
-| G | `tail_lines` reads `booth.log` from the end, growing the window only when a record needs it | `booth logs` and a failed `booth up` loaded the whole, never-rotated log |
-| H | `alive` treats a zombie as not running | a `dsh` that exited at once stayed a zombie, so `booth up` waited the full 90 s and blamed the port |
-| I | the grant test takes `env_lock` and restores `DSH_HOME` | it mutated process-wide state without the lock the provider tests use |
-| J | the "no model" test asserts the line it names | it only re-checked the parse and called a service that has a model |
+| A | `Tail` keeps the 32 bytes before its offset and restarts when they are no longer there | a replaced outbox that is *longer* than the old file kept the stale offset, so the read began inside a new record and dropped every reply before it; size alone cannot tell an append from a rewrite |
+| B | the state-directory gh test puts an older `gh` first on PATH and restores PATH on drop | the test only made sense where the host's gh was too old; with gh 2.63 installed here, `cargo test` failed before any code change |
 
-### Measurements
+### Reproduction
 
-21 MB outbox with 120 000 messages, console started against `dev/mock-api.py`; RSS and CPU read
-from `/proc/<pid>` two seconds after start:
+On `30279cb`, `intake::tests::a_replaced_outbox_starts_over_even_when_it_grew` returns `["z"]`
+where the new file holds `["x","y","z"]`; it passes after A. B is what lets the suite run green on
+a host whose system gh is 2.63.2 instead of failing on it.
 
-| Revision | RSS | CPU after 2 s |
-|---|---|---|
-| `30279cb` | 46.7 MB | 0.56 s |
-| this branch | 11.6 MB | 0.08 s |
-
-A 20-message outbox measures 11.7 MB / 0.07 s on both revisions, so the removed work is exactly
-the part that grew with history. The transcript still starts empty; a message written after the
-console starts is still delivered.
-
-### Checks
+### Gauntlet (quick)
 
 | Layer | Result |
 |---|---|
-| `cargo fmt --check` | clean |
-| `cargo check --all-targets` | 0 errors |
-| `cargo clippy --all-targets -- -D warnings` | 0 warnings |
-| `cargo test` | 140 passed, 0 failed (131 before; nine new) |
-| `tools/gauntlet.sh quick` | all quick layers passed |
-| `tools/smoke.sh` | every one-shot command ran against the fixture |
-| CI simulation | a copy with the submodule source but no `target/` or `node_modules/` passes all 140; without the submodule eight app tests fail, which is why the workflow checks it out |
-| CI | the workflow runs on this pull request |
+| Format | clean |
+| Types | clean |
+| Lint | `clippy -D warnings` clean |
+| Tests | 133 passed, 0 failed |
+| Real execution | `tools/smoke.sh`: every command ran against the fixture |
 
-### Not run
+### Honest notes
 
-- **Coverage and mutation were not rerun for this pass.** No dependency, route or response shape
-  changed; the new code is exercised by nine tests and the 0.2.0 record remains the last full run.
-- **The interactive console was not driven through a pty for this pass.** The startup behaviour is
-  covered by `app::editor_tests::a_restarted_console_skips_the_outbox_it_found` and the four
-  `intake` tests beside `reads_only_what_was_appended`.
-- **The CI workflow's first run is the pull request itself**; the local quick gauntlet and the
-  submodule-present simulation are the evidence available before it runs.
+- The slower layers (changed-line coverage, mutation, supply chain, serial/repeated suite) and a
+  live-service run were not run for this pass; the change touches no route, dependency or
+  credential file.
+- The regression tests follow the documented SPEC scenario "文件被截断或替换"; the existing test
+  covered only a replacement shorter than the old file, which is the one case size alone detects.
