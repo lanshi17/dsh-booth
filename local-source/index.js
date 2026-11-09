@@ -131,6 +131,14 @@ async function watch(source, signal, files) {
       await delay(1000, undefined, { signal }).catch(() => {})
       continue
     }
+    // The Source's switch in Settings, as the other Sources read it. While the Source is off,
+    // reading would consume instructions the Engine only records as filtered, so they would be
+    // lost when it is turned on again; leaving them in the inbox keeps them for that resumption.
+    if (!source.config(KIND)) {
+      report(source, 'paused', 'Off')
+      await delay(1000, undefined, { signal }).catch(() => {})
+      continue
+    }
     const { lines, offset } = readLines(files.inbox, cursor)
     if (!lines.length) {
       if (offset !== cursor) {

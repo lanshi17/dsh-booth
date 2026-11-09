@@ -8,16 +8,53 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 port=${SMOKE_PORT:-3899}
+base="http://127.0.0.1:$port"
 fail=0
+
+booth=./target/debug/booth
+[ -x "$booth" ] || { echo "build first: cargo build"; exit 1; }
+
+# A listener already on the port would answer every check below, so the layer would report
+# another process's answers as its own result — for example a concurrent checkout's smoke run.
+# Keep the default port when it is free; otherwise take a private one and fail closed only when
+# an explicit SMOKE_PORT is busy.
+free_port() {
+  python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
+}
+listening() {
+  curl -s --max-time 1 -o /dev/null "$1/" 2>/dev/null
+}
+if listening "$base"; then
+  if [ -n "${SMOKE_PORT:-}" ]; then
+    echo "FAIL fixture (SMOKE_PORT=$SMOKE_PORT is already in use)"
+    exit 1
+  fi
+  busy=$port
+  port=$(free_port) || { echo "FAIL fixture (cannot pick a free port)"; exit 1; }
+  base="http://127.0.0.1:$port"
+  echo "note: port $busy is in use; using $port"
+fi
 
 python3 dev/mock-api.py "$port" >target/smoke-server.log 2>&1 &
 server=$!
-trap 'kill "$server" 2>/dev/null' EXIT
-# Wait for the fixture instead of sleeping a fixed time.
+trap 'kill "$server" 2>/dev/null; wait "$server" 2>/dev/null' EXIT
+
+# Wait for the fixture instead of sleeping a fixed time, and stop as soon as it exits: a fixture
+# that cannot start fails this layer with its own log, not a page of unrelated command failures.
+ready=0
 for _ in $(seq 1 50); do
-  curl -sf -H 'x-orchestrator-request: 1' "http://127.0.0.1:$port/orchestrator/api/state" >/dev/null 2>&1 && break
+  jobs -rp | grep -qx "$server" || break
+  if curl -sf --max-time 1 -H 'x-orchestrator-request: 1' "$base/orchestrator/api/state" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
   sleep 0.1
 done
+if [ "$ready" -ne 1 ]; then
+  echo "FAIL fixture (no answer on $base)"
+  sed 's/^/    /' target/smoke-server.log 2>/dev/null | tail -5
+  exit 1
+fi
 
 run() {
   label=$1
@@ -37,22 +74,21 @@ run() {
   fi
 }
 
-booth=./target/debug/booth
-[ -x "$booth" ] || { echo "build first: cargo build"; exit 1; }
-
-run "status"   "$booth" --url "http://127.0.0.1:$port" status
-run "overview" "$booth" --url "http://127.0.0.1:$port" overview
-run "tickets"  "$booth" --url "http://127.0.0.1:$port" tickets
-run "agents"   "$booth" --url "http://127.0.0.1:$port" agents
-run "decisions" "$booth" --url "http://127.0.0.1:$port" decisions
-run "search"   "$booth" --url "http://127.0.0.1:$port" search retry
+run "status"   "$booth" --url "$base" status
+run "overview" "$booth" --url "$base" overview
+run "tickets"  "$booth" --url "$base" tickets
+run "agents"   "$booth" --url "$base" agents
+run "decisions" "$booth" --url "$base" decisions
+run "search"   "$booth" --url "$base" search retry
 run "version"  "$booth" --version
 
-# The refused case proves the guard is reached, not skipped.
-if "$booth" --url "http://127.0.0.1:$port" stop t-1 >/dev/null 2>&1; then
+# The fixture refuses a management request without the guard header, so an accepted stop proves
+# the CLI sent it.
+if out=$("$booth" --url "$base" stop t-1 2>&1); then
   echo "PASS stop (fixture answered)"
 else
   echo "FAIL stop refused by the fixture"
+  echo "$out" | head -5
   fail=1
 fi
 

@@ -89,6 +89,71 @@ where
     )
 }
 
+/// The Console's one-line note on a ticket, as the bundle's `ticketNote()` builds it.
+///
+/// Current routes send `{ "text": …, "error": … }`; older routes and the repository's fixture
+/// send a plain string. Both become the text this console renders, because a person's pending
+/// question is no reason for every list that carries the ticket to fail to decode.
+fn note_or_text<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Text(String),
+        Note { text: String },
+    }
+    Ok(
+        Option::<Raw>::deserialize(deserializer)?.map(|raw| match raw {
+            Raw::Text(text) => text,
+            Raw::Note { text } => text,
+        }),
+    )
+}
+
+#[cfg(test)]
+mod note_tests {
+    use super::{TicketDetail, TicketRow};
+    use serde_json::json;
+
+    #[test]
+    fn a_ticket_note_object_decodes_to_the_text_the_console_renders() {
+        // `ticketSummary` sends `ticketNote()`, which is `{ text, error }`; a person waiting
+        // on an answer used to fail the whole ticket list as `invalid type: map, expected a
+        // string`.
+        let served = json!({
+            "id": "t1",
+            "title": "a ticket",
+            "note": { "text": "需要确认按钮颜色", "error": false }
+        });
+        let ticket: TicketRow =
+            serde_json::from_value(served).expect("a ticket with a note object decodes");
+        assert_eq!(ticket.note.as_deref(), Some("需要确认按钮颜色"));
+    }
+
+    #[test]
+    fn an_older_ticket_note_string_still_decodes() {
+        // `dev/mock-api.py` and routes older than `ticketNote()` send a plain string.
+        let served = json!({ "id": "t1", "title": "a ticket", "note": "waiting for your answer" });
+        let ticket: TicketRow =
+            serde_json::from_value(served).expect("a ticket with a text note decodes");
+        assert_eq!(ticket.note.as_deref(), Some("waiting for your answer"));
+    }
+
+    #[test]
+    fn a_ticket_detail_keeps_a_served_note_object() {
+        let served = json!({
+            "id": "t1",
+            "title": "a ticket",
+            "note": { "text": "the delivery failed", "error": true }
+        });
+        let ticket: TicketDetail =
+            serde_json::from_value(served).expect("a ticket detail with a note object decodes");
+        assert_eq!(ticket.note.as_deref(), Some("the delivery failed"));
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ThreadFacts {
@@ -113,6 +178,8 @@ pub struct TicketRow {
     pub state: String,
     pub stage: String,
     pub action: Option<String>,
+    /// The bundle's `{ text, error }` note, or a plain string from an older route.
+    #[serde(default, deserialize_with = "note_or_text")]
     pub note: Option<String>,
     pub summary: Option<String>,
     pub directory: Option<String>,
@@ -286,6 +353,8 @@ pub struct TicketDetail {
     pub state: String,
     pub stage: String,
     pub action: Option<String>,
+    /// The bundle's `{ text, error }` note, or a plain string from an older route.
+    #[serde(default, deserialize_with = "note_or_text")]
     pub note: Option<String>,
     pub summary: Option<String>,
     pub directory: Option<String>,
@@ -385,10 +454,57 @@ pub struct SourceStatus {
     pub problem: Option<Value>,
 }
 
+/// One message `/search` matched, as the bundle reports it in `SearchView.items`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SearchItem {
+    pub id: String,
+    pub source: String,
+    /// The person or bot the bundle resolved, or its raw id.
+    pub actor: Option<Value>,
+    pub human: bool,
+    pub at: Option<String>,
+    pub preview: String,
+    /// The thread's title, when the bundle could name it.
+    pub thread_title: Option<String>,
+    /// Why a Source filtered the message, when it did not reach a thread.
+    pub filtered: Option<String>,
+    /// The rest of the served view, not rendered here but still printed by `--json`.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SearchView {
     pub tickets: Vec<TicketRow>,
     pub threads: Vec<ThreadRow>,
-    pub items: Vec<Value>,
+    pub items: Vec<SearchItem>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchView;
+    use serde_json::json;
+
+    #[test]
+    fn a_search_item_keeps_the_served_fields_this_view_does_not_render() {
+        let served = json!({
+            "tickets": [],
+            "threads": [],
+            "items": [{
+                "id": "local-abc123",
+                "source": "local",
+                "human": true,
+                "preview": "retry",
+                "actions": { "requeue": true },
+                "text": "the full served text"
+            }]
+        });
+        let view: SearchView =
+            serde_json::from_value(served).expect("a served search view decodes");
+        let printed = serde_json::to_value(&view).expect("the view serializes for --json");
+        assert_eq!(printed["items"][0]["actions"]["requeue"], true);
+        assert_eq!(printed["items"][0]["text"], "the full served text");
+    }
 }
