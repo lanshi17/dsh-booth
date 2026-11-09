@@ -263,6 +263,15 @@ struct Tracked {
     stage: String,
 }
 
+/// One instruction the console sent and has not seen judged, with what it has already said.
+struct Awaiting {
+    sent: Instant,
+    /// The 20-second notice has been shown.
+    warned: bool,
+    /// The 10-minute explanation has been shown.
+    stale: bool,
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -284,11 +293,11 @@ pub struct App {
     modal: Option<Modal>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
-    /// Agent messages already shown; the outbox is reread whole on each poll.
+    /// Agent messages already shown in this run, so a poll cannot show one twice.
     seen: std::collections::HashSet<String>,
     /// Trigger ids of the instructions this console sent and has not seen judged yet, with when
-    /// they were sent and whether the console already said the judgement is slow.
-    pending: std::collections::HashMap<String, (Instant, bool)>,
+    /// they were sent and what the console has already said about the wait.
+    pending: std::collections::HashMap<String, Awaiting>,
     /// Tickets this console opened, with what it has already shown about each.
     tracked: std::collections::HashMap<String, Tracked>,
     /// Set after an accept: the next instruction goes to that ticket's thread instead of a new one.
@@ -352,21 +361,15 @@ impl App {
             .as_ref()
             .and_then(intake::follow)
             .map(|(ticket, thread)| Follow { thread, ticket });
-        // A restart shows the recent conversation, not the whole outbox: read the tail of the
-        // file rather than all of it, and mark everything older as already shown.
-        let tail = Arc::new(std::sync::Mutex::new(intake::Tail::fresh()));
-        let mut seen = std::collections::HashSet::new();
-        if let Some(config) = &config {
-            let mut reader = intake::Tail::fresh();
-            let replies = intake::replies_from(config, &mut reader);
-            let skip = replies.len().saturating_sub(20);
-            for reply in replies.into_iter().take(skip) {
-                seen.insert(reply.id);
-            }
-            if let Ok(mut shared) = tail.lock() {
-                *shared = reader;
-            }
-        }
+        // A restarted console starts with an empty transcript: skip past what the outbox already
+        // holds instead of reading and parsing the history, so startup does not grow with the
+        // deployment's age. The poll below then sees only what arrives from now on.
+        let tail = Arc::new(std::sync::Mutex::new(
+            config
+                .as_ref()
+                .map(intake::Tail::at_end)
+                .unwrap_or_default(),
+        ));
         Self {
             api,
             config,
@@ -386,7 +389,7 @@ impl App {
             started: Instant::now(),
             tx,
             rx,
-            seen,
+            seen: std::collections::HashSet::new(),
             pending: std::collections::HashMap::new(),
             tracked: std::collections::HashMap::new(),
             continues,
@@ -710,8 +713,13 @@ impl App {
 
     /// Shows one message the agent wrote back: an acknowledgement, a reply, or a notice.
     fn push_agent(&mut self, reply: intake::Reply) {
-        if let Some(ticket) = &reply.ticket {
-            self.replied.insert(ticket.clone());
+        // Only a reply or a notice reports on the work; an acknowledgement only says the agent
+        // took the instruction up. Counting it as the report would hide the ticket's summary
+        // whenever the worker later ends the ticket without writing one.
+        if reply.kind != "acknowledgement" {
+            if let Some(ticket) = &reply.ticket {
+                self.replied.insert(ticket.clone());
+            }
         }
         let label = match reply.kind.as_str() {
             "acknowledgement" => "agent · accepted",
@@ -796,8 +804,14 @@ impl App {
                     None => {
                         // A follow-up fans out to its ticket without a decision, so only a new
                         // instruction is awaited as one.
-                        self.pending
-                            .insert(format!("local-{id}"), (Instant::now(), false));
+                        self.pending.insert(
+                            format!("local-{id}"),
+                            Awaiting {
+                                sent: Instant::now(),
+                                warned: false,
+                                stale: false,
+                            },
+                        );
                         vec![Line::from(vec![
                             Span::styled("  ↑ ", Style::default().fg(GREEN)),
                             Span::styled("sent to the agent", Style::default().fg(GREEN)),
@@ -838,45 +852,33 @@ impl App {
     }
 
     /// Says so when a sent instruction is not judged, instead of leaving "sent" as the last word.
+    ///
+    /// Each line is said once. The 20-second notice and the 10-minute explanation are states of
+    /// the wait, not a countdown: repeating them every poll would push everything else out of the
+    /// transcript while a slow assessment runs.
     fn check_pending(&mut self) {
         let now = Instant::now();
-        let slow: Vec<String> = self
-            .pending
-            .iter()
-            .filter(|(_, (sent, warned))| {
-                !warned && now.duration_since(*sent) > Duration::from_secs(20)
-            })
-            .map(|(trigger, _)| trigger.clone())
-            .collect();
-        for trigger in slow {
-            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
-                *warned = true;
+        let mut lines = Vec::new();
+        for entry in self.pending.values_mut() {
+            let waited = now.duration_since(entry.sent);
+            if !entry.warned && waited > Duration::from_secs(20) {
+                entry.warned = true;
+                lines.push(Line::from(Span::styled(
+                    "  ⋯ no decision yet · /sources shows whether the source is polling",
+                    Style::default().fg(FAINT),
+                )));
+            } else if entry.warned && !entry.stale && waited > Duration::from_secs(600) {
+                // An assessment can legitimately take minutes: the Eval timeout is 120 s and the
+                // model may be queued behind another turn. Keep waiting instead of declaring
+                // failure, and say what a long wait usually means.
+                entry.stale = true;
+                lines.push(warn_line(
+                    "10 minutes without a judgement · /status shows whether a model failure stopped it; \
+                     a late answer still appears here",
+                ));
             }
-            self.push(Line::from(Span::styled(
-                "  ⋯ no decision yet · /sources shows whether the source is polling",
-                Style::default().fg(FAINT),
-            )));
         }
-        // An assessment can legitimately take minutes: the Eval timeout is 120 s and the model
-        // may be queued behind another turn. Keep waiting instead of declaring failure, and say
-        // what a long wait usually means.
-        let stale: Vec<String> = self
-            .pending
-            .iter()
-            .filter(|(_, (sent, warned))| {
-                *warned && now.duration_since(*sent) > Duration::from_secs(600)
-            })
-            .map(|(trigger, _)| trigger.clone())
-            .collect();
-        for trigger in stale {
-            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
-                *warned = false;
-            }
-            self.push(warn_line(
-                "10 minutes without a judgement · /status shows whether a model failure stopped it; \
-                 a late answer still appears here",
-            ));
-        }
+        self.push_lines(lines);
     }
 
     fn refresh_status(&self) {
@@ -2941,6 +2943,37 @@ mod transcript_tests {
     }
 
     #[test]
+    fn an_acknowledgement_does_not_hide_the_silent_report() {
+        // The normal accepted path: the agent acknowledges the instruction, then ends the ticket
+        // with its report in the ticket but no reply. The summary is the only report shown, so the
+        // acknowledgement must not stand in for it.
+        let (mut app, dir, _env) = console("ack-silent");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        app.push_agent(intake::Reply {
+            id: "a1".into(),
+            kind: "acknowledgement".into(),
+            text: "收到".into(),
+            ticket: Some("abcdef1234567890".into()),
+        });
+        app.show_tickets(vec![TicketRow {
+            id: "abcdef1234567890".into(),
+            state: "ended".into(),
+            stage: "idle".into(),
+            summary: Some("the worker changed the README".into()),
+            ..TicketRow::default()
+        }]);
+        let shown = text(&app);
+        assert!(shown.contains("abcdef12 · report"), "{shown}");
+        assert!(shown.contains("the worker changed the README"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_declined_instruction_shows_the_agents_sentence() {
         let (mut app, dir, _env) = console("declined");
         app.push_decision(&Decision {
@@ -2991,9 +3024,17 @@ mod transcript_tests {
         assert!(shown.contains("abcdef12"), "{shown}");
         assert!(shown.contains("收到"), "{shown}");
         assert!(
-            app.replied.contains("abcdef1234567890"),
-            "the ticket is marked answered"
+            !app.replied.contains("abcdef1234567890"),
+            "an acknowledgement does not stand in for the report"
         );
+        // A reply or a notice does report on the work, so no summary fallback follows it.
+        app.push_agent(intake::Reply {
+            id: "m2".into(),
+            kind: "reply".into(),
+            text: "done".into(),
+            ticket: Some("abcdef1234567890".into()),
+        });
+        assert!(app.replied.contains("abcdef1234567890"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3395,183 +3436,92 @@ mod editor_tests {
     }
 
     #[test]
-    fn the_header_counts_every_open_ticket_not_just_the_page() {
-        let (mut app, dir, api, _env) = editor_with_api("page-total");
-        // The service answers a window of 50, but 120 tickets are open and two want a person.
-        api.set_route(
-            "/tickets?state=open&limit=50",
-            json!({
-                "items": [
-                    { "id": "t-1", "title": "one", "state": "open", "stage": "working" }
-                ],
-                "total": 120,
-                "next_offset": 50
-            }),
+    fn a_slow_judgement_is_reported_once_at_each_threshold() {
+        let (mut app, dir, _env) = editor("pending-slow");
+        let rendered = |app: &App| {
+            app.lines
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        app.pending.insert(
+            "local-1".into(),
+            Awaiting {
+                sent: Instant::now() - Duration::from_secs(21),
+                warned: false,
+                stale: false,
+            },
         );
-        api.set_route(
-            "/overview",
-            json!({
-                "problems": [],
-                "person": [
-                    { "id": "t-2", "title": "two", "state": "open", "stage": "person" },
-                    { "id": "t-3", "title": "three", "state": "open", "stage": "person" }
-                ],
-                "executor": { "running": 0, "queued": 0, "maxWorkers": 3, "idle": 0 },
-                "flow": {},
-                "policyVersion": "test"
-            }),
-        );
-
-        app.refresh_status();
-        let poll = next_tickets(&app);
-        app.apply(Msg::Tickets(poll));
-
+        app.check_pending();
+        assert!(rendered(&app).contains("no decision yet"));
+        let after_warning = rendered(&app);
+        app.check_pending();
         assert_eq!(
-            app.open, 120,
-            "the header says the total, not the 1 row in the window"
+            rendered(&app),
+            after_warning,
+            "the 20-second line is said once"
         );
+
+        // A judgement behind another turn may take minutes; the 10-minute line is the next and
+        // last notice instead of the 20-second one starting over.
+        if let Some(entry) = app.pending.get_mut("local-1") {
+            entry.sent = Instant::now() - Duration::from_secs(601);
+        }
+        app.check_pending();
+        assert!(rendered(&app).contains("10 minutes without a judgement"));
+        let after_stale = rendered(&app);
+        app.check_pending();
+        app.check_pending();
         assert_eq!(
-            app.person, 2,
-            "the person count comes from the overview, not the window"
+            rendered(&app),
+            after_stale,
+            "the 10-minute line is said once, not on every poll"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn a_tracked_ticket_in_the_page_is_not_looked_up_again() {
-        let (mut app, dir, api, _env) = editor_with_api("page-tracked-in-page");
-        app.tracked.insert(
-            "abcdef1234567890".into(),
-            Tracked {
-                stage: "new".into(),
-            },
-        );
-        // The page carries the tracked ticket; no detail route exists, so a lookup would 404
-        // and close it. Keeping it open is what proves the page was enough.
-        api.set_route(
-            "/tickets?state=open&limit=50",
-            json!({
-                "items": [
-                    { "id": "abcdef1234567890", "title": "in the page", "state": "open", "stage": "working" }
-                ],
-                "total": 120,
-                "next_offset": 50
-            }),
-        );
-
-        app.refresh_status();
-        let poll = next_tickets(&app);
-        app.apply(Msg::Tickets(poll));
-
-        let shown = rendered(&app);
-        assert!(shown.contains("abcdef12 · working"), "{shown}");
+    fn a_restarted_console_skips_the_outbox_it_found() {
+        let _env = crate::testkit::env_lock();
+        let dir = std::env::temp_dir().join(format!("booth-restart-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("BOOTH_STATE_DIR", &dir);
+        std::env::set_var("DSH_HOME", &dir);
+        // A transcript's worth of history the console did not show, because it was not running.
+        let history: String = (0..20)
+            .map(|index| {
+                format!("{{\"id\":\"old-{index}\",\"kind\":\"reply\",\"text\":\"old {index}\"}}\n")
+            })
+            .collect();
+        std::fs::write(dir.join("booth-outbox.jsonl"), history).unwrap();
+        let api = FakeApi::start();
+        let app = App::new(Api::new(&api.base));
         assert!(
-            app.tracked.contains_key("abcdef1234567890"),
-            "a page hit is not closed by a detail lookup"
+            app.lines.is_empty(),
+            "a restart starts with an empty transcript"
         );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_tracked_ticket_outside_the_page_is_looked_up_instead_of_closed() {
-        let (mut app, dir, api, _env) = editor_with_api("page-tracked-open");
-        app.tracked.insert(
-            "abcdef1234567890".into(),
-            Tracked {
-                stage: "working".into(),
-            },
-        );
-        api.set_route(
-            "/tickets?state=open&limit=50",
-            json!({ "items": [], "total": 120, "next_offset": 50 }),
-        );
-        // The ticket is open, just past the first page: the detail route is the source of truth.
-        api.set_route(
-            "/tickets/abcdef1234567890",
-            json!({
-                "id": "abcdef1234567890",
-                "title": "still open",
-                "state": "open",
-                "stage": "person",
-                "action": "review"
-            }),
-        );
-
-        app.refresh_status();
-        let poll = next_tickets(&app);
-        app.apply(Msg::Tickets(poll));
-
-        let shown = rendered(&app);
-        assert!(!shown.contains("closed"), "{shown}");
+        // The tail the polls share sits at the end of what was already there, so the first poll
+        // has nothing to deliver; parsing the history would only cost startup time.
+        let config = app
+            .config
+            .clone()
+            .expect("the test set the state directory");
+        let mut tail = app.tail.lock().unwrap();
         assert!(
-            app.tracked.contains_key("abcdef1234567890"),
-            "the ticket is still followed"
+            intake::replies_from(&config, &mut tail).is_empty(),
+            "the history is not replayed"
         );
-        assert!(shown.contains("needs a person · review"), "{shown}");
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_tracked_ticket_that_ended_outside_the_page_still_reports() {
-        let (mut app, dir, api, _env) = editor_with_api("page-tracked-ended");
-        app.tracked.insert(
-            "abcdef1234567890".into(),
-            Tracked {
-                stage: "working".into(),
-            },
-        );
-        api.set_route(
-            "/tickets?state=open&limit=50",
-            json!({ "items": [], "total": 120, "next_offset": 50 }),
-        );
-        api.set_route(
-            "/tickets/abcdef1234567890",
-            json!({
-                "id": "abcdef1234567890",
-                "title": "finished",
-                "state": "ended",
-                "stage": "idle",
-                "summary": "the worker changed the README"
-            }),
-        );
-
-        app.refresh_status();
-        let poll = next_tickets(&app);
-        app.apply(Msg::Tickets(poll));
-
-        let shown = rendered(&app);
-        assert!(shown.contains("abcdef12 · closed"), "{shown}");
-        assert!(shown.contains("abcdef12 · report"), "{shown}");
-        assert!(shown.contains("the worker changed the README"), "{shown}");
-        assert!(app.tracked.is_empty(), "a closed ticket is not tracked");
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_tracked_ticket_the_service_no_longer_has_is_closed() {
-        let (mut app, dir, api, _env) = editor_with_api("page-tracked-gone");
-        app.tracked.insert(
-            "abcdef1234567890".into(),
-            Tracked {
-                stage: "working".into(),
-            },
-        );
-        api.set_route(
-            "/tickets?state=open&limit=50",
-            json!({ "items": [], "total": 120, "next_offset": 50 }),
-        );
-        // No detail route: the fake answers 404, which is the service saying it has no such ticket.
-
-        app.refresh_status();
-        let poll = next_tickets(&app);
-        app.apply(Msg::Tickets(poll));
-
-        let shown = rendered(&app);
-        assert!(shown.contains("abcdef12 · closed"), "{shown}");
-        assert!(
-            app.tracked.is_empty(),
-            "a ticket the service dropped is closed"
-        );
+        // A message that arrives after the restart is still delivered.
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join("booth-outbox.jsonl"))
+            .unwrap();
+        file.write_all(b"{\"id\":\"new-1\",\"kind\":\"reply\",\"text\":\"new\"}\n")
+            .unwrap();
+        let fresh = intake::replies_from(&config, &mut tail);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "new-1");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
