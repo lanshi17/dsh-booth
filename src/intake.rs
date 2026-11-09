@@ -103,6 +103,18 @@ pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<S
     Ok(id)
 }
 
+/// Whether the file ends inside a record: it holds bytes but no final newline.
+fn ends_mid_record(file: &mut std::fs::File) -> std::io::Result<bool> {
+    let length = file.metadata()?.len();
+    if length == 0 {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::Start(length - 1))?;
+    let mut last = [0u8; 1];
+    file.read_exact(&mut last)?;
+    Ok(last[0] != b'\n')
+}
+
 /// How many bytes before the offset are kept to recognize a rewritten file.
 const WITNESS: usize = 32;
 
@@ -124,6 +136,45 @@ const TAIL_WINDOW: u64 = 8 * 1024;
 impl Tail {
     pub fn fresh() -> Self {
         Self::default()
+    }
+
+    /// A tail already past everything the outbox holds.
+    ///
+    /// A restarted console starts with an empty transcript: the history is never shown, so it is
+    /// not read or parsed either — startup stays independent of how long the deployment has run.
+    /// Windows are read backwards until the last newline, so even a record longer than a window
+    /// is skipped; a record whose newline is still being written is left for the next poll.
+    pub fn at_end(cfg: &service::Config) -> Self {
+        let path = outbox(cfg);
+        let Ok(meta) = std::fs::metadata(&path) else {
+            return Self::fresh();
+        };
+        let size = meta.len();
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return Self::fresh();
+        };
+        let mut end = size;
+        let offset = loop {
+            let start = end.saturating_sub(TAIL_WINDOW);
+            let mut raw = vec![0u8; (end - start) as usize];
+            if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut raw).is_err() {
+                return Self::fresh();
+            }
+            if let Some(at) = raw.iter().rposition(|byte| *byte == b'\n') {
+                break start + at as u64 + 1;
+            }
+            if start == 0 {
+                // The file is one unfinished record: there is no earlier line to seek past, so
+                // the first poll reads it (and nothing else).
+                break 0;
+            }
+            end = start;
+        };
+        // No witness yet: the next read trusts this offset and records the bytes it stops after.
+        Self {
+            offset,
+            witness: Vec::new(),
+        }
     }
 
     /// Forgets the offset, so the next read starts at the beginning of the file.
