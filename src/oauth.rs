@@ -474,10 +474,9 @@ mod tests {
 
     #[test]
     fn stores_the_grant_dsh_reads() {
-        // DSH_HOME is process-wide: take the lock and put it back, or a test running beside
-        // this one reads or writes this directory.
+        // DSH_HOME is process-wide and the provider tests set it too, under this lock.
         let _env = crate::testkit::env_lock();
-        let home = std::env::temp_dir().join(format!("booth-oauth-{}", uuid_v4()));
+        let home = std::env::temp_dir().join(format!("booth-oauth-{}", std::process::id()));
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(
             home.join(".credentials.yaml"),
@@ -486,7 +485,12 @@ mod tests {
         .unwrap();
         let previous = std::env::var_os("DSH_HOME");
         std::env::set_var("DSH_HOME", &home);
-        store_grant("tok-123", "device-1").unwrap();
+        let stored = store_grant("tok-123");
+        match previous {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
+        stored.unwrap();
         let path = home.join(".credentials.yaml");
         let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");

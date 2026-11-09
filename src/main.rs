@@ -63,7 +63,11 @@ enum Command {
         lines: usize,
     },
     /// Show the model provider booth starts the service with.
-    Provider,
+    Provider {
+        /// Print the service's catalog as served, like the other read commands.
+        #[arg(long)]
+        json: bool,
+    },
     /// Move the DSH sessions aside so the next turn uses the configured model.
     ResetSessions,
     /// Hand one instruction to the agent, as typing it in the console does.
@@ -135,7 +139,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Search tickets, threads and triggers.
+    /// Search tickets, threads and messages.
     Search {
         query: String,
         #[arg(long)]
@@ -166,7 +170,7 @@ fn main() {
     if let Err(error) = result {
         eprintln!("booth: {error}");
         if error.contains("cannot reach") {
-            eprintln!("hint: `booth start` (and `booth init` the first time)");
+            eprintln!("hint: `booth up` (and `booth init` the first time)");
         }
         std::process::exit(1);
     }
@@ -189,8 +193,17 @@ fn provider_lines(catalog: &provider::Catalog) -> Vec<String> {
     lines
 }
 
+/// The `/models` view `booth provider` reads, as the service served it.
+///
+/// The human output is a summary; a script that needs the whole catalog (models, reasoning
+/// efforts, routable providers) asks for the same view the web panel reads instead of parsing
+/// those lines or hand-rolling the same-origin request.
+fn provider_view(api: &Api) -> Result<serde_json::Value, String> {
+    api.models().map_err(String::from)
+}
+
 fn show_provider(api: &Api) -> Result<(), String> {
-    let catalog = provider::Catalog::parse(&api.models().map_err(String::from)?);
+    let catalog = provider::Catalog::parse(&provider_view(api)?);
     for line in provider_lines(&catalog) {
         println!("{line}");
     }
@@ -204,10 +217,17 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Down => service::stop(&service::Config::from_env()?),
         Command::Restart => service::restart(&service::Config::from_env()?),
         Command::Logs { lines } => service::logs(&service::Config::from_env()?, lines),
-        Command::Provider => show_provider(&api),
+        Command::Provider { json } => {
+            if json {
+                print_json(&provider_view(&api)?)
+            } else {
+                show_provider(&api)
+            }
+        }
         Command::ResetSessions => {
             let cfg = service::Config::from_env()?;
-            match service::reset_sessions(&cfg)? {
+            let work = service::execution_root(&api, &cfg);
+            match service::reset_sessions(&cfg, &work)? {
                 Some(path) => println!("sessions moved to {}", path.display()),
                 None => println!("no sessions to move"),
             }
@@ -286,10 +306,11 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             if json {
                 print_json(&view)
             } else {
+                let work = service::execution_root(&api, &cfg);
                 print_lines(format::agents(
                     &view,
                     api.base(),
-                    service::session_count(&cfg),
+                    service::session_count(&cfg, &work),
                     &service::session_root(&cfg).display().to_string(),
                 ));
                 Ok(())
@@ -427,17 +448,12 @@ mod tests {
 
     #[test]
     fn the_provider_command_says_when_there_is_no_model() {
-        // An empty catalog is a real state (a profile with no model configured).
-        let api = crate::testkit::FakeApi::start();
+        // An empty catalog is a real state (a profile with no model configured). The test's name
+        // is the claim, so it checks the line a person reads, not only the parse below it.
         let empty = crate::provider::Catalog::parse(&serde_json::json!({}));
         assert_eq!(empty.default, None);
-        assert!(cur_or_absent(&api.base));
-    }
-
-    /// The `None` arm, which a live service always fills in.
-    fn cur_or_absent(base: &str) -> bool {
-        let api = Api::new(base);
-        show_provider(&api).is_ok()
+        let lines = provider_lines(&empty);
+        assert!(lines[0].contains("none"), "{lines:?}");
     }
 
     #[test]
@@ -472,6 +488,25 @@ mod tests {
         // An empty catalog says so instead of printing nothing.
         let empty = provider_lines(&crate::provider::Catalog::default());
         assert!(empty[0].contains("none"), "{empty:?}");
+    }
+
+    #[test]
+    fn the_provider_command_takes_json_like_the_other_api_views() {
+        // Every management-API view takes `--json`; `provider` reads /models but rejected it.
+        // A script needs the catalog the panel reads, not the human summary.
+        let cli = Cli::try_parse_from(["booth", "provider", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Provider { json: true })
+        ));
+    }
+
+    #[test]
+    fn the_provider_json_is_the_catalog_as_served() {
+        let fake = crate::testkit::FakeApi::start();
+        let view = provider_view(&Api::new(&fake.base)).unwrap();
+        assert_eq!(view["default"]["model"], "deepseek-flash");
+        assert!(view["groups"].is_array(), "{view:?}");
     }
 
     #[test]

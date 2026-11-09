@@ -53,10 +53,11 @@ pub fn clip(text: &str, max: usize) -> String {
 
 /// `2026-11-04T10:20:30.000Z` -> `11-04 10:20`, local wall clock is not needed for a glance.
 pub fn short_at(iso: &str) -> String {
-    if iso.len() >= 16 && iso.as_bytes().get(10) == Some(&b'T') {
-        format!("{} {}", &iso[5..10], &iso[11..16])
-    } else {
-        iso.chars().take(16).collect()
+    // The slices are only valid on a byte boundary; a timestamp the service sends is ASCII, but
+    // this view is tolerant of whatever JSON arrived and must not panic on the rest.
+    match (iso.as_bytes().get(10), iso.get(5..10), iso.get(11..16)) {
+        (Some(b'T'), Some(date), Some(time)) => format!("{date} {time}"),
+        _ => iso.chars().take(16).collect(),
     }
 }
 
@@ -632,13 +633,26 @@ pub fn thread_detail(view: &ThreadDetail) -> Vec<L> {
                 .join(" · "),
         ));
     }
+    // The counts above are not the list: `/thread` promises the subscribed tickets too, and
+    // the bundle sends them, so a thread whose tickets were only counted left the operator
+    // without the one thing needed to open the work.
+    if !view.tickets.is_empty() {
+        lines.push(blank());
+        lines.push(section(format!("tickets ({})", view.tickets.len())));
+        for ticket in &view.tickets {
+            lines.extend(ticket_lines(ticket));
+        }
+    }
     lines.push(blank());
     lines.push(section(format!("timeline ({})", view.timeline.len())));
     for item in &view.timeline {
+        // The bundle projects an automated notice as an actor with an empty id and no name;
+        // `actor` cannot name that, so fall back to the Source that sent it.
         let who = item
             .actor
             .as_ref()
             .map(actor)
+            .filter(|name| !name.is_empty())
             .unwrap_or_else(|| item.source.clone());
         let at = item.at.as_deref().map(short_at).unwrap_or_default();
         lines.push(Line::from(vec![
@@ -765,9 +779,10 @@ pub fn sources(view: &[SourceStatus]) -> Vec<L> {
 
 pub fn search(view: &SearchView) -> Vec<L> {
     let mut lines = vec![section(format!(
-        "search · {} tickets · {} threads",
+        "search · {} tickets · {} threads · {} messages",
         view.tickets.len(),
-        view.threads.len()
+        view.threads.len(),
+        view.items.len()
     ))];
     for ticket in &view.tickets {
         lines.extend(ticket_lines(ticket));
@@ -783,10 +798,57 @@ pub fn search(view: &SearchView) -> Vec<L> {
             )));
         }
     }
-    if view.tickets.is_empty() && view.threads.is_empty() {
+    // The bundle searches Triggers too, not just the tickets and threads they reached. A hit
+    // only in a message is still a hit, so dropping `items` made `/search` report silence.
+    if !view.items.is_empty() {
+        lines.push(blank());
+        lines.push(section("messages"));
+        lines.extend(view.items.iter().map(message_line));
+    }
+    if view.tickets.is_empty() && view.threads.is_empty() && view.items.is_empty() {
         lines.push(bullet("nothing matched"));
     }
     lines
+}
+
+/// One matched message: when, who, its preview, and the thread or filter that explains it.
+fn message_line(item: &SearchItem) -> L {
+    let at = item.at.as_deref().map(short_at).unwrap_or_default();
+    let who = item
+        .actor
+        .as_ref()
+        .map(actor)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| item.source.clone());
+    let mut spans = vec![
+        span(format!("{at:<12}"), Style::default().fg(Color::DarkGray)),
+        span(
+            format!("{:<14}", clip(&who, 13)),
+            Style::default().fg(if item.human {
+                Color::Green
+            } else {
+                Color::DarkGray
+            }),
+        ),
+        span(clip(&item.preview, 80), Style::default()),
+    ];
+    if let Some(title) = item
+        .thread_title
+        .as_deref()
+        .filter(|title| !title.is_empty())
+    {
+        spans.push(span(
+            format!("  · {}", clip(title, 40)),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    if let Some(reason) = item.filtered.as_deref().filter(|reason| !reason.is_empty()) {
+        spans.push(span(
+            format!("  · filtered: {}", clip(reason, 40)),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    Line::from(spans)
 }
 
 pub fn help() -> Vec<L> {
@@ -805,7 +867,7 @@ pub fn help() -> Vec<L> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{clip, reason, short_at};
+    use super::{clip, reason, short_at, SearchView};
     use serde_json::json;
 
     #[test]
@@ -819,6 +881,15 @@ mod tests {
     fn shortens_iso_timestamps() {
         assert_eq!(short_at("2026-11-04T10:20:30.000Z"), "11-04 10:20");
         assert_eq!(short_at("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn a_multibyte_timestamp_does_not_panic() {
+        // The `T` at byte 10 is not enough to make 5..10 and 11..16 char boundaries: the emoji
+        // starts at 13, so the old slice panicked. Any non-ASCII value now falls back.
+        assert_eq!(short_at("1234567890T01😀"), "1234567890T01😀");
+        // The fallback counts characters, so a long non-ASCII value truncates at 16 of them.
+        assert_eq!(short_at(&"中".repeat(20)), "中".repeat(16));
     }
 
     #[test]
@@ -837,5 +908,71 @@ mod tests {
             reason(&json!([{"code": "said", "values": {"text": "greeting"}}])),
             "greeting"
         );
+    }
+
+    #[test]
+    fn search_shows_a_message_that_no_ticket_or_thread_matched() {
+        let view: SearchView = serde_json::from_value(json!({
+            "tickets": [],
+            "threads": [],
+            "items": [{
+                "id": "local-abc123",
+                "source": "local",
+                "actor": { "id": "operator", "name": { "zh": "操作员", "en": "operator" } },
+                "human": true,
+                "at": "2026-11-07T03:42:18.025Z",
+                "preview": "请重试一次部署",
+                "threads": ["local:t-local-abc123"],
+                "threadTitle": "重试部署"
+            }, {
+                "id": "local-def456",
+                "source": "github",
+                "human": false,
+                "preview": "a message with no actor or thread name",
+                "filtered": "sender is not on the allow-list"
+            }]
+        }))
+        .expect("the bundle's search view decodes");
+        let text: Vec<String> = super::search(&view)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            text.iter().any(|line| line.contains("请重试一次部署")),
+            "{text:?}"
+        );
+        assert!(text.iter().any(|line| line.contains("操作员")), "{text:?}");
+        assert!(
+            text.iter().any(|line| line.contains("11-07 03:42")),
+            "the time is shown: {text:?}"
+        );
+        assert!(
+            text.iter().any(|line| line.contains("重试部署")),
+            "{text:?}"
+        );
+        // Without an actor the source stands in, and a message with no thread name gets no
+        // dangling separator.
+        let bare = text
+            .iter()
+            .find(|line| line.contains("no actor or thread name"))
+            .expect("the second message is shown");
+        assert!(bare.contains("github"), "{bare:?}");
+        assert!(
+            bare.contains("no actor or thread name  · filtered: sender is not on the allow-list"),
+            "the preview runs straight into the filter reason, with no empty title: {bare:?}"
+        );
+        assert!(
+            !text.iter().any(|line| line.contains("nothing matched")),
+            "a message hit is a hit: {text:?}"
+        );
+    }
+
+    #[test]
+    fn search_says_nothing_matched_only_when_nothing_did() {
+        let text: Vec<String> = super::search(&SearchView::default())
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(text.last().map(String::as_str), Some("  · nothing matched"));
     }
 }
