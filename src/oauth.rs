@@ -233,7 +233,13 @@ fn store_grant(token: &str) -> Result<(), String> {
     let mut root: Value = match fs::read_to_string(&path) {
         Ok(text) => serde_norway::from_str(&text)
             .map_err(|error| format!("cannot parse {}: {error}", path.display()))?,
-        Err(_) => json!({ "version": 1, "refs": {}, "records": {} }),
+        // Only an absent file is a fresh store. Any other read failure — an unreadable mode, a
+        // truncated write, an I/O error — must not read as "empty": the write below would then
+        // replace the shared file and take DSH's records, including the account grant, with it.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            json!({ "version": 1, "refs": {}, "records": {} })
+        }
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
     if !root.is_object() {
         root = json!({ "version": 1, "records": {} });
@@ -464,7 +470,10 @@ mod tests {
 
     #[test]
     fn stores_the_grant_dsh_reads() {
-        let home = std::env::temp_dir().join(format!("booth-oauth-{}", std::process::id()));
+        // DSH_HOME is process-wide: take the lock or a test running beside this one reads or
+        // writes this directory.
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-{}", uuid_v4()));
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(
             home.join(".credentials.yaml"),
@@ -482,6 +491,58 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// An absent file is the one read failure that means "nothing to keep" and may start fresh.
+    #[test]
+    fn a_missing_credentials_file_starts_a_fresh_store() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-missing-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        std::env::set_var("DSH_HOME", &home);
+
+        store_grant("tok-123").unwrap();
+        let path = home.join(".credentials.yaml");
+        let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["version"], 1);
+        assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");
+        assert!(root["records"][DEVICE_KEY]["payload"]["id"].is_string());
+
+        std::env::remove_var("DSH_HOME");
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The shared store holds DSH's own refs and records, including the account grant. A read
+    /// failure is not an empty store: rewriting it would drop all of that.
+    #[test]
+    fn a_credentials_file_it_cannot_read_is_not_replaced() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-unreadable-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join(".credentials.yaml");
+        std::fs::write(
+            &path,
+            format!(
+                "version: 1\nrecords:\n  keep/me:\n    kind: grant\n    payload: {{}}\n  {GRANT_KEY}:\n    kind: grant\n    payload:\n      token: kept-token\n  {DEVICE_KEY}:\n    kind: grant\n    payload:\n      id: kept-device\n"
+            ),
+        )
+        .unwrap();
+        std::env::set_var("DSH_HOME", &home);
+        use std::os::unix::fs::PermissionsExt;
+        // Readable by no one, writable by its owner: reading fails, rewriting would succeed.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200)).unwrap();
+        let error = store_grant("tok-new").unwrap_err();
+        assert!(error.contains("cannot read"), "{error}");
+
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["records"]["keep/me"]["kind"], "grant");
+        assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "kept-token");
+        assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "kept-device");
+
+        std::env::remove_var("DSH_HOME");
         std::fs::remove_dir_all(&home).ok();
     }
 
