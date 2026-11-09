@@ -5,7 +5,7 @@ one ticket, one thread, one accepted decision and one ignored greeting. `python3
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 ROW = {
  "id":"t-7f3a9c2e1b","title":"Fix the flaky retry test","state":"open","stage":"person",
@@ -47,8 +47,20 @@ ROUTES = {
  "/orchestrator/api/threads": {"items":[THREAD],"total":1,"next_offset":None},
  "/orchestrator/api/decisions": {"items":[DECISION,IGNORED],"next_offset":None},
  "/orchestrator/api/sources": [{"id":"github","kind":"github","title":"GitHub","state":"ready","enabled":True,"installed":True,"health":[{"state":"ready","detail":"ok"}],"stats":{"received":9,"filtered":2,"lastAt":"2026-11-04T10:11:00.000Z"}},{"id":"feishu","kind":"feishu","title":"Feishu","state":"error","enabled":False,"installed":True,"health":[{"state":"error","detail":"bot CLI not configured"}]}],
- "/orchestrator/api/search": {"tickets":[ROW],"threads":[THREAD],"items":[]},
 }
+
+def search(query):
+    """The bundle's `/search` matches on `q`; returning fixed hits for every query would hide a
+    console that dropped it or encoded it wrongly."""
+    q = parse_qs(query, keep_blank_values=True).get("q", [""])[-1].strip().lower()
+    if not q:
+        return {"tickets": [], "threads": [], "items": []}
+
+    def hit(*fields):
+        return any(q in field.lower() for field in fields)
+    tickets = [ROW] if hit(ROW["id"], ROW["title"], ROW["summary"], ROW["note"]) else []
+    threads = [THREAD] if hit(THREAD["key"], THREAD["title"]) else []
+    return {"tickets": tickets, "threads": threads, "items": []}
 
 DENIED = b'{"error":"Same-origin management request required"}'
 
@@ -66,11 +78,14 @@ class H(BaseHTTPRequestHandler):
         return True
     def do_GET(self):
         if not self.guard(): return
-        path = urlparse(self.path).path
+        url = urlparse(self.path)
+        path = url.path
         if path.startswith("/orchestrator/api/tickets/") and path != "/orchestrator/api/tickets":
             body = DETAIL
         elif path.startswith("/orchestrator/api/threads/"):
             body = dict(THREAD); body.update({"timeline":[{"id":"tr-1","source":"github","actor":{"source":"github","id":"alice","name":{"zh":"爱丽丝","en":"Alice"}},"human":True,"at":"2026-11-04T09:00:00.000Z","preview":"@agent please fix this","text":"@agent please fix this"}],"decisions":[DECISION],"correlated":[],"context":[],"earlier":None})
+        elif path == "/orchestrator/api/search":
+            body = search(url.query)
         else:
             body = ROUTES.get(path)
         if body is None:
