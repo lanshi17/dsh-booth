@@ -999,13 +999,18 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
+        // Ctrl+C is the documented quit, so a modal must not consume it: the history search
+        // would otherwise take the 'c' as its query and the login form as the field's text.
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+            self.quit = true;
+            return;
+        }
         if self.modal.is_some() {
             self.modal_key(key);
             return;
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
-                KeyCode::Char('c') => self.quit = true,
                 KeyCode::Char('l') => {
                     self.lines.clear();
                     self.scroll = 0;
@@ -3318,6 +3323,90 @@ mod editor_tests {
         app.cursor = 0;
         app.on_key(ctrl('p'));
         assert_eq!(app.input, "/");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ctrl_c_quits_from_a_modal_and_leaves_its_text_alone() {
+        let (mut app, dir, _env) = editor("ctrl-c-modal");
+        // Before the fix the history search consumed Ctrl+C as a search character.
+        app.modal = Some(Modal::History {
+            query: String::new(),
+            selected: 0,
+        });
+        app.on_key(ctrl('c'));
+        assert!(app.quit, "Ctrl+C quits from the history search");
+        match &app.modal {
+            Some(Modal::History { query, .. }) => {
+                assert!(
+                    query.is_empty(),
+                    "Ctrl+C is not a search character: {query:?}"
+                );
+            }
+            _ => panic!("the history modal is left as it was"),
+        }
+
+        // A login form must not receive a literal 'c' either.
+        app.quit = false;
+        app.modal = Some(Modal::Login(LoginForm::new(0)));
+        let id = match &app.modal {
+            Some(Modal::Login(form)) => form.id.clone(),
+            _ => unreachable!(),
+        };
+        app.on_key(ctrl('c'));
+        assert!(app.quit, "Ctrl+C quits from the login form");
+        match &app.modal {
+            Some(Modal::Login(form)) => assert_eq!(form.id, id, "Ctrl+C never edits a login field"),
+            _ => panic!("the login form is left as it was"),
+        }
+
+        // The OAuth callback URL is another editable field the shortcut used to write into.
+        app.quit = false;
+        app.modal = Some(Modal::OAuth(OAuthState {
+            url: String::new(),
+            status: String::new(),
+            paste: "https://example/callback?code=abc".into(),
+            cursor: 0,
+            attempt: None,
+            cancel: None,
+        }));
+        app.on_key(ctrl('c'));
+        assert!(app.quit, "Ctrl+C quits from the account sign-in");
+        match &app.modal {
+            Some(Modal::OAuth(state)) => assert_eq!(
+                state.paste, "https://example/callback?code=abc",
+                "Ctrl+C is not pasted into the callback URL"
+            ),
+            _ => panic!("the sign-in is left as it was"),
+        }
+
+        // Every other modal honours the same global shortcut.
+        for modal in [
+            Modal::LoginList { selected: 2 },
+            Modal::Model(ModelPick { selected: 1 }),
+            Modal::Keys,
+        ] {
+            app.quit = false;
+            app.modal = Some(modal);
+            app.on_key(ctrl('c'));
+            assert!(app.quit, "Ctrl+C quits from every modal");
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_plain_c_still_types_into_a_modal() {
+        let (mut app, dir, _env) = editor("plain-c-modal");
+        app.modal = Some(Modal::History {
+            query: String::new(),
+            selected: 0,
+        });
+        app.on_key(key(KeyCode::Char('c')));
+        assert!(!app.quit, "'c' alone is not the quit shortcut");
+        match &app.modal {
+            Some(Modal::History { query, .. }) => assert_eq!(query, "c"),
+            _ => panic!("the history modal stays open"),
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
