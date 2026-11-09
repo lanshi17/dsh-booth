@@ -550,6 +550,19 @@ pub fn ticket_detail(view: &TicketDetail) -> Vec<L> {
             delivered,
             clip(&body, 100)
         )));
+        // An input can be delivered and still have been handed back by this ticket: the bundle
+        // keeps the worker's reason beside the trigger. Without it the text view looks as if the
+        // message simply went to the worker, hiding what happened to it.
+        if let Some(reason) = input
+            .trigger
+            .as_ref()
+            .and_then(|trigger| trigger.handback.as_ref())
+            .and_then(|handback| handback.get("reason"))
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty())
+        {
+            lines.push(muted(format!("      handed back: {}", clip(reason, 100))));
+        }
     }
     if !view.threads.is_empty() {
         lines.push(blank());
@@ -805,7 +818,8 @@ pub fn help() -> Vec<L> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{clip, reason, short_at};
+    use super::{clip, reason, short_at, ticket_detail};
+    use crate::model::TicketDetail;
     use serde_json::json;
 
     #[test]
@@ -836,6 +850,53 @@ mod tests {
         assert_eq!(
             reason(&json!([{"code": "said", "values": {"text": "greeting"}}])),
             "greeting"
+        );
+    }
+
+    #[test]
+    fn a_handed_back_input_says_why() {
+        let view: TicketDetail = serde_json::from_value(json!({
+            "inputs": [{
+                "id": "i-1",
+                "kind": "trigger",
+                "delivered": true,
+                "trigger": {
+                    "id": "tr-1",
+                    "human": true,
+                    "preview": "add a filter to the list",
+                    "thread": "local:t-1",
+                    // The bundle keeps the worker's reason beside the delivered trigger.
+                    "handback": { "reason": "Asks for a new feature", "at": "2026-11-04T10:00:00.000Z" }
+                }
+            }, {
+                "id": "i-2",
+                "kind": "trigger",
+                "delivered": true,
+                "trigger": {
+                    "id": "tr-2",
+                    "human": true,
+                    "preview": "fix this",
+                    "thread": "local:t-1"
+                }
+            }]
+        }))
+        .expect("the bundle's ticket view decodes");
+        let shown: Vec<String> = ticket_detail(&view)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let handed_back = shown
+            .iter()
+            .filter(|line| line.contains("handed back"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            handed_back.len(),
+            1,
+            "only the handed-back input carries the reason: {shown:?}"
+        );
+        assert!(
+            handed_back[0].contains("Asks for a new feature"),
+            "a delivered input that was handed back must say why: {shown:?}"
         );
     }
 }
