@@ -281,9 +281,9 @@ port, paste the callback URL into the same window and press Enter — quotes, a 
 bare `code=…&state=…` are accepted. `BOOTH_OAUTH_PORT` picks another port.
 
 A machine that ran an earlier booth is migrated once, on `booth up`: `provider.json` is turned
-into the profile entries and credential refs above, then renamed to `provider.json.migrated`
-and the stale `provider.yml` is deleted. `booth provider` prints the shared view and never a
-secret.
+into the profile entries and credential refs above, keeping the provider it marked `current` as
+the default, then renamed to `provider.json.migrated` and the stale `provider.yml` is deleted.
+`booth provider` prints the shared view and never a secret.
 
 ## Design notes
 
