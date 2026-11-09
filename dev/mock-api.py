@@ -19,7 +19,9 @@ ROW = {
 THREAD = {
  "key":"github:o/r#12","source":"github","title":"Issue #12 flaky retry","stage":"subscribed",
  "lastAt":"2026-11-04T10:12:00.000Z","createdAt":"2026-11-03T08:00:00.000Z","subscriptions":1,"pending":0,
- "tickets":[{"id":ROW["id"],"title":ROW["title"],"state":"open"}],
+ # The bundle sends the full ticket row here, not just id/title/state: /thread shows the
+ # subscribed tickets with their stage, note and timestamp.
+ "tickets":[dict(ROW)],
  "latest":{"actor":{"source":"github","id":"alice","name":{"zh":"爱丽丝","en":"Alice"}},"human":True,"at":"2026-11-04T10:12:00.000Z","preview":"What about option B?"},
  "url":"https://github.com/o/r/issues/12",
 }
@@ -48,11 +50,19 @@ ROUTES = {
  "/orchestrator/api/search": {"tickets":[ROW],"threads":[THREAD],"items":[]},
 }
 
+DENIED = b'{"error":"Same-origin management request required"}'
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def guard(self):
-        if self.headers.get("x-orchestrator-request") != "1":
-            self.send_response(403); self.end_headers(); self.wfile.write(b'{"error":"Same-origin management request required"}'); return False
+        # `sameOrigin()` pins the Host and, when present, the Origin, not just the request header.
+        host = self.headers.get("Host")
+        port = self.server.server_address[1]
+        origin = self.headers.get("Origin")
+        if (host not in (f"127.0.0.1:{port}", f"localhost:{port}")
+                or self.headers.get("x-orchestrator-request") != "1"
+                or (origin is not None and origin != f"http://{host}")):
+            self.send_response(403); self.send_header("content-type","application/json"); self.send_header("content-length",str(len(DENIED))); self.end_headers(); self.wfile.write(DENIED); return False
         return True
     def do_GET(self):
         if not self.guard(): return

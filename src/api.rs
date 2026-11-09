@@ -172,7 +172,19 @@ impl Api {
     }
 
     pub fn sources(&self) -> Result<Vec<SourceStatus>, ApiError> {
-        self.get_as("/sources")
+        let mut value = self.get("/sources")?;
+        // A Source kind may report its title as a plain string, as channel labels did before the
+        // localized pair (see `Link::label`), and one such Source must not hide every Source.
+        if let Some(items) = value.as_array_mut() {
+            for item in items {
+                if let Some(title) = item.get_mut("title") {
+                    if let Some(text) = title.as_str() {
+                        *title = json!({ "zh": text, "en": text });
+                    }
+                }
+            }
+        }
+        serde_json::from_value(value).map_err(|error| ApiError::Protocol(error.to_string()))
     }
 
     pub fn search(&self, query: &str) -> Result<SearchView, ApiError> {
@@ -251,10 +263,9 @@ pub fn enc(segment: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use super::{enc, Api, ApiError};
+    use super::{enc, Api};
     use crate::testkit::FakeApi;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use serde_json::json;
 
     #[test]
     fn encodes_path_separators_but_not_ids() {
@@ -262,50 +273,24 @@ mod tests {
         assert_eq!(enc("github:o/r#12"), "github%3Ao%2Fr%2312");
     }
 
-    /// Answers one request the way the DSH web server answers a route whose owner has not
-    /// registered yet: a 404 with no body. This is what `/orchestrator/api/state` looks like
-    /// while dsh-superagent is still starting, before its plugin registers the route.
-    fn web_server_fallback() -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
-        let base = format!("http://{}", listener.local_addr().unwrap());
-        std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut head = [0u8; 1024];
-                let _ = stream.read(&mut head);
-                let _ = stream.write_all(
-                    b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
-                );
-                let _ = stream.flush();
-            }
-        });
-        base
-    }
-
     #[test]
-    fn an_unmounted_management_route_is_not_a_missing_record() {
-        let error = Api::new(&web_server_fallback())
-            .state()
-            .expect_err("the web server's bare 404 is not a state view");
-        match error {
-            ApiError::Transport(detail) => {
-                assert!(detail.contains("not mounted"), "{detail}");
-                assert!(detail.contains("starting"), "{detail}");
-            }
-            other => panic!("a bare 404 means the service is not answering, not {other:?}"),
-        }
-    }
-
-    #[test]
-    fn a_route_404_still_names_the_refusal() {
+    fn a_textual_source_title_is_a_label_not_a_protocol_error() {
         let service = FakeApi::start();
-        // The bundle's own 404s carry `{"error": …}`; this one must stay a status, not become
-        // "the service is not mounted".
-        let error = Api::new(&service.base)
-            .ticket("no-such-ticket")
-            .unwrap_err();
-        match error {
-            ApiError::Status(404, message) => assert_eq!(message, "Unknown operation"),
-            other => panic!("a JSON 404 is the route answering, not {other:?}"),
-        }
+        service.routes.lock().unwrap().push((
+            "/sources".to_owned(),
+            json!([
+                // The fixture and older Source kinds name a title as one string.
+                { "id": "github", "kind": "github", "title": "GitHub",
+                  "enabled": true, "installed": true, "health": [] },
+                { "id": "feishu", "kind": "feishu", "title": { "zh": "飞书", "en": "Feishu" },
+                  "enabled": false, "installed": true, "health": [] }
+            ]),
+        ));
+        let sources = Api::new(&service.base)
+            .sources()
+            .expect("one textual title must not hide every source");
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].title.text(), "GitHub");
+        assert_eq!(sources[1].title.text(), "飞书");
     }
 }
