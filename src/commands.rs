@@ -64,6 +64,34 @@ fn done(text: impl Into<String>) -> L {
     ))
 }
 
+/// The ticket stages `/tickets` can list. The service coerces an unknown `state` to `open`
+/// (`z.enum(TICKET_FILTERS).catch('open')`), so forwarding a typo would print a heading for a
+/// filter the rows below it do not use; the console rejects it instead.
+const TICKET_STATES: [&str; 5] = ["open", "person", "working", "idle", "ended"];
+
+/// The thread lists `/threads` can ask for. The service coerces an unknown `filter` to
+/// `subscribed`, which would contradict the printed heading in the same way.
+const THREAD_FILTERS: [&str; 4] = ["recent", "subscribed", "evaluating", "all"];
+
+/// One of `allowed`, with `default` for the bare command; the comparison ignores case so a
+/// capitalised filter reaches the service in its canonical spelling.
+fn choice(
+    argument: &str,
+    default: &'static str,
+    allowed: &[&'static str],
+    what: &str,
+) -> Result<&'static str, String> {
+    if argument.is_empty() {
+        return Ok(default);
+    }
+    let wanted = argument.to_ascii_lowercase();
+    allowed
+        .iter()
+        .copied()
+        .find(|value| *value == wanted)
+        .ok_or_else(|| format!("unknown {what} {argument:?}; use {}", allowed.join(" | ")))
+}
+
 /// Runs one command and returns the lines to append to the transcript.
 pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
     let raw = raw.trim();
@@ -97,20 +125,12 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
             format::agents(&view, api.base(), sessions, &memory)
         }
         "/tickets" => {
-            let state = if argument.is_empty() {
-                "open"
-            } else {
-                argument
-            };
+            let state = choice(argument, "open", &TICKET_STATES, "ticket state")?;
             format::ticket_list(&api.tickets(state)?, state)
         }
         "/ticket" => format::ticket_detail(&api.ticket(need("/ticket", argument)?)?),
         "/threads" => {
-            let filter = if argument.is_empty() {
-                "recent"
-            } else {
-                argument
-            };
+            let filter = choice(argument, "recent", &THREAD_FILTERS, "thread filter")?;
             format::thread_list(&api.threads(filter)?, filter)
         }
         "/thread" => format::thread_detail(&api.thread(need("/thread", argument)?)?),
@@ -285,5 +305,37 @@ mod tests {
         assert_eq!(query("/ticket abc"), "ticket");
         assert_eq!(query("TiCk"), "tick");
         assert_eq!(query("/"), "");
+    }
+
+    #[test]
+    fn a_list_filter_is_canonical_or_rejected() {
+        assert_eq!(
+            choice("", "open", &TICKET_STATES, "ticket state").unwrap(),
+            "open"
+        );
+        assert_eq!(
+            choice("PERSON", "open", &TICKET_STATES, "ticket state").unwrap(),
+            "person"
+        );
+        let error = choice("persno", "open", &TICKET_STATES, "ticket state").unwrap_err();
+        assert!(
+            error.contains("persno") && error.contains("person"),
+            "{error}"
+        );
+        assert_eq!(
+            choice("Recent", "recent", &THREAD_FILTERS, "thread filter").unwrap(),
+            "recent"
+        );
+        assert!(choice("lately", "recent", &THREAD_FILTERS, "thread filter").is_err());
+    }
+
+    #[test]
+    fn a_misspelled_list_filter_fails_before_the_request() {
+        // Port 9 is not listening: reaching it would produce a transport error, not this message.
+        let api = Api::new("http://127.0.0.1:9");
+        let error = execute(&api, "/tickets persno").unwrap_err();
+        assert!(error.contains("persno"), "{error}");
+        let error = execute(&api, "/threads lately").unwrap_err();
+        assert!(error.contains("lately"), "{error}");
     }
 }
