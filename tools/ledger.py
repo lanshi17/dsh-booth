@@ -60,11 +60,23 @@ BRACE_REASON = "a closing brace llvm-cov attributes to a later region; the state
 
 def misses() -> list[tuple[str, int]]:
     """The coverage tool's unexplained misses, as (file, line)."""
-    out = subprocess.run(
+    run = subprocess.run(
         ["python3", "tools/changed_lines.py"], capture_output=True, text=True, check=False
-    ).stdout
+    )
+    # The summary line means the measurement ran, even when it exits 1 with misses or a stale
+    # entry — exactly the case this tool rewrites. Without it the run never measured anything,
+    # and rewriting the ledger from that would delete the reviewed entries.
+    measured = any(
+        line.startswith("changed executable lines:") for line in run.stdout.splitlines()
+    )
+    if run.returncode not in (0, 1) or not measured:
+        detail = run.stdout.strip()
+        if not detail and run.stderr.strip():
+            detail = run.stderr.strip().splitlines()[-1]
+        print(f"cannot measure the misses: {detail or f'changed_lines.py exited {run.returncode}'}")
+        sys.exit(1)
     found = []
-    for line in out.splitlines():
+    for line in run.stdout.splitlines():
         # Both forms name the same location: a miss the ledger explains ("excluded") and one it
         # does not ("UNCOVERED"). Regenerating must see both, or the explained entries vanish.
         match = re.match(r"\s+(?:UNCOVERED|excluded)\s+(\S+):(\d+)", line)

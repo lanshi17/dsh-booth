@@ -23,6 +23,10 @@ record() {
 status "versions"
 cat tools/versions.txt 2>/dev/null || { echo "missing tools/versions.txt"; fail=1; }
 
+status "tool tests"
+python3 -m unittest discover -s tools -p 'test_*.py'
+record "tool tests" $?
+
 status "format"
 cargo fmt --check
 record format $?
