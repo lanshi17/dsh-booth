@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -96,6 +96,32 @@ test('an instruction waits while the Source is off', async () => {
     assert.ok(
       await eventually(() => console.received.length === 1),
       'the instruction typed while off arrives once the Source is on',
+    )
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a transient read error does not leave the Source stopped', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const inbox = join(dir, 'booth-inbox.jsonl')
+  const console = booth()
+  try {
+    // A directory at the inbox path makes the read fail without losing the file the test writes
+    // afterwards; any error that ends the watcher has to recover the same way.
+    mkdirSync(inbox)
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    assert.ok(
+      await eventually(() => console.reports.some(report => report.state === 'error')),
+      'the read error is reported',
+    )
+
+    rmSync(inbox, { recursive: true, force: true })
+    writeFileSync(inbox, line('one', 'hi'))
+    assert.ok(
+      await eventually(() => console.received.length === 1, 3000),
+      'the watcher starts again and reads the instruction after the error',
     )
   } finally {
     console.stop()

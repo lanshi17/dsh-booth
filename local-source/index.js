@@ -243,9 +243,16 @@ export function apply(ctx, config = {}) {
     // Registering and watching are separate steps: the watcher is restarted when its own
     // registration survived but the loop ended.
     const source = orchestrator.context(kind)
-    controller = new AbortController()
-    watch(source, controller.signal, files)
+    const running = new AbortController()
+    controller = running
+    watch(source, running.signal, files)
       .catch(error => { report(source, 'error', String(error)) })
+      .finally(() => {
+        // A read or storage error ends the loop without aborting its controller. Clearing the
+        // controller marks the Source as stopped, so the next tick starts a new watcher; a newer
+        // controller installed after a teardown or a registry change is left alone.
+        if (controller === running) controller = undefined
+      })
   }
   const timer = setInterval(() => {
     try {
