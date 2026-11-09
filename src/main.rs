@@ -135,7 +135,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Search tickets, threads and triggers.
+    /// Search tickets, threads and messages.
     Search {
         query: String,
         #[arg(long)]
@@ -166,7 +166,7 @@ fn main() {
     if let Err(error) = result {
         eprintln!("booth: {error}");
         if error.contains("cannot reach") {
-            eprintln!("hint: `booth start` (and `booth init` the first time)");
+            eprintln!("hint: `booth up` (and `booth init` the first time)");
         }
         std::process::exit(1);
     }
@@ -207,7 +207,8 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Provider => show_provider(&api),
         Command::ResetSessions => {
             let cfg = service::Config::from_env()?;
-            match service::reset_sessions(&cfg)? {
+            let work = service::execution_root(&api, &cfg);
+            match service::reset_sessions(&cfg, &work)? {
                 Some(path) => println!("sessions moved to {}", path.display()),
                 None => println!("no sessions to move"),
             }
@@ -286,10 +287,11 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             if json {
                 print_json(&view)
             } else {
+                let work = service::execution_root(&api, &cfg);
                 print_lines(format::agents(
                     &view,
                     api.base(),
-                    service::session_count(&cfg),
+                    service::session_count(&cfg, &work),
                     &service::session_root(&cfg).display().to_string(),
                 ));
                 Ok(())
@@ -427,17 +429,12 @@ mod tests {
 
     #[test]
     fn the_provider_command_says_when_there_is_no_model() {
-        // An empty catalog is a real state (a profile with no model configured).
-        let api = crate::testkit::FakeApi::start();
+        // An empty catalog is a real state (a profile with no model configured). The test's name
+        // is the claim, so it checks the line a person reads, not only the parse below it.
         let empty = crate::provider::Catalog::parse(&serde_json::json!({}));
         assert_eq!(empty.default, None);
-        assert!(cur_or_absent(&api.base));
-    }
-
-    /// The `None` arm, which a live service always fills in.
-    fn cur_or_absent(base: &str) -> bool {
-        let api = Api::new(base);
-        show_provider(&api).is_ok()
+        let lines = provider_lines(&empty);
+        assert!(lines[0].contains("none"), "{lines:?}");
     }
 
     #[test]

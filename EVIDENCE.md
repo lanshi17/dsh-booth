@@ -193,67 +193,85 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
 
 ---
 
-## Evidence Report — `/thread` shows the tickets it counts (round 7)
+## Evidence Report — an acknowledgement no longer hides a silent report
 
-- **Request:** the seventh self-iteration round, which asks for one different real defect, a check
-  run, and a separate PR. The six PRs #12–#17 were out of scope by name.
-- **Source state:** branch `agent/self-iteration-round7-6128d7559fe7`, based on `30279cb`.
-- **Defect:** `format::thread_detail` printed `N subscribed · N pending`, but never the rows.
-  The bundle's `threadDetail` sends `tickets` (a full `ticketLine` per subscription), and the
-  palette says `/thread` shows "timeline, decisions, subscribed tickets". On `30279cb` the view
-  dropped the list and the operator saw only the count.
-- **Before / after:** actual `booth --url http://127.0.0.1:3901 thread 'github:o/r#12'` runs
-  against `dev/mock-api.py`, baseline `30279cb`, changed revision this branch. Only the fixture's
-  `THREAD.tickets` gained the fields the bundle already sends; the before run used that same
-  fixture so the omission is the console's.
+- **Request:** the fourth self-iteration pass — find a different real defect from PR #12–#14's
+  areas, fix it, run the relevant checks and open a separate pull request for review.
+- **Source state:** `30279cb` (`origin/master`) plus this branch. No submodule or dependency
+  change. The change is confined to `App::push_agent` and its tests, a region none of the open
+  PRs (#11–#14) touches.
+- **Entry point:** `tools/gauntlet.sh quick` (the fast layers of the repository's single check
+  entry point) and `tools/smoke.sh`.
+
+### The defect
+
+`App::push_agent` recorded every agent message that named a ticket as that ticket's report. An
+acknowledgement names the ticket, so the normal accepted path — agent acknowledges, then ends the
+ticket without writing a reply — was treated as already reported. `show_tickets` then skipped its
+summary fallback and the console printed only `closed`; the outcome stayed invisible unless
+`/ticket <id>` was run. `README.md` promises the opposite: "A silent report is not lost. When the
+agent did not also send a reply, the console prints the ticket's own summary under
+`◇ ticket … · report`."
+
+Reproduction, driving the real console in a pty against a fixture where the agent acknowledges
+and the ticket ends with a summary but no outbox reply (100×30, same session and keys):
+
+Before (`30279cb`):
 
 ```text
---- before (30279cb)
-tickets       1 subscribed · 0 pending
-
-timeline (1)
-11-04 09:00 爱丽丝           @agent please fix this
-
---- after (this branch)
-tickets       1 subscribed · 0 pending
-
-tickets (1)
-person  t-7f3a9c2e Fix the flaky retry test  11-04 10:12
-           waiting for your answer on the design
-
-timeline (1)
-11-04 09:00 爱丽丝           @agent please fix this
+◆ agent · accepted  abcdef12
+  收到，开始处理
+◇ ticket abcdef12 · working
+◇ ticket abcdef12 · closed
+  · that ticket is closed; the next instruction starts a new one
 ```
 
-### Change
+After (this branch):
 
-- `format::thread_detail` renders a `tickets (N)` section from `ThreadDetail.tickets` using the
-  same rows as `/tickets`, including the note a `person` ticket carries. A thread with no
-  subscriptions keeps the count and gets no empty section.
-- `a_thread_lists_the_tickets_subscribed_to_it` pins both cases, decoding the bundle's JSON shape
-  (a no-subscription thread must not gain a section).
-- `dev/mock-api.py` now sends a full ticket row in the thread detail, matching `ticketLine`
-  instead of the older `id/title/state` subset; this is what made the before capture honest
-  rather than a fixture that could not express the data.
+```text
+◆ agent · accepted  abcdef12
+  收到，开始处理
+◇ ticket abcdef12 · working
+◇ ticket abcdef12 · closed
+◇ ticket abcdef12 · report
+  Reproduced the race; the retry now waits for the queue.
+  · that ticket is closed; the next instruction starts a new one
+```
 
-### Checks
+The capture is the console's own screen output with ANSI sequences stripped; no colour, layout or
+key semantics changed, so there is no frame screenshot difference beyond the transcript line.
+
+### What changed
+
+- `push_agent` marks a ticket reported only for `reply` and `notice` messages; an acknowledgement
+  is shown as before but no longer stands in for the report.
+- `an_acknowledgement_does_not_hide_the_silent_report` is the regression test. On `30279cb` it
+  fails with the transcript above (`◇ ticket abcdef12 · closed` and no summary); it passes after
+  the change.
+- `an_agent_reply_names_its_ticket_and_kind` now pins both sides: an acknowledgement is displayed
+  but does not mark the ticket answered, a reply does.
+
+### Gauntlet (quick, final fresh run, exit 0)
 
 | Layer | Result |
 |---|---|
-| `cargo fmt --check` | clean |
-| `cargo check --all-targets` | 0 errors |
-| `cargo clippy --all-targets -- -D warnings` | 0 warnings |
-| `cargo test` | 132 passed, 0 failed (131 before; one new test) |
-| `tools/gauntlet.sh quick` | all quick layers passed |
-| `tools/smoke.sh` | every one-shot command ran against the fixture |
+| Format | clean |
+| Types | 0 errors |
+| Lint | `clippy --all-targets -- -D warnings` clean |
+| Tests | 132 passed, 0 failed (131 before; one new regression test) |
+| Real execution | `tools/smoke.sh`: every one-shot command ran against `dev/mock-api.py` |
 
-Host note: the suite was run with a deliberately old `gh` first on `PATH`, because
-`setup_uses_a_capable_cli_installed_under_the_state_directory` assumes a host `gh` older than
-2.57. That assumption is present on `30279cb` and is fixed in the open PR #11, not here.
+Host notes: the run exported `BOOTH_SUPERAGENT_DIR` because this worktree's `superagent/`
+submodule is not initialized, and put an older `gh` first on `PATH` because
+`intake::setup_uses_a_capable_cli_installed_under_the_state_directory` assumes the host `gh` is
+older than 2.57 (the same pre-existing host condition recorded by PRs #11–#14). No test or code
+changed for either.
 
-### Not run
+### Material limitations
 
-- Changed-line coverage, mutation, supply chain and the serial/repeated suite were not rerun: the
-  change is a pure formatter addition with one test and no route, dependency or credential change.
-- The interactive TUI was not driven; `/thread` is one-shot text output and the before/after runs
-  above are the real binary against the fixture.
+- No live agent produced the fixture transcript; the pty run uses a local fixture that serves the
+  same routes with the same same-origin guard. The unit tests pin the same two message types.
+- The slower gauntlet layers (changed-line coverage, mutation, supply chain, serial/repeated
+  suite) were not rerun for this pass: the change touches no route, dependency or credential
+  file, and the quick layers are the ones CI runs.
+- A person merges this PR; the agent did not enable auto-merge.
