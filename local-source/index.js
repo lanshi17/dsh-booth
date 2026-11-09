@@ -149,12 +149,21 @@ async function watch(source, signal, files) {
       await delay(files.pollMs, undefined, { signal }).catch(() => {})
       continue
     }
+    let failed = false
     for (const line of lines) {
       try {
         await source.receive(triggerOf(line))
       } catch (error) {
+        failed = true
         report(source, 'error', `Could not deliver ${line.id}: ${error instanceof Error ? error.message : String(error)}`)
+        break
       }
+    }
+    if (failed) {
+      // Leave the cursor before this batch: receive stores a Trigger once by id, so the next
+      // poll skips the lines that did arrive and tries this one again instead of losing it.
+      await delay(files.pollMs, undefined, { signal }).catch(() => {})
+      continue
     }
     cursor = offset
     source.state.set(CURSOR, cursor)
