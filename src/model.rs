@@ -385,10 +385,57 @@ pub struct SourceStatus {
     pub problem: Option<Value>,
 }
 
+/// One message `/search` matched, as the bundle reports it in `SearchView.items`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SearchItem {
+    pub id: String,
+    pub source: String,
+    /// The person or bot the bundle resolved, or its raw id.
+    pub actor: Option<Value>,
+    pub human: bool,
+    pub at: Option<String>,
+    pub preview: String,
+    /// The thread's title, when the bundle could name it.
+    pub thread_title: Option<String>,
+    /// Why a Source filtered the message, when it did not reach a thread.
+    pub filtered: Option<String>,
+    /// The rest of the served view, not rendered here but still printed by `--json`.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SearchView {
     pub tickets: Vec<TicketRow>,
     pub threads: Vec<ThreadRow>,
-    pub items: Vec<Value>,
+    pub items: Vec<SearchItem>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchView;
+    use serde_json::json;
+
+    #[test]
+    fn a_search_item_keeps_the_served_fields_this_view_does_not_render() {
+        let served = json!({
+            "tickets": [],
+            "threads": [],
+            "items": [{
+                "id": "local-abc123",
+                "source": "local",
+                "human": true,
+                "preview": "retry",
+                "actions": { "requeue": true },
+                "text": "the full served text"
+            }]
+        });
+        let view: SearchView =
+            serde_json::from_value(served).expect("a served search view decodes");
+        let printed = serde_json::to_value(&view).expect("the view serializes for --json");
+        assert_eq!(printed["items"][0]["actions"]["requeue"], true);
+        assert_eq!(printed["items"][0]["text"], "the full served text");
+    }
 }
