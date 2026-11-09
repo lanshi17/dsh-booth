@@ -69,6 +69,7 @@ pub struct Reply {
 }
 
 /// Appends one instruction for the Source and returns its id; `thread` continues a ticket's thread.
+/// A record a cut-short write left without its newline is closed first, so it cannot swallow this one.
 pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<String, String> {
     let text = text.trim();
     if text.is_empty() {
@@ -82,10 +83,21 @@ pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<S
         line["thread"] = json!(thread);
     }
     let mut file = OpenOptions::new()
+        .read(true)
         .create(true)
         .append(true)
         .open(inbox(cfg))
         .map_err(|error| format!("cannot write {}: {error}", inbox(cfg).display()))?;
+    // A write cut short — a full disk, an I/O error, a hand edit — leaves a record without its
+    // newline. The Source skips that malformed line, but appending this instruction onto it
+    // would make one line of the damaged record and the new one, so the Source would skip both.
+    // Close the damaged line first so this instruction starts on its own.
+    if ends_mid_record(&mut file)
+        .map_err(|error| format!("cannot write {}: {error}", inbox(cfg).display()))?
+    {
+        file.write_all(b"\n")
+            .map_err(|error| format!("cannot write {}: {error}", inbox(cfg).display()))?;
+    }
     file.write_all(format!("{line}\n").as_bytes())
         .map_err(|error| format!("cannot write {}: {error}", inbox(cfg).display()))?;
     Ok(id)
@@ -737,6 +749,34 @@ mod tests {
         assert_eq!(lines[1]["thread"], "t-1");
         assert!(lines[0]["id"].as_str().unwrap().len() >= 16);
         assert!(send(&cfg, "  ", None).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_cut_short_record_does_not_swallow_the_next_instruction() {
+        // A write cut short — a full disk, an I/O error, a hand edit — leaves a record with no
+        // newline. The Source skips the malformed line, but the next instruction still has to be
+        // its own line: appended to the damaged one it becomes part of the same unparseable line,
+        // and the instruction the console already reported as sent never reaches the agent.
+        let dir = scratch("send-after-a-cut-record");
+        let cfg = config(dir.clone());
+        std::fs::write(inbox(&cfg), "{\"id\":\"cut\",\"text\":\"half").unwrap();
+
+        let id = send(&cfg, "the next instruction", None).unwrap();
+
+        let text = std::fs::read_to_string(inbox(&cfg)).unwrap();
+        // The Source's rule: a complete line is parsed, a malformed one is skipped.
+        let instructions: Vec<Value> = text
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect();
+        assert_eq!(
+            instructions.len(),
+            1,
+            "the next instruction is on a line of its own: {text:?}"
+        );
+        assert_eq!(instructions[0]["id"], id);
+        assert_eq!(instructions[0]["text"], "the next instruction");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
