@@ -1,81 +1,63 @@
-<p align="center"><strong>Codex CLI</strong> is a coding agent from OpenAI that runs locally on your computer.
-<p align="center">
-  <img src="https://github.com/openai/codex/blob/main/.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-</p>
-</br>
-If you want Codex in your code editor (VS Code, Cursor, Windsurf), <a href="https://developers.openai.com/codex/ide">install in your IDE.</a>
-</br>If you want the desktop app experience, run <code>codex app</code> or visit <a href="https://chatgpt.com/codex?app-landing-page=true">the Codex App page</a>.
-</br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a>.</p>
+# Superagent Forge (`codex-forge`)
 
----
+独立的 **Rust 2024 多 Agent 编排**实验仓库。主交付在 [`superagent-forge/`](./superagent-forge/)：领域门禁、Turso 持久化、Git Worktree / 进程监督、OMP·DSH Worker 适配、DAG / MCP stdio、主机侧 Review，以及可签名的合并授权与可选远程 push / OIDC HS256。
 
-## Quickstart
+本仓库已重置为单根提交历史，**不以 OpenAI Codex 产品或上游贡献者为目标**。树内仍可能保留 `codex-rs/`、Bazel、审计材料等历史遗留目录，供对照或评测；它们**不参与** `superagent-forge` 的 Cargo 依赖解析。
 
-### Installing and running Codex CLI
+## 快速开始（Forge）
 
-Run the following on Mac or Linux to install Codex CLI:
-
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```sh
+cd superagent-forge
+cargo build --locked -p forge-cli
+cargo test --workspace --all-targets --locked
+cargo run --locked -p forge-cli -- check --config config/default.toml
+cargo run --locked -p forge-cli -- protocol
 ```
 
-Run the following on Windows to install Codex CLI:
+### MCP stdio（当前可运行入口）
 
-```shell
-powershell -ExecutionPolicy ByPass -c "irm https://chatgpt.com/codex/install.ps1 | iex"
+```sh
+export FORGE_MCP_DB=/tmp/forge.sqlite
+export FORGE_MCP_TOKENS='tok-owner=owner:create,cancel'
+cargo run --locked -p forge-cli -- mcp-stdio
 ```
 
-The standalone installers download from `https://releases.openai.com/codex` by default and fall back to GitHub Releases if a metadata or asset download is unavailable. To force GitHub Releases, set `CODEX_INSTALLER_USE_RELEASES_OPENAI_COM` to `false` (`0` and `no` are also accepted):
+可选 OIDC（三者同时设置）：`FORGE_OIDC_SECRET`、`FORGE_OIDC_ISSUER`、`FORGE_OIDC_AUDIENCE`。
 
-```shell
-curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_INSTALLER_USE_RELEASES_OPENAI_COM=false sh
-```
+协议：`initialize.protocolVersion` 必须为 `2024-11-05`，身份通过 `forgeAuthToken` 解析。已实现工具：`forge_task_create` / `forge_task_status` / `forge_assignment_cancel`。
 
-```powershell
-$env:CODEX_INSTALLER_USE_RELEASES_OPENAI_COM='false'; irm https://chatgpt.com/codex/install.ps1 | iex
-```
+不需要 Node.js 或模型 API Key。沙箱相关测试需要系统 `git`；Linux 上可选 `bwrap`。
 
-Codex CLI can also be installed via the following package managers:
+更完整的说明见 [superagent-forge/README.md](./superagent-forge/README.md)。
 
-```shell
-# Install using npm
-npm install -g @openai/codex
-```
+## 仓库布局
 
-```shell
-# Install using Homebrew
-brew install --cask codex
-```
+| 路径 | 说明 |
+| --- | --- |
+| [`superagent-forge/`](./superagent-forge/) | **主工程**：独立 Cargo Workspace（F0–F5.2） |
+| [`btae-eval/`](./btae-eval/) | 评测 / 隔离执行相关 Workspace（CI `forge-ci` 一并检查） |
+| `codex-rs/`、`codex-cli/`、Bazel 等 | 遗留对照树；非 Forge 构建输入 |
+| [`.github/workflows/`](./.github/workflows/) | 合并门禁以 `blocking-ci` → `forge-ci` 为主 |
 
-Then simply run `codex` to get started.
+## CI
 
-<details>
-<summary>You can also go to the <a href="https://github.com/openai/codex/releases/latest">latest GitHub Release</a> and download the appropriate binary for your platform.</summary>
+合并门禁只要求：
 
-Each GitHub Release contains many executables, but in practice, you likely want one of these:
+- `forge-ci`（`superagent-forge` + `btae-eval`）
+- codespell / cargo-deny / blob-size
+- 汇总作业 `CI required`
 
-- macOS
-  - Apple Silicon/arm64: `codex-aarch64-apple-darwin.tar.gz`
-  - x86_64 (older Mac hardware): `codex-x86_64-apple-darwin.tar.gz`
-- Linux
-  - x86_64: `codex-x86_64-unknown-linux-musl.tar.gz`
-  - arm64: `codex-aarch64-unknown-linux-musl.tar.gz`
+上游 Codex 的 Bazel / `rust-ci` / SDK / postmerge 等已移出自动门禁，仅可手动 `workflow_dispatch`。详见 [docs/CI.md](./docs/CI.md) 与 [`.github/workflows/README.md`](./.github/workflows/README.md)。
 
-Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
+## 文档（Forge）
 
-</details>
+- [架构与边界](./superagent-forge/docs/ARCHITECTURE.md)
+- [领域模型](./superagent-forge/docs/DOMAIN-MODEL.md)
+- [任务协议](./superagent-forge/docs/TASK-PROTOCOL.md)
+- [安全](./superagent-forge/docs/SECURITY.md)
+- [部署](./superagent-forge/docs/DEPLOYMENT.md)
+- [路线图](./superagent-forge/docs/ROADMAP.md)
 
-### Using Codex with your ChatGPT plan
+## License
 
-Run `codex` and select **Sign in with ChatGPT**. We recommend signing into your ChatGPT account to use Codex as part of your Plus, Pro, Business, Edu, or Enterprise plan. [Learn more about what's included in your ChatGPT plan](https://help.openai.com/en/articles/11369540-codex-in-chatgpt).
-
-You can also use Codex with an API key, but this requires [additional setup](https://developers.openai.com/codex/auth#sign-in-with-an-api-key).
-
-## Docs
-
-- [**Codex Documentation**](https://developers.openai.com/codex)
-- [**Contributing**](./docs/contributing.md)
-- [**Installing & building**](./docs/install.md)
-- [**Open source fund**](./docs/open-source-fund.md)
-
-This repository is licensed under the [Apache-2.0 License](LICENSE).
+见根目录 [LICENSE](./LICENSE) 与 [NOTICE](./NOTICE)。树内第三方与遗留组件的许可证声明以各子目录为准。

@@ -16,7 +16,7 @@ cargo run --locked -p forge-cli -- protocol
 
 这些命令不需要 Node.js 或模型凭据。F2 sandbox 测试需要系统 `git` 与（Linux）`bwrap`。F3 测试使用内置假 CLI。MCP 身份来自 `FORGE_MCP_TOKENS`（及可选 OIDC JWT），不是公开匿名接口。
 
-本目录有独立 Cargo Workspace 与 Cargo.lock，可以单独复制并构建；父目录历史 Codex 源码和审计文件不参与依赖解析。
+本目录有独立 Cargo Workspace 与 Cargo.lock，可以单独复制并构建；仓库根目录遗留的 `codex-rs` / Bazel / 审计材料不参与本 Workspace 依赖解析。
 
 - [架构与边界](docs/ARCHITECTURE.md)
 - [领域模型与状态机](docs/DOMAIN-MODEL.md)
