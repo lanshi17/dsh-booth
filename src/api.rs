@@ -211,16 +211,25 @@ fn finish(response: Result<ureq::Response, ureq::Error>) -> Result<Value, ApiErr
             .map_err(|error| ApiError::Protocol(error.to_string())),
         Err(ureq::Error::Status(code, response)) => {
             let body = response.into_string().unwrap_or_default();
-            let message = serde_json::from_str::<Value>(&body)
-                .ok()
-                .and_then(|value| {
-                    value
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .map(str::to_string)
-                })
-                .unwrap_or(body);
-            Err(ApiError::Status(code, message))
+            let message = serde_json::from_str::<Value>(&body).ok().and_then(|value| {
+                value
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            });
+            match (code, message) {
+                // Every 404 dsh-superagent itself writes carries `{"error": …}`, including an
+                // unknown operation. A 404 without one is the DSH web server's fallback for a
+                // route whose owner has not registered yet (it starts listening first), so the
+                // management API is absent rather than answering "not found".
+                (404, None) => Err(ApiError::Transport(
+                    "the management API is not mounted yet; the service is starting or \
+                     restarting, or --url points at another server"
+                        .into(),
+                )),
+                (_, Some(message)) => Err(ApiError::Status(code, message)),
+                (_, None) => Err(ApiError::Status(code, body)),
+            }
         }
         Err(ureq::Error::Transport(error)) => Err(ApiError::Transport(error.to_string())),
     }
@@ -242,11 +251,61 @@ pub fn enc(segment: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use super::enc;
+    use super::{enc, Api, ApiError};
+    use crate::testkit::FakeApi;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     #[test]
     fn encodes_path_separators_but_not_ids() {
         assert_eq!(enc("t-abc_1.2~x"), "t-abc_1.2~x");
         assert_eq!(enc("github:o/r#12"), "github%3Ao%2Fr%2312");
+    }
+
+    /// Answers one request the way the DSH web server answers a route whose owner has not
+    /// registered yet: a 404 with no body. This is what `/orchestrator/api/state` looks like
+    /// while dsh-superagent is still starting, before its plugin registers the route.
+    fn web_server_fallback() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut head = [0u8; 1024];
+                let _ = stream.read(&mut head);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+                let _ = stream.flush();
+            }
+        });
+        base
+    }
+
+    #[test]
+    fn an_unmounted_management_route_is_not_a_missing_record() {
+        let error = Api::new(&web_server_fallback())
+            .state()
+            .expect_err("the web server's bare 404 is not a state view");
+        match error {
+            ApiError::Transport(detail) => {
+                assert!(detail.contains("not mounted"), "{detail}");
+                assert!(detail.contains("starting"), "{detail}");
+            }
+            other => panic!("a bare 404 means the service is not answering, not {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_route_404_still_names_the_refusal() {
+        let service = FakeApi::start();
+        // The bundle's own 404s carry `{"error": …}`; this one must stay a status, not become
+        // "the service is not mounted".
+        let error = Api::new(&service.base)
+            .ticket("no-such-ticket")
+            .unwrap_err();
+        match error {
+            ApiError::Status(404, message) => assert_eq!(message, "Unknown operation"),
+            other => panic!("a JSON 404 is the route answering, not {other:?}"),
+        }
     }
 }
