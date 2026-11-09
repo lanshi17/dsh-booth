@@ -166,7 +166,7 @@ fn main() {
     if let Err(error) = result {
         eprintln!("booth: {error}");
         if error.contains("cannot reach") {
-            eprintln!("hint: `booth start` (and `booth init` the first time)");
+            eprintln!("hint: `booth up` (and `booth init` the first time)");
         }
         std::process::exit(1);
     }
@@ -427,17 +427,12 @@ mod tests {
 
     #[test]
     fn the_provider_command_says_when_there_is_no_model() {
-        // An empty catalog is a real state (a profile with no model configured).
-        let api = crate::testkit::FakeApi::start();
+        // An empty catalog is a real state (a profile with no model configured). The test's name
+        // is the claim, so it checks the line a person reads, not only the parse below it.
         let empty = crate::provider::Catalog::parse(&serde_json::json!({}));
         assert_eq!(empty.default, None);
-        assert!(cur_or_absent(&api.base));
-    }
-
-    /// The `None` arm, which a live service always fills in.
-    fn cur_or_absent(base: &str) -> bool {
-        let api = Api::new(base);
-        show_provider(&api).is_ok()
+        let lines = provider_lines(&empty);
+        assert!(lines[0].contains("none"), "{lines:?}");
     }
 
     #[test]

@@ -53,10 +53,11 @@ pub fn clip(text: &str, max: usize) -> String {
 
 /// `2026-11-04T10:20:30.000Z` -> `11-04 10:20`, local wall clock is not needed for a glance.
 pub fn short_at(iso: &str) -> String {
-    if iso.len() >= 16 && iso.as_bytes().get(10) == Some(&b'T') {
-        format!("{} {}", &iso[5..10], &iso[11..16])
-    } else {
-        iso.chars().take(16).collect()
+    // The slices are only valid on a byte boundary; a timestamp the service sends is ASCII, but
+    // this view is tolerant of whatever JSON arrived and must not panic on the rest.
+    match (iso.as_bytes().get(10), iso.get(5..10), iso.get(11..16)) {
+        (Some(b'T'), Some(date), Some(time)) => format!("{date} {time}"),
+        _ => iso.chars().take(16).collect(),
     }
 }
 
@@ -867,6 +868,15 @@ mod tests {
     fn shortens_iso_timestamps() {
         assert_eq!(short_at("2026-11-04T10:20:30.000Z"), "11-04 10:20");
         assert_eq!(short_at("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn a_multibyte_timestamp_does_not_panic() {
+        // The `T` at byte 10 is not enough to make 5..10 and 11..16 char boundaries: the emoji
+        // starts at 13, so the old slice panicked. Any non-ASCII value now falls back.
+        assert_eq!(short_at("1234567890T01😀"), "1234567890T01😀");
+        // The fallback counts characters, so a long non-ASCII value truncates at 16 of them.
+        assert_eq!(short_at(&"中".repeat(20)), "中".repeat(16));
     }
 
     #[test]
