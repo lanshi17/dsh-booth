@@ -175,10 +175,20 @@ pub fn add_endpoint(cfg: &Config, endpoint: &Endpoint) -> Result<(), String> {
     ] {
         patch.set_value("llm-pi-ai", &["providers", &endpoint.id, key], value);
     }
+    // The profile is shared with the web panel, so an entry may already list more models
+    // than this form knows about, with per-model settings such as its context window. The
+    // login names one model; it must not delete the rest of the provider's catalog.
+    let mut models = models_of(&patch, &endpoint.id);
+    if !models
+        .iter()
+        .any(|model| model.get("id").and_then(Value::as_str) == Some(endpoint.model.as_str()))
+    {
+        models.push(json!({ "id": endpoint.model }));
+    }
     patch.set_value(
         "llm-pi-ai",
         &["providers", &endpoint.id, "models"],
-        json!([{ "id": endpoint.model }]),
+        json!(models),
     );
     write_ref(&reference, &endpoint.key)?;
     patch.set_config(
@@ -186,6 +196,19 @@ pub fn add_endpoint(cfg: &Config, endpoint: &Endpoint) -> Result<(), String> {
         json!({ "provider": endpoint.id, "model": endpoint.model }),
     );
     patch.write(cfg)
+}
+
+/// The model list an existing provider entry carries, so re-registering keeps it.
+fn models_of(patch: &Patch, id: &str) -> Vec<Value> {
+    patch
+        .get("llm-pi-ai")
+        .and_then(|entry| entry.get("config"))
+        .and_then(|config| config.get("providers"))
+        .and_then(|providers| providers.get(id))
+        .and_then(|provider| provider.get("models"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// The credential ref a provider's key is stored under, such as `BOOTH_DEEPSEEK_KEY`.
@@ -606,6 +629,59 @@ mod tests {
     }
 
     #[test]
+    fn re_registering_a_provider_keeps_the_models_it_already_had() {
+        // The profile is shared with the web panel, so the entry may list more models than
+        // this one-model form knows, with per-model settings. Logging in must not delete them.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let entries = json!([{
+            "id": "llm-pi-ai",
+            "config": { "providers": { "openrouter": {
+                "apiKeyEnv": "PANEL_REF",
+                "baseURL": "https://proxy.example/v1",
+                "api": "openai-completions",
+                "models": [
+                    { "id": "a/b", "contextWindow": 1_000_000 },
+                    { "id": "c/d" }
+                ]
+            }}}
+        }]);
+        fs::write(cfg.patch(), serde_json::to_string(&entries).unwrap()).unwrap();
+
+        let endpoint = |model: &str, key: &str| Endpoint {
+            id: "openrouter".into(),
+            display: "OpenRouter".into(),
+            base: "https://openrouter.ai/api/v1".into(),
+            api: "openai-completions".into(),
+            model: model.into(),
+            key: key.into(),
+        };
+        // A model the panel did not list is added beside its models.
+        add_endpoint(&cfg, &endpoint("e/f", "sk-first")).unwrap();
+        // Logging in again for a model that is already listed does not duplicate it.
+        add_endpoint(&cfg, &endpoint("a/b", "sk-second")).unwrap();
+
+        let patch = Patch::read(&cfg).unwrap();
+        let provider = &patch.get("llm-pi-ai").unwrap()["config"]["providers"]["openrouter"];
+        let models = provider["models"].as_array().unwrap();
+        let ids: Vec<&str> = models
+            .iter()
+            .filter_map(|model| model.get("id").and_then(Value::as_str))
+            .collect();
+        assert_eq!(ids, vec!["a/b", "c/d", "e/f"], "{models:?}");
+        assert_eq!(
+            models[0]["contextWindow"], 1_000_000,
+            "per-model settings survive"
+        );
+
+        let credentials = fs::read_to_string(cfg.dsh_home.join(".credentials.yaml")).unwrap();
+        let root: Value = serde_norway::from_str(&credentials).unwrap();
+        assert_eq!(root["refs"]["BOOTH_OPENROUTER_KEY"], "sk-second");
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
     fn storing_a_ref_leaves_other_records_alone_and_stays_private() {
         let _env = crate::testkit::env_lock();
         let cfg = config();
@@ -759,6 +835,48 @@ mod migration_tests {
         let providers = &patch.get("llm-pi-ai").unwrap()["config"]["providers"];
         assert!(providers.get("first").is_some(), "{providers}");
         assert!(providers.get("second").is_some(), "{providers}");
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn migration_keeps_models_the_profile_already_lists() {
+        // The old booth kept its providers beside the profile, so the same route may already
+        // be configured in the panel with more models and per-model settings. Moving the old
+        // provider in must not shrink the catalog the panel serves.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let panel = json!([{
+            "id": "llm-pi-ai",
+            "config": { "providers": { "openrouter": {
+                "apiKeyEnv": "PANEL_REF",
+                "baseURL": "https://openrouter.ai/api/v1",
+                "api": "openai-completions",
+                "models": [
+                    { "id": "a/b", "contextWindow": 1_000_000 },
+                    { "id": "c/d" }
+                ]
+            }}}
+        }]);
+        fs::write(cfg.patch(), serde_json::to_string(&panel).unwrap()).unwrap();
+        fs::write(
+            cfg.state_dir.join("provider.json"),
+            r#"{"current":"openrouter","providers":[{"id":"openrouter","base":"https://openrouter.ai/api/v1","api":"openai-completions","model":"e/f","key":"sk-old"}]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(migrate(&cfg).unwrap(), vec!["openrouter".to_owned()]);
+
+        let patch = Patch::read(&cfg).unwrap();
+        let provider = &patch.get("llm-pi-ai").unwrap()["config"]["providers"]["openrouter"];
+        let models = provider["models"].as_array().unwrap();
+        let ids: Vec<&str> = models
+            .iter()
+            .filter_map(|model| model.get("id").and_then(Value::as_str))
+            .collect();
+        assert_eq!(ids, vec!["a/b", "c/d", "e/f"], "{models:?}");
+        assert_eq!(models[0]["contextWindow"], 1_000_000);
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
     }
 }
