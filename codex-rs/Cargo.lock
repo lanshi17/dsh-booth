@@ -1659,7 +1659,7 @@ dependencies = [
  "codex-utils-absolute-path",
  "codex-utils-path-uri",
  "serde",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "tracing",
 ]
 
@@ -1830,7 +1830,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "tokio-util",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "toml_edit 0.24.0+spec-1.1.0",
  "tracing",
  "tracing-opentelemetry",
@@ -1864,7 +1864,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "tracing",
  "url",
 ]
@@ -2263,7 +2263,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "toml_edit 0.24.0+spec-1.1.0",
  "tonic",
  "tonic-prost",
@@ -2454,7 +2454,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "toml_edit 0.24.0+spec-1.1.0",
  "tonic",
  "tower",
@@ -2530,7 +2530,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "tracing-test",
@@ -2674,7 +2674,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tokio-util",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -2807,7 +2807,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "tokio",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "tracing",
 ]
 
@@ -2821,7 +2821,7 @@ dependencies = [
  "pretty_assertions",
  "schemars 0.8.22",
  "serde",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "tracing",
 ]
 
@@ -3555,7 +3555,7 @@ dependencies = [
  "schemars 0.8.22",
  "serde",
  "tempfile",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -4111,7 +4111,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4308,7 +4308,7 @@ dependencies = [
  "codex-shell-command",
  "pretty_assertions",
  "serde",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -4368,7 +4368,7 @@ version = "0.0.0"
 dependencies = [
  "pretty_assertions",
  "serde_json",
- "toml 0.9.11+spec-1.1.0",
+ "toml 1.0.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -5097,7 +5097,7 @@ dependencies = [
  "openssl-sys",
  "schannel",
  "socket2 0.6.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5112,7 +5112,7 @@ dependencies = [
  "openssl-sys",
  "pkg-config",
  "vcpkg",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -12909,14 +12909,14 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.11+spec-1.1.0"
+version = "1.0.6+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3afc9a848309fe1aaffaed6e1546a7a14de1f935dc9d89d32afd9a44bab7c46"
+checksum = "399b1124a3c9e16766831c6bba21e50192572cdd98706ea114f9502509686ffc"
 dependencies = [
  "indexmap 2.14.0",
  "serde_core",
  "serde_spanned",
- "toml_datetime",
+ "toml_datetime 1.1.3+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 0.7.14",
@@ -12932,13 +12932,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml_datetime"
+version = "1.1.3+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173f25c883cd2176a2d8212155638c0a60d484a9d84546d270866f40f56b6e49"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "toml_edit"
 version = "0.23.10+spec-1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "84c8b9f757e028cee9fa244aea147aab2a9ec09d5325a9b01e0a49730c2b5269"
 dependencies = [
  "indexmap 2.14.0",
- "toml_datetime",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "winnow 0.7.14",
 ]
@@ -12950,7 +12959,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c740b185920170a6d9191122cafef7010bd6270a3824594bff6784c04d7f09e"
 dependencies = [
  "indexmap 2.14.0",
- "toml_datetime",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 0.7.14",
