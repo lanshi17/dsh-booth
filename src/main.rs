@@ -210,6 +210,38 @@ fn show_provider(api: &Api) -> Result<(), String> {
     Ok(())
 }
 
+/// The ticket states `booth tickets` can list, in the service's spelling.
+///
+/// The service parses `state` with `z.enum(TICKET_FILTERS).catch('open')`, so a value outside
+/// this list still answers 200 with the *open* rows while the human heading repeats the value
+/// the person typed. The console grammar rejects that in `commands`; the one-shot flags are
+/// defined here, so the same contract is applied before the request.
+const TICKET_STATES: [&str; 5] = ["open", "person", "working", "idle", "ended"];
+
+/// The thread lists `booth threads` can ask for. The service coerces an unknown `filter` to
+/// `subscribed`, which would contradict the printed heading in the same way.
+const THREAD_FILTERS: [&str; 4] = ["recent", "subscribed", "evaluating", "all"];
+
+/// One of `allowed`, with `default` for an omitted value; matching ignores case so a
+/// capitalised filter reaches the service in the spelling it expects.
+fn list_choice(
+    argument: &str,
+    default: &'static str,
+    allowed: &[&'static str],
+    what: &str,
+) -> Result<&'static str, String> {
+    let argument = argument.trim();
+    if argument.is_empty() {
+        return Ok(default);
+    }
+    let wanted = argument.to_ascii_lowercase();
+    allowed
+        .iter()
+        .copied()
+        .find(|value| *value == wanted)
+        .ok_or_else(|| format!("unknown {what} {argument:?}; use {}", allowed.join(" | ")))
+}
+
 fn run(api: Api, command: Command) -> Result<(), String> {
     match command {
         Command::Init => service::init(&service::Config::from_env()?),
@@ -323,11 +355,12 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             format::overview,
         ),
         Command::Tickets { state, json } => {
-            let view = api.tickets(&state).map_err(String::from)?;
+            let state = list_choice(&state, "open", &TICKET_STATES, "ticket state")?;
+            let view = api.tickets(state).map_err(String::from)?;
             if json {
                 print_json(&view)
             } else {
-                print_lines(format::ticket_list(&view, &state));
+                print_lines(format::ticket_list(&view, state));
                 Ok(())
             }
         }
@@ -341,11 +374,12 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             }
         }
         Command::Threads { filter, json } => {
-            let view = api.threads(&filter).map_err(String::from)?;
+            let filter = list_choice(&filter, "recent", &THREAD_FILTERS, "thread filter")?;
+            let view = api.threads(filter).map_err(String::from)?;
             if json {
                 print_json(&view)
             } else {
-                print_lines(format::thread_list(&view, &filter));
+                print_lines(format::thread_list(&view, filter));
                 Ok(())
             }
         }
@@ -520,5 +554,57 @@ mod tests {
             Some(("deepseek-official".to_owned(), "deepseek-flash".to_owned()))
         );
         assert!(show_provider(&api).is_ok());
+    }
+
+    #[test]
+    fn a_list_argument_is_canonical_or_rejected() {
+        // The service coerces an unknown `state` to `open` and an unknown `filter` to
+        // `subscribed`; the heading would still name the value that was ignored.
+        assert_eq!(
+            list_choice("PERSON", "open", &TICKET_STATES, "ticket state").unwrap(),
+            "person"
+        );
+        assert_eq!(
+            list_choice("", "open", &TICKET_STATES, "ticket state").unwrap(),
+            "open"
+        );
+        let error = list_choice("bogus", "open", &TICKET_STATES, "ticket state").unwrap_err();
+        assert!(error.contains("bogus"), "{error}");
+        assert!(error.contains("working"), "{error}");
+
+        assert_eq!(
+            list_choice("Subscribed", "recent", &THREAD_FILTERS, "thread filter").unwrap(),
+            "subscribed"
+        );
+        let error = list_choice("lately", "recent", &THREAD_FILTERS, "thread filter").unwrap_err();
+        assert!(error.contains("lately"), "{error}");
+        assert!(error.contains("evaluating"), "{error}");
+    }
+
+    #[test]
+    fn a_bad_list_flag_fails_before_the_request() {
+        // A dead port makes the order observable: if the request ran first, the error would be
+        // the transport failure instead of the rejected filter.
+        let api = Api::new("http://127.0.0.1:9");
+        for json in [false, true] {
+            let error = run(
+                api.clone(),
+                Command::Tickets {
+                    state: "bogus".into(),
+                    json,
+                },
+            )
+            .unwrap_err();
+            assert!(error.contains("unknown ticket state"), "{error}");
+        }
+        let error = run(
+            api,
+            Command::Threads {
+                filter: "lately".into(),
+                json: false,
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("unknown thread filter"), "{error}");
     }
 }
