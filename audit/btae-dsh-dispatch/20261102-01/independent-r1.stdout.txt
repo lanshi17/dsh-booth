@@ -1,0 +1,19 @@
+
+running 14 tests
+test duplicate_counter_keys_cannot_silently_replace_the_original_value ... ok
+test absent_optional_buckets_without_total_cannot_prove_all_input ... ok
+test empty_session_identity_is_invalid ... ok
+test absent_cache_is_unknown_even_if_other_usage_fields_are_complete ... ok
+test duplicate_nested_opaque_keys_rejected_without_revealing_payloads ... ok
+test errors_do_not_leak_offending_event_names ... ok
+test failed_limits_poison_the_parser ... ok
+test disjoint_cache_buckets_and_reasoning_are_counted_exactly_once ... ok
+test explicit_cache_buckets_allow_derivation_without_total ... ok
+test interrupted_next_step_must_make_prior_total_incomplete ... ok
+test missing_later_usage_must_not_be_promoted_to_complete_field_totals ... ok
+test parser_error_is_terminal_even_if_a_caller_attempts_to_resume ... ok
+test totals_that_hide_known_cache_or_excess_reasoning_are_rejected ... ok
+test real_full_development_transcript_also_parses_without_retaining_contents ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

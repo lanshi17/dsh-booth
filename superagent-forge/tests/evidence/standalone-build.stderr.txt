@@ -1,0 +1,53 @@
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.27
+   Compiling quote v1.0.47
+   Compiling serde_core v1.0.229
+   Compiling syn v3.0.9
+   Compiling serde v1.0.229
+   Compiling libc v0.2.191
+   Compiling thiserror v2.0.21
+   Compiling getrandom v0.4.3
+   Compiling cfg-if v1.0.5
+   Compiling uuid v1.26.1
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.21
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v1.0.0
+   Compiling anstyle-query v1.1.5
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling anstyle v1.0.14
+   Compiling winnow v1.0.4
+   Compiling zmij v1.0.23
+   Compiling colorchoice v1.0.5
+   Compiling anstream v1.0.0
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling forge-domain v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/domain)
+   Compiling serde_spanned v1.1.2
+   Compiling toml_datetime v0.7.5+spec-1.1.0
+   Compiling forge-agent-protocol v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/agent-protocol)
+   Compiling forge-agent-backend v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/agent-backend)
+   Compiling strsim v0.11.1
+   Compiling winnow v0.7.15
+   Compiling serde_json v1.0.154
+   Compiling heck v0.5.0
+   Compiling toml_writer v1.1.3+spec-1.1.0
+   Compiling clap_lex v1.1.1
+   Compiling clap_builder v4.6.7
+   Compiling toml v0.9.12+spec-1.1.0
+   Compiling clap_derive v4.6.7
+   Compiling forge-review v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/review)
+   Compiling memchr v2.8.3
+   Compiling itoa v1.0.18
+   Compiling forge-application v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/application)
+   Compiling clap v4.6.7
+   Compiling forge-config v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/config)
+   Compiling forge-mcp-server v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/mcp-server)
+   Compiling forge-orchestrator v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/orchestrator)
+   Compiling forge-agent-runtime v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/agent-runtime)
+   Compiling forge-agent-dsh v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/agent-dsh)
+   Compiling forge-agent-omp v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/agent-omp)
+   Compiling forge-cli v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/cli)
+   Compiling forge-worktree v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/worktree)
+   Compiling forge-task-scheduler v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/task-scheduler)
+   Compiling forge-persistence v0.1.0 (/tmp/forge-standalone-frfo5q79/forge/crates/persistence)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.15s

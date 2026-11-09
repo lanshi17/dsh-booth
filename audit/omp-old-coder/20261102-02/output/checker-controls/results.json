@@ -1,0 +1,13 @@
+[
+  {
+    "control": "tampered-source",
+    "rejected": true,
+    "error": "source manifest mismatch"
+  },
+  {
+    "control": "surviving-equivalent-edit",
+    "rejected": true,
+    "error": "equivalent-comment: did not demonstrate a behavioral test failure",
+    "adapter_tests_passed": 27
+  }
+]

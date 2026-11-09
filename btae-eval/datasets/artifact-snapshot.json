@@ -1,0 +1,30 @@
+{
+  "algorithm": "sha256(JSON compact sorted [relative_path,file_sha256] pairs)",
+  "files": [
+    [
+      "README.md",
+      "821692ce2b61b640d519f51a1f578b9433f44d253c5fb07625de573390e84d47"
+    ],
+    [
+      "api.py",
+      "6e71784615d0dedc7dafce516f8f0d349018cd1cc315ef4a2e44593c7ba44f79"
+    ],
+    [
+      "checks.py",
+      "faaeb68965fc986972715aa43150736e911591ebb2f5dc80eb57d730ff6408ef"
+    ],
+    [
+      "domain.py",
+      "ede440d77dfae06a066bb450292605cf4bb30e313ab340f86e3b145d5f63e13c"
+    ],
+    [
+      "service.py",
+      "a5c34a4739bce4db54b531029c68b4fb1dd529545327f3fc82f9c1823bd36faa"
+    ],
+    [
+      "store.py",
+      "cbb31bdacdcf61f9d0dce29d9aa1291d57e864e2d73e6f40658520aa18d74158"
+    ]
+  ],
+  "snapshot_sha256": "718c0b6a3dbaaaed3c193351b30dabd09542666f37ce68b2024ff4bf81e6b4ef"
+}

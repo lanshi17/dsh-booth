@@ -1,0 +1,73 @@
+{
+  "method": "static-path-dep-BFS (crate-relative paths + workspace deps)",
+  "branch": "fix/ci-qualification",
+  "counts": {
+    "orig_workspace_members": 166,
+    "headless_workspace_members": 138,
+    "removed_from_workspace": 32,
+    "added_path_packages": 4,
+    "core_required": 98,
+    "headless_required": 130
+  },
+  "removed_paths": [
+    "ansi-escape",
+    "app-server-test-client",
+    "bwrap",
+    "cli",
+    "cloud-client",
+    "cloud-tasks",
+    "cloud-tasks-client",
+    "cloud-tasks-mock-client",
+    "code-mode-host",
+    "code-mode-runtime",
+    "config-schema",
+    "core-api",
+    "exec-server-cli",
+    "ext/agent",
+    "ext/guardian-v3",
+    "mermaid",
+    "otel-trace-websocket",
+    "plugin-host",
+    "realtime-webrtc",
+    "responses-api-proxy",
+    "stdio-to-uds",
+    "tcp-tunnel",
+    "thread-manager-sample",
+    "tui",
+    "utils/approval-presets",
+    "utils/elapsed",
+    "utils/fuzzy-match",
+    "utils/readiness",
+    "utils/sleep-inhibitor",
+    "v8-poc",
+    "voice-host",
+    "windows-sandbox-service"
+  ],
+  "added_paths": [
+    "app-server/tests/common",
+    "chatgpt",
+    "core/tests/common",
+    "windows-sandbox-rs"
+  ],
+  "verification": {
+    "cargo_check_codex_exec": "pass",
+    "v8_patch_removed": true,
+    "tui_cli_excluded": true
+  },
+  "notes": [
+    "Directories for removed members kept on disk for upstream sync.",
+    "codex-app-server-daemon retained via exec->app-server-client->app-server.",
+    "chatgpt + backend-openapi-models retained after fixing relative path resolution."
+  ],
+  "p1_status": {
+    "workspace_trim": "done",
+    "default_members": [
+      "exec"
+    ],
+    "cargo_check_codex_exec": "pass",
+    "cargo_build_codex_exec": "blocked: libssl-dev missing (no sudo)",
+    "tui_boundary_check": "skips when tui not a workspace member",
+    "justfile": "exec alias points at codex-exec",
+    "p2_external_agent": "deferred per archive plan + superagent-forge ROADMAP"
+  }
+}

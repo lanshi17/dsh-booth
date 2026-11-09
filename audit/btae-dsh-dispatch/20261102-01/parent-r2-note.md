@@ -1,0 +1,3 @@
+# Parent R2 correction
+
+R1 timed out at 600 seconds (exit 124); no worker processes remained. Its full raw transcript ends with final while step 73 / turn 1 is open, so it does not establish normal CLI completion. Host tests passed 53 and initial independent probes passed 14. An additional independent probe then demonstrated that partial usage could report totalTokens below known token buckets. R1 source is archived in revisions/r1. Parent added a checked known-token lower bound (reasoning is an output lower bound when output is absent), a regression test, and documentation. This is an independent parent correction after worker exit, not a successful worker R1 completion claim.

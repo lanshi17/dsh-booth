@@ -1,0 +1,2 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `parent-harness-target/debug/mutant_probe 3`

@@ -1,0 +1,18 @@
+
+running 1 test
+test partial_usage_cannot_report_total_below_already_known_buckets ... FAILED
+
+failures:
+
+---- partial_usage_cannot_report_total_below_already_known_buckets stdout ----
+
+thread 'partial_usage_cannot_report_total_below_already_known_buckets' (2842482) panicked at tests/independent.rs:91:9:
+assertion failed: read_dsh(one_step(u).as_bytes(), DshLimits::default(), Some(0)).is_err()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    partial_usage_cannot_report_total_below_already_known_buckets
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 15 filtered out; finished in 0.00s
+

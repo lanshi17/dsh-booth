@@ -1,0 +1,6 @@
+ Downloading crates ...
+  Downloaded wasm-bindgen-macro v0.2.130
+  Downloaded wasm-bindgen-shared v0.2.130
+  Downloaded js-sys v0.3.107
+  Downloaded wasm-bindgen-macro-support v0.2.130
+  Downloaded wasm-bindgen v0.2.130

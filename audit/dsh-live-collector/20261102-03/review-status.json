@@ -1,0 +1,8 @@
+{
+  "independent_review": "not performed against final source state",
+  "attempt": "OMP fresh review invoked with commandcode/deepseek/deepseek-v4.1-flash",
+  "reason": "fresh OMP attempt ended before a review artifact/verdict; raw events excluded from publication",
+  "rounds_completed": 0,
+  "source_state": "6d48bcee20bfce71f1a147f17765df6ccb08f8a0071e6c40020c307a17e2790c",
+  "full_tier3_assurance": false
+}

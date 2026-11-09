@@ -1,0 +1,148 @@
+{
+  "round": 2,
+  "cap": 2,
+  "source_state": {
+    "tree_sha256": "eee74ab153cc739b0855e1613b19bc9c846ed0f83700d66abbc7cfb610554f70",
+    "manifest_files": 53,
+    "tree_hash_derivation": "sha256(json.dumps(files_sha256,sort_keys=True,separators=(',',':'))) recomputed = declared"
+  },
+  "inputs_received": [
+    "SPEC.md",
+    "source-state.json",
+    "workspace/btae-eval",
+    "verify.py",
+    "instructions/SKILL.md",
+    "instructions/verifier.md"
+  ],
+  "inputs_missing": [
+    "TASK-CONTRACT.md"
+  ],
+  "commands": [
+    {
+      "cmd": "python3 verify.py output/reviewer-baseline",
+      "exit": 0,
+      "result": "tests 0; lint 0; format 0; readiness 1(expected); BOUNDED_REVIEW_GAP_VALIDATION_PASSED"
+    },
+    {
+      "cmd": "cargo test --all-targets --locked --offline -j 2 -- --test-threads=4",
+      "exit": 0,
+      "counts": "57 passed, 0 failed (1+4+26+11+15; 3 zero-test binaries)"
+    },
+    {
+      "cmd": "cargo clippy --all-targets --locked --offline -- -D warnings",
+      "exit": 0
+    },
+    {
+      "cmd": "cargo fmt --all --check",
+      "exit": 0
+    },
+    {
+      "cmd": "cargo run --locked --offline -- check-ready datasets/pilot.json",
+      "exit": 1,
+      "expected": 1
+    },
+    {
+      "cmd": "python3 mutations.py output/reviewer-baseline/mutations",
+      "exit": 0,
+      "result": "3/3 KILLED, all exit 101, named test FAILED, no compile error"
+    },
+    {
+      "cmd": "isolated rerun of 3 mutants with per-mutant CARGO_TARGET_DIR",
+      "exit": 101,
+      "result": "3/3 KILLED at same test/panic lines"
+    },
+    {
+      "cmd": "fresh mutant src/dsh.rs:613 > -> >= then cargo test --all-targets",
+      "exit": 0,
+      "result": "SURVIVED: 26/26 dsh_adapter + all other suites pass"
+    },
+    {
+      "cmd": "scratch exact-line divergence test max_line_bytes=5 feed(b\"12345\")",
+      "exit": 0,
+      "result": "original Ok; mutant LineBytesLimit (test exit 101)"
+    },
+    {
+      "cmd": "tampered source negative control on verify.py",
+      "exit": 1,
+      "result": "RuntimeError: source manifest mismatch"
+    },
+    {
+      "cmd": "equivalent-mutation negative control on mutations.py",
+      "exit": 1,
+      "result": "RuntimeError: did not demonstrate a behavioral test failure"
+    }
+  ],
+  "mutations": [
+    {
+      "id": "reasoning-equality",
+      "site": "src/dsh.rs:960",
+      "change": "> to >=",
+      "test": "reasoning_equal_to_output_is_a_valid_subset_boundary",
+      "outcome": "KILLED",
+      "evidence": "panic tests/dsh_adapter.rs:31 (parse_ok expect); 25 others pass"
+    },
+    {
+      "id": "inclusive-total-limit",
+      "site": "src/dsh.rs:436",
+      "change": "> to >=",
+      "test": "exact_total_byte_limit_accepts_whole_and_chunked_real_transcripts",
+      "outcome": "KILLED",
+      "evidence": "panic tests/dsh_adapter.rs:838 at 511-byte exact limit; 25 others pass"
+    },
+    {
+      "id": "open-step-turn-end",
+      "site": "src/dsh.rs:887-889",
+      "change": "guard deleted",
+      "test": "turn_end_with_an_open_step_is_a_terminal_protocol_error",
+      "outcome": "KILLED",
+      "evidence": "panic tests/dsh_adapter.rs:866 unwrap_err (feed Ok); 25 others pass"
+    }
+  ],
+  "attack_list": [
+    "reproduce baseline",
+    "verify source-state binding/hash derivation",
+    "S1-S4 mapping both directions",
+    "independent isolated mutant reruns",
+    "exact total-byte 511 fixture chunk 1/2/7/full",
+    "exact CRLF line boundary",
+    "exact max_events=1 implicit",
+    "fresh mutation of line-boundary > to >=",
+    "tree_sha256 recomputation",
+    "output-path/test-hash guards",
+    "tampered-source negative control",
+    "equivalent-mutant negative control"
+  ],
+  "findings": [
+    {
+      "id": "F-R2-1",
+      "class": "missing coverage / behavioural boundary untested",
+      "location": "src/dsh.rs:613 vs tests/dsh_adapter.rs",
+      "claim": "No test pins exact max_line_bytes acceptance for a plain-LF record whose newline arrives later; >->>= survives 57/57",
+      "divergence_proof": "max_line_bytes=5, feed(b\"12345\"): original Ok, mutant LineBytesLimit{limit:5}",
+      "proposed_grade": "behavioural coverage gap; add test + mutant entry",
+      "code_likely_correct": true
+    }
+  ],
+  "no_findings": [
+    "S4 comment accurate",
+    "unknown-event rejection present",
+    "CRLF exact line limit covered",
+    "mutation attribution behavioural",
+    "checkers fail closed"
+  ],
+  "untested": [
+    "TASK-CONTRACT.md missing -> contract-vs-spec not performed",
+    "no coverage threshold",
+    "no fuzz/proptest",
+    "no random-order run",
+    "no min-Rust matrix",
+    "no human SPEC approval or human grading",
+    "no production mutation tool",
+    "only 4 mutants exercised"
+  ],
+  "verdict": {
+    "full_protocol": "blocked",
+    "bounded_scope": "named S1-S3 pass + 3/3 mutants reproduced; S4 accurate; 1 non-equivalent survivor",
+    "tier3_guarantee": false
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "files_sha256": {
+    "src/dsh.rs": "75ad89fb705cce4baaf4fbeedcf863957642c1f637802e1aab0279836a156249",
+    "src/lib.rs": "43e16887e9908f9d56e3dec6f3f59c38ae30af8dcc9eb1cafb11c7be0eac8c2d",
+    "tests/dsh_adapter.rs": "b79c10a9d88f334ec4ad736c0c2ce33e9f83f39e8f01ad1febab794fb03df8f3",
+    "protocol/DSH-ADAPTER.md": "f9bddcfa25e9836fd9aa2772cd117267e6e7612abe2ebbeb9bb4767b922b30c3",
+    "tests/fixtures/dsh-live-smoke.jsonl": "7bdac947d4dd8f5922f05714ba561db9f19718908591e7771928a5734fb25d02",
+    "tests/fixtures/dsh-live-development-sanitized.jsonl": "680119fb7e6ab5c4700ca3da5d25fa05fce56af0f886fc60de2460aa251c0c04",
+    "tests/fixtures/dsh-event-key-schema.json": "8db9ecb71df8f390776efe957480de706498b29b1342ac91d73806987badde9c"
+  },
+  "scope": "Only reviewed Rust adapter/module declaration/tests/sanitized fixtures/protocol; no Cargo/runner/dataset/readiness changes."
+}

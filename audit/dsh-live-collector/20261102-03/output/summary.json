@@ -1,0 +1,28 @@
+{
+  "layers": [
+    {
+      "name": "tests",
+      "exit": 0,
+      "expected": 0
+    },
+    {
+      "name": "clippy",
+      "exit": 0,
+      "expected": 0
+    },
+    {
+      "name": "fmt",
+      "exit": 0,
+      "expected": 0
+    },
+    {
+      "name": "readiness",
+      "exit": 1,
+      "expected": 1
+    }
+  ],
+  "manual_mutants_killed": 3,
+  "manual_mutants_total": 3,
+  "formal_pilot": "NOT_RUN",
+  "full_tier3_assurance": false
+}

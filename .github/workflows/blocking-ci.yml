@@ -1,0 +1,48 @@
+name: blocking-ci
+
+# Merge gate for this fork: Forge/BTAE workspaces plus a few cheap repo hygiene
+# checks. Upstream Codex Bazel / rust-ci / SDK suites are not part of the gate.
+on:
+  pull_request: {}
+  push:
+    branches: [main]
+
+jobs:
+  blob-size-policy:
+    name: Blob size policy
+    uses: ./.github/workflows/blob-size-policy.yml
+    secrets: inherit
+
+  cargo-deny:
+    name: cargo-deny
+    uses: ./.github/workflows/cargo-deny.yml
+    secrets: inherit
+
+  codespell:
+    name: Codespell
+    uses: ./.github/workflows/codespell.yml
+
+  forge-ci:
+    name: Independent Rust workspaces
+    uses: ./.github/workflows/forge-ci.yml
+
+  required:
+    name: CI required
+    # Without `always()`, GitHub skips this job after a failed dependency and a
+    # required check can appear successful instead of reporting the failure.
+    if: ${{ always() }}
+    needs:
+      - blob-size-policy
+      - cargo-deny
+      - codespell
+      - forge-ci
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Require successful dependencies
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 .github/scripts/check_ci_results.py
