@@ -633,6 +633,16 @@ pub fn thread_detail(view: &ThreadDetail) -> Vec<L> {
                 .join(" · "),
         ));
     }
+    // The counts above are not the list: `/thread` promises the subscribed tickets too, and
+    // the bundle sends them, so a thread whose tickets were only counted left the operator
+    // without the one thing needed to open the work.
+    if !view.tickets.is_empty() {
+        lines.push(blank());
+        lines.push(section(format!("tickets ({})", view.tickets.len())));
+        for ticket in &view.tickets {
+            lines.extend(ticket_lines(ticket));
+        }
+    }
     lines.push(blank());
     lines.push(section(format!("timeline ({})", view.timeline.len())));
     for item in &view.timeline {
