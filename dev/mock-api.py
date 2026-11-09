@@ -50,11 +50,19 @@ ROUTES = {
  "/orchestrator/api/search": {"tickets":[ROW],"threads":[THREAD],"items":[]},
 }
 
+DENIED = b'{"error":"Same-origin management request required"}'
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
     def guard(self):
-        if self.headers.get("x-orchestrator-request") != "1":
-            self.send_response(403); self.end_headers(); self.wfile.write(b'{"error":"Same-origin management request required"}'); return False
+        # `sameOrigin()` pins the Host and, when present, the Origin, not just the request header.
+        host = self.headers.get("Host")
+        port = self.server.server_address[1]
+        origin = self.headers.get("Origin")
+        if (host not in (f"127.0.0.1:{port}", f"localhost:{port}")
+                or self.headers.get("x-orchestrator-request") != "1"
+                or (origin is not None and origin != f"http://{host}")):
+            self.send_response(403); self.send_header("content-type","application/json"); self.send_header("content-length",str(len(DENIED))); self.end_headers(); self.wfile.write(DENIED); return False
         return True
     def do_GET(self):
         if not self.guard(): return
