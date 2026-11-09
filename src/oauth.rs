@@ -491,12 +491,7 @@ mod tests {
         .unwrap();
         let previous = std::env::var_os("DSH_HOME");
         std::env::set_var("DSH_HOME", &home);
-        let stored = store_grant("tok-123");
-        match previous {
-            Some(value) => std::env::set_var("DSH_HOME", value),
-            None => std::env::remove_var("DSH_HOME"),
-        }
-        stored.unwrap();
+        store_grant("tok-123", "device-1").unwrap();
         let path = home.join(".credentials.yaml");
         let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");
@@ -516,16 +511,17 @@ mod tests {
         let _env = crate::testkit::env_lock();
         let home = std::env::temp_dir().join(format!("booth-oauth-missing-{}", uuid_v4()));
         std::fs::create_dir_all(&home).unwrap();
+        let previous = std::env::var_os("DSH_HOME");
         std::env::set_var("DSH_HOME", &home);
 
-        store_grant("tok-123").unwrap();
+        store_grant("tok-123", "device-1").unwrap();
         let path = home.join(".credentials.yaml");
         let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["version"], 1);
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");
-        assert!(root["records"][DEVICE_KEY]["payload"]["id"].is_string());
+        assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "device-1");
 
-        std::env::remove_var("DSH_HOME");
+        restore_dsh_home(previous);
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -544,11 +540,12 @@ mod tests {
             ),
         )
         .unwrap();
+        let previous = std::env::var_os("DSH_HOME");
         std::env::set_var("DSH_HOME", &home);
         use std::os::unix::fs::PermissionsExt;
         // Readable by no one, writable by its owner: reading fails, rewriting would succeed.
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o200)).unwrap();
-        let error = store_grant("tok-new").unwrap_err();
+        let error = store_grant("tok-new", "device-2").unwrap_err();
         assert!(error.contains("cannot read"), "{error}");
 
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
@@ -558,7 +555,7 @@ mod tests {
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "kept-token");
         assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "kept-device");
 
-        std::env::remove_var("DSH_HOME");
+        restore_dsh_home(previous);
         std::fs::remove_dir_all(&home).ok();
     }
 
