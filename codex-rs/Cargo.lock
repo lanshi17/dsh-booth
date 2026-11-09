@@ -888,7 +888,7 @@ dependencies = [
  "http 0.2.12",
  "http 1.4.0",
  "http-body 0.4.6",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "pin-project-lite",
  "pin-utils",
  "tokio",
@@ -936,7 +936,7 @@ dependencies = [
  "http 0.2.12",
  "http 1.4.0",
  "http-body 0.4.6",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "itoa",
  "num-integer",
@@ -981,7 +981,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -1012,7 +1012,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "mime",
  "pin-project-lite",
@@ -2057,7 +2057,7 @@ dependencies = [
  "codex-http-client",
  "codex-utils-rustls-provider",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "pretty_assertions",
  "rcgen",
@@ -3138,7 +3138,7 @@ dependencies = [
  "curl",
  "futures",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "httpdate",
  "native-tls",
  "opentelemetry 0.31.0",
@@ -5097,7 +5097,7 @@ dependencies = [
  "openssl-sys",
  "schannel",
  "socket2 0.6.3",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5112,7 +5112,7 @@ dependencies = [
  "openssl-sys",
  "pkg-config",
  "vcpkg",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7427,9 +7427,9 @@ dependencies = [
 
 [[package]]
 name = "http-body"
-version = "1.0.1"
+version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1efedce1fb8e6913f23e0c92de8e62cd5b772a67e7b3946df930a62566c93184"
+checksum = "ca2a8f2913ee65f60facd6a5905613afaa448497a0230cc41ce022d93290bc2c"
 dependencies = [
  "bytes",
  "http 1.4.0",
@@ -7444,7 +7444,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "pin-project-lite",
 ]
 
@@ -7496,7 +7496,7 @@ dependencies = [
  "futures-core",
  "h2",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "httparse",
  "httpdate",
  "itoa",
@@ -7564,7 +7564,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "hyper",
  "ipnet",
  "libc",
@@ -10367,7 +10367,7 @@ dependencies = [
  "const_format",
  "fnv",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "itoa",
  "memchr",
@@ -10769,7 +10769,7 @@ dependencies = [
  "futures-util",
  "h2",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "hyper",
  "hyper-rustls",
@@ -10815,7 +10815,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -10879,7 +10879,7 @@ dependencies = [
  "chrono",
  "futures",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "indexmap 2.14.0",
  "libc",
@@ -12065,7 +12065,7 @@ checksum = "c123f296ade4ec4b8b0f6162116e6629f5146922ca5ab40ca9d3c2e73ab4761e"
 dependencies = [
  "bytes",
  "futures-util",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "pin-project-lite",
 ]
@@ -12983,7 +12983,7 @@ dependencies = [
  "bytes",
  "h2",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "http-body-util",
  "hyper",
  "hyper-timeout",
@@ -13071,7 +13071,7 @@ dependencies = [
  "bytes",
  "futures-util",
  "http 1.4.0",
- "http-body 1.0.1",
+ "http-body 1.1.0",
  "iri-string",
  "pin-project-lite",
  "tower",
