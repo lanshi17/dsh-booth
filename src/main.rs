@@ -207,7 +207,8 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Provider => show_provider(&api),
         Command::ResetSessions => {
             let cfg = service::Config::from_env()?;
-            match service::reset_sessions(&cfg)? {
+            let work = service::execution_root(&api, &cfg);
+            match service::reset_sessions(&cfg, &work)? {
                 Some(path) => println!("sessions moved to {}", path.display()),
                 None => println!("no sessions to move"),
             }
@@ -286,10 +287,11 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             if json {
                 print_json(&view)
             } else {
+                let work = service::execution_root(&api, &cfg);
                 print_lines(format::agents(
                     &view,
                     api.base(),
-                    service::session_count(&cfg),
+                    service::session_count(&cfg, &work),
                     &service::session_root(&cfg).display().to_string(),
                 ));
                 Ok(())
