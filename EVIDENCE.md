@@ -193,82 +193,55 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
 
 ---
 
-## Evidence Report — the message results `/search` already returned (Tier 3)
+## Evidence Report — the provider migration keeps the selected model
 
-- **Request:** the second self-iteration round — find a different real defect from PR #12's
-  outbox reader, fix it, run the checks and open a separate pull request for review.
-- **Source state:** `30279cb` (`origin/master`) plus this branch. No submodule change.
-- **Entry point:** `tools/gauntlet.sh` with its default base, the last release tag (`v0.2.0`).
+- **Spec approval:** not obtained; this is a third self-iteration round asked for directly on top
+  of `master`, and the standing Must NOT list still applies (no submodule change, no dependency).
+- **Source state:** `30279cb` (`v0.2.0`) plus the commit this section records.
+- **Entry point:** `tools/gauntlet.sh`; base `v0.2.0` (the last release tag).
 
-### The defect
+### What was wrong
 
-The bundle's `GET /search` searches Triggers as well as tickets and threads, and returns those
-message hits in `items`. `format::search` rendered only `tickets` and `threads`, and decided
-"nothing matched" from those two alone. A query that matched only a message therefore reported
-silence even though the service had answered with the hit; `--json` printed it, so the console
-and the one-shot command disagreed about the same view.
-
-One-route fixture serving the bundle's shape with one `items` entry and no tickets or threads,
-`booth search 重试` on the baseline:
+An earlier booth stored its providers as `{ "current": "<id>", "providers": [...] }`, and the old
+overlay wrote `agent-default-model` from `current`. The one-time migration registers each entry
+with `add_endpoint`, which also points the default at that entry, so the provider *last* in the
+file silently replaced the user's choice. Reproduction on `30279cb`:
 
 ```text
-search · 0 tickets · 0 threads
-  · nothing matched
+$ cargo test migration_keeps_the_provider_that_was_current
+...
+assertion `left == right` failed: the old current wins
+  left: String("second")
+ right: "first"
 ```
 
-while the same command's `--json` output printed the item under `items` at the same time.
-
-### What changed
-
-- `SearchView.items` now decodes the fields the console draws (`SearchItem`: actor, human, `at`,
-  preview, thread title, filter reason) and keeps every other served field in a flattened map, so
-  `--json` still carries the whole view.
-- `format::search` prints a `messages` section with time, actor (or source), preview, thread title
-  and filter reason; its header counts the hits; "nothing matched" now requires all three lists
-  to be empty. The console's `/search` runs the same formatter.
-- The palette and the CLI's help name messages rather than decisions/triggers, which is what the
-  route returns.
-
-The same fixture and command after the change:
-
-```text
-search · 0 tickets · 0 threads · 1 messages
-
-messages
-11-07 03:42 操作员           请重试一次部署，上一次卡在导出了  · 重试部署
-```
-
-The capture is the command's real plain-text output with the terminal's default colours.
-There is no layout or colour change to the console frame, so no TUI screenshot comparison
-applies; the console path is the same `format::search`, and the new tests pin it.
+The migration now remembers the entry named by `current` and restores it with `set_default` after
+the loop. A file without `current`, or whose `current` entry has no key and is skipped, keeps the
+old behavior.
 
 ### Gauntlet (final fresh run, exit 0)
 
 | Layer | Result |
 |---|---|
-| Tests | 134 passed, 0 failed (131 before; three new tests) |
+| Tests | 132 passed, 0 failed |
 | Format / types / lint | clean; clippy `-D warnings` |
-| Changed-line coverage | 99/99 changed executable lines covered, 0 exclusions |
-| Mutation | 9 caught, 0 missed, 0 equivalents |
+| Changed-line coverage | 34/34 changed executable lines, 0 listed exclusions |
+| Mutation | 4 caught, 0 missed, 0 timed out, 0 unviable |
 | Supply chain | `cargo audit --deny warnings` clean |
 | Suite health | serial order, then 3 repeats |
 | Secrets | clean, with its negative control |
-| Real execution | every one-shot command against the fixture, including `search`; the before/after capture above |
+| Real execution | every one-shot command against `dev/mock-api.py` |
 
-The two per-diff ledgers (`tools/coverage_excludes.txt`, `tools/mutant_equivalents.txt`) were
-regenerated for this change: neither has a miss or a survivor to explain, and the tools fail on
-last change's entries once they stop being misses/survivors, so those were removed. Their
-reasons remain in this file and in git history.
+The per-diff ledgers were reset: both held entries from the previous change, and this diff has no
+miss or survivor to list.
 
-### Material limitations
+Host notes: the run exported `BOOTH_SUPERAGENT_DIR` because this worktree's `superagent/`
+submodule is not initialized, and put an older `gh` first on `PATH` because the existing gh test
+assumes that host condition (the same pre-existing failure recorded by PRs #12/#13). No test or
+code changed for either.
 
-- **A pre-existing test is host-dependent.** `intake::api_tests::setup_uses_a_capable_cli_installed_under_the_state_directory`
-  assumes the host `gh` is older than 2.57; this machine has 2.63.2, so `gh::ensure` correctly
-  prefers the system CLI and the test fails on unmodified `master`. Open PRs #11 and #12 fix that
-  test. The gauntlet run above put an old `gh` first on `PATH` — the condition the test means to
-  create — so every layer ran; this change does not touch that test or the outbox reader.
-- The bundle paginates search items at 20 and the console does not ask for more; that limit is
-  unchanged here.
-- Only the fields the console draws are typed; everything else in a served item is preserved for
-  `--json`, but a future view field still has to be added deliberately to be drawn.
-- A person merges this PR; the agent did not enable auto-merge.
+### Honest notes
+
+- No live upgrade of a real old profile was run; the regression test builds the documented old
+  `provider.json` shape, and the existing migration tests still pass.
+- `README.md` now says the migration keeps `current`; no other user-facing behavior changed.
