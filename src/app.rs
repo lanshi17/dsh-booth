@@ -706,8 +706,13 @@ impl App {
 
     /// Shows one message the agent wrote back: an acknowledgement, a reply, or a notice.
     fn push_agent(&mut self, reply: intake::Reply) {
-        if let Some(ticket) = &reply.ticket {
-            self.replied.insert(ticket.clone());
+        // Only a reply or a notice reports on the work; an acknowledgement only says the agent
+        // took the instruction up. Counting it as the report would hide the ticket's summary
+        // whenever the worker later ends the ticket without writing one.
+        if reply.kind != "acknowledgement" {
+            if let Some(ticket) = &reply.ticket {
+                self.replied.insert(ticket.clone());
+            }
         }
         let label = match reply.kind.as_str() {
             "acknowledgement" => "agent · accepted",
@@ -2864,6 +2869,37 @@ mod transcript_tests {
     }
 
     #[test]
+    fn an_acknowledgement_does_not_hide_the_silent_report() {
+        // The normal accepted path: the agent acknowledges the instruction, then ends the ticket
+        // with its report in the ticket but no reply. The summary is the only report shown, so the
+        // acknowledgement must not stand in for it.
+        let (mut app, dir, _env) = console("ack-silent");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        app.push_agent(intake::Reply {
+            id: "a1".into(),
+            kind: "acknowledgement".into(),
+            text: "收到".into(),
+            ticket: Some("abcdef1234567890".into()),
+        });
+        app.show_tickets(vec![TicketRow {
+            id: "abcdef1234567890".into(),
+            state: "ended".into(),
+            stage: "idle".into(),
+            summary: Some("the worker changed the README".into()),
+            ..TicketRow::default()
+        }]);
+        let shown = text(&app);
+        assert!(shown.contains("abcdef12 · report"), "{shown}");
+        assert!(shown.contains("the worker changed the README"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_declined_instruction_shows_the_agents_sentence() {
         let (mut app, dir, _env) = console("declined");
         app.push_decision(&Decision {
@@ -2914,9 +2950,17 @@ mod transcript_tests {
         assert!(shown.contains("abcdef12"), "{shown}");
         assert!(shown.contains("收到"), "{shown}");
         assert!(
-            app.replied.contains("abcdef1234567890"),
-            "the ticket is marked answered"
+            !app.replied.contains("abcdef1234567890"),
+            "an acknowledgement does not stand in for the report"
         );
+        // A reply or a notice does report on the work, so no summary fallback follows it.
+        app.push_agent(intake::Reply {
+            id: "m2".into(),
+            kind: "reply".into(),
+            text: "done".into(),
+            ticket: Some("abcdef1234567890".into()),
+        });
+        assert!(app.replied.contains("abcdef1234567890"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
