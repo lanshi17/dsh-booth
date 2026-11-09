@@ -58,6 +58,12 @@ def main() -> int:
     print(f"mutants: {caught} caught, {missed} missed, {timed_out} timeout, "
           f"{unviable} unviable, {total} total")
 
+    # cargo-mutants writes `end_time` when the lab finishes; an interrupted or aborted run
+    # leaves it null, so the outcomes it managed to write are only part of the run.
+    finished = bool(report.get("end_time"))
+    if not finished:
+        print(f"the run did not finish (no end_time in {path}); not a pass")
+
     listed = equivalents()
     unfinished = 0
     survivors: list[str] = []
@@ -82,12 +88,14 @@ def main() -> int:
             print(f"  {summary.upper():<11} {name}")
 
     unexplained = [name for name in survivors if name not in listed]
-    stale = [name for name in listed if name not in survivors]
+    # Only a finished run shows that a listed equivalent stopped surviving; a run cut short
+    # may merely not have reached it.
+    stale = [name for name in listed if name not in survivors] if finished else []
     for name in stale:
         print(f"  STALE       {name} — no longer survives; remove it from {EQUIVALENTS}")
 
-    # An unfinished run is not evidence of a clean layer.
-    if not unexplained and not stale and timed_out == 0 and unfinished == 0:
+    # An interrupted run is not evidence of a clean layer, however clean its outcomes so far.
+    if finished and not unexplained and not stale and timed_out == 0 and unfinished == 0:
         print(f"every mutant was caught or is a listed equivalent ({len(listed)} listed)")
         return 0
     print(f"{len(unexplained)} unexplained survivor(s), {timed_out} timed out, "
