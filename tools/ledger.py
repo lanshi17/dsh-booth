@@ -19,41 +19,48 @@ import sys
 LEDGER = "tools/coverage_excludes.txt"
 
 # Why a line in this function cannot run in a unit test. Every reason is a claim about the code,
-# not about coverage.
+# not about coverage. Keys are `<file>::<fn>`: the same name in another module is a different
+# function, and a bare name would let a miss there inherit a reason that was never about it.
 REASONS = {
     # Terminal frames: only a pty renders them, and the pty run is recorded in EVIDENCE.
-    "draw": "the whole frame is drawn here; only a pty observes it, and the pty run is in EVIDENCE",
-    "draw_modal": "modal dispatch into a frame: pty only",
-    "draw_model": "drawn into a frame: pty only",
-    "draw_composer": "drawn into a frame: pty only",
-    "draw_keys": "drawn into a frame: pty only",
-    "draw_history": "drawn into a frame: pty only",
-    "draw_oauth": "drawn into a frame: pty only",
-    "draw_login": "drawn into a frame: pty only",
-    "draw_login_list": "drawn into a frame: pty only",
-    "draw_working": "drawn into a frame: pty only",
-    "draw_splash": "drawn into a frame: pty only",
-    "draw_palette": "drawn into a frame: pty only",
+    "src/app.rs::draw": (
+        "the whole frame is drawn here; only a pty observes it, and the pty run is in EVIDENCE"
+    ),
+    "src/app.rs::draw_modal": "modal dispatch into a frame: pty only",
+    "src/app.rs::draw_model": "drawn into a frame: pty only",
+    "src/app.rs::draw_composer": "drawn into a frame: pty only",
+    "src/app.rs::draw_keys": "drawn into a frame: pty only",
+    "src/app.rs::draw_history": "drawn into a frame: pty only",
+    "src/app.rs::draw_oauth": "drawn into a frame: pty only",
+    "src/app.rs::draw_login": "drawn into a frame: pty only",
+    "src/app.rs::draw_login_list": "drawn into a frame: pty only",
+    "src/app.rs::draw_working": "drawn into a frame: pty only",
+    "src/app.rs::draw_splash": "drawn into a frame: pty only",
     # A poll thread posts its result; the same call is covered directly.
-    "refresh_status": "runs on the poll thread; the call it makes is covered directly",
+    "src/app.rs::refresh_status": "runs on the poll thread; the call it makes is covered directly",
     # Branches that need a real process or service.
-    "start": "spawns the service, so a unit test cannot reach it",
-    "service_start": "spawns the service, so a unit test cannot reach it",
-    "show_provider": "its only effect is printing; the lines it prints are tested through provider_lines",
-    "run": "the CLI dispatcher, reached only through `main`",
+    "src/service.rs::start": "spawns the service, so a unit test cannot reach it",
+    "src/main.rs::show_provider": (
+        "its only effect is printing; the lines it prints are tested through provider_lines"
+    ),
+    # `run` is also the console's event loop in `src/app.rs`: the same name, a different
+    # function with a different reason, so the key names the file.
+    "src/main.rs::run": "the CLI dispatcher, reached only through `main`",
     # The exchange answers only over the network.
-    "exchange": "asks platform.deepseek.com; a unit test must not open that socket",
+    "src/oauth.rs::exchange": "asks platform.deepseek.com; a unit test must not open that socket",
     # Assertions that only run when they fail.
-    "the_model_picker_opens_on_the_current_choice": "assertion failure message",
-    "the_picker_moves_both_ways_and_stops_at_the_ends": "assertion failure message",
-    "the_login_form_edits_one_field_at_a_time": "assertion failure message",
-    "an_incomplete_login_form_stays_open_with_a_reason": "assertion failure message",
-    "provider_and_model_read_from_the_service": "assertion failure message",
-    "an_api_key_login_writes_the_profile_and_a_credential_ref": "assertion failure message",
-    "an_unreadable_layer_is_reported_rather_than_ignored": "assertion failure message",
+    "src/app.rs::the_model_picker_opens_on_the_current_choice": "assertion failure message",
+    "src/app.rs::the_picker_moves_both_ways_and_stops_at_the_ends": "assertion failure message",
+    "src/app.rs::the_login_form_edits_one_field_at_a_time": "assertion failure message",
+    "src/app.rs::an_incomplete_login_form_stays_open_with_a_reason": "assertion failure message",
+    "src/app.rs::provider_and_model_read_from_the_service": "assertion failure message",
+    "src/app.rs::an_api_key_login_writes_the_profile_and_a_credential_ref": "assertion failure message",
+    "src/service.rs::an_unreadable_layer_is_reported_rather_than_ignored": "assertion failure message",
     # The sign-in path restarts the service, which a unit test must not do.
-    "apply": "the OAuth success branch restarts the service, which a unit test must not do",
-    "migrate": "the `?` that propagates a failed add_endpoint; the success path is covered",
+    "src/app.rs::apply": "the OAuth success branch restarts the service, which a unit test must not do",
+    "src/provider.rs::migrate": (
+        "the `?` that propagates a failed add_endpoint; the success path is covered"
+    ),
 }
 # A closing brace reports a region the compiler attributes to its neighbour; the statement above
 # it is covered, which is what the entry would claim anyway.
@@ -107,7 +114,9 @@ def explain(path: str, line: int) -> str | None:
     if "panic!" in body or "_ => panic" in body:
         return "assertion failure message: evaluated only when that assertion fails"
     name = enclosing_function(path, line)
-    return REASONS.get(name)
+    # A bare name would explain a miss in another module's function that happens to share it;
+    # the reason is a claim about this one file's function.
+    return REASONS.get(f"{path}::{name}")
 
 
 def main() -> int:
@@ -118,7 +127,7 @@ def main() -> int:
         reason = explain(path, line)
         if reason is None:
             unknown += 1
-            print(f"needs a reason: {path}:{line} in {enclosing_function(path, line)}()")
+            print(f"needs a reason: {path}:{line} in {path}::{enclosing_function(path, line)}()")
             continue
         entries.append(f"{path}:{line} {reason}")
 
