@@ -1397,6 +1397,11 @@ impl App {
             self.modal = Some(Modal::History { query, selected });
             return;
         }
+        // The query is text: a control chord is not the letter it is bound to.
+        if is_control_letter(&key) {
+            self.modal = Some(Modal::History { query, selected });
+            return;
+        }
         match key.code {
             KeyCode::Esc => return,
             KeyCode::Up => selected = selected.saturating_sub(1),
@@ -1583,6 +1588,14 @@ impl App {
     }
 
     fn login_key(&mut self, key: KeyEvent, mut form: LoginForm) {
+        // The fields are text: a control chord is a shortcut or a paste attempt, not the letter
+        // it carries. Before this guard Ctrl+U typed "u" into the id and Ctrl+V put a "v" at the
+        // front of the API key, which then failed to match. Ctrl+Alt is left alone because some
+        // layouts report AltGr that way and it does compose characters.
+        if is_control_letter(&key) {
+            self.modal = Some(Modal::Login(form));
+            return;
+        }
         match key.code {
             KeyCode::Esc => return,
             KeyCode::Tab => {
@@ -2595,6 +2608,14 @@ fn char_to_byte(text: &str, index: usize) -> usize {
         .unwrap_or(text.len())
 }
 
+/// A control chord that carries a letter must not be inserted as that letter into a text field.
+/// Ctrl+Alt is exempt: on some platforms that is AltGr, which composes real characters.
+fn is_control_letter(key: &KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL)
+        && !key.modifiers.contains(KeyModifiers::ALT)
+        && matches!(key.code, KeyCode::Char(_))
+}
+
 fn insert_char(text: &mut String, cursor: usize, ch: char) {
     let byte = char_to_byte(text, cursor);
     text.insert(byte, ch);
@@ -3406,6 +3427,84 @@ mod editor_tests {
         match &app.modal {
             Some(Modal::History { query, .. }) => assert_eq!(query, "c"),
             _ => panic!("the history modal stays open"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_control_chord_is_not_typed_into_a_modal_field() {
+        let (mut app, dir, _env) = editor("modal-control");
+        // The login form's fields are plain text: a control chord is a shortcut or a paste
+        // attempt, never the letter it is bound to. Before the fix Ctrl+U typed "u" into the
+        // id and Ctrl+V put a "v" at the front of the API key, which then failed to match.
+        app.modal = Some(Modal::Login(LoginForm::new(0)));
+        let id = match &app.modal {
+            Some(Modal::Login(form)) => form.id.clone(),
+            _ => unreachable!(),
+        };
+        for chord in ['u', 'v', 'r', 'w'] {
+            app.on_key(ctrl(chord));
+        }
+        match &app.modal {
+            Some(Modal::Login(form)) => {
+                assert_eq!(form.id, id, "a control chord is not typed into the id");
+                assert_eq!(form.cursor, 0, "it does not move the cursor either");
+            }
+            _ => panic!("the form stays open"),
+        }
+        // Plain characters still edit the field.
+        typed(&mut app, "x");
+        match &app.modal {
+            Some(Modal::Login(form)) => assert!(form.id.starts_with('x'), "{}", form.id),
+            _ => panic!("the form stays open"),
+        }
+
+        // The key field is where a stray Ctrl+V would corrupt the secret.
+        for _ in 1..5 {
+            app.on_key(key(KeyCode::Tab));
+        }
+        app.on_key(ctrl('v'));
+        match &app.modal {
+            Some(Modal::Login(form)) => {
+                assert_eq!(form.field, 5);
+                assert!(
+                    form.key.is_empty(),
+                    "Ctrl+V stores no key text: {:?}",
+                    form.key
+                );
+            }
+            _ => panic!("the form stays open"),
+        }
+
+        // The history query is text too, and Ctrl+R keeps walking the matches.
+        app.modal = Some(Modal::History {
+            query: String::new(),
+            selected: 0,
+        });
+        app.on_key(ctrl('w'));
+        match &app.modal {
+            Some(Modal::History { query, .. }) => assert!(query.is_empty(), "{query:?}"),
+            _ => panic!("the search stays open"),
+        }
+        app.modal = None;
+        app.history = vec!["first".into(), "second".into()];
+        app.on_key(ctrl('r'));
+        assert!(
+            matches!(
+                app.modal,
+                Some(Modal::History {
+                    query: _,
+                    selected: 0
+                })
+            ),
+            "Ctrl+R still opens the search"
+        );
+        app.on_key(ctrl('r'));
+        match &app.modal {
+            Some(Modal::History { selected, .. }) => {
+                assert_eq!(*selected, 1, "a repeated Ctrl+R walks to the older match")
+            }
+            _ => panic!("the search stays open"),
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
