@@ -646,10 +646,13 @@ pub fn thread_detail(view: &ThreadDetail) -> Vec<L> {
     lines.push(blank());
     lines.push(section(format!("timeline ({})", view.timeline.len())));
     for item in &view.timeline {
+        // The bundle projects an automated notice as an actor with an empty id and no name;
+        // `actor` cannot name that, so fall back to the Source that sent it.
         let who = item
             .actor
             .as_ref()
             .map(actor)
+            .filter(|name| !name.is_empty())
             .unwrap_or_else(|| item.source.clone());
         let at = item.at.as_deref().map(short_at).unwrap_or_default();
         lines.push(Line::from(vec![
