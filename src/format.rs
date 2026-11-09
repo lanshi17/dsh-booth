@@ -635,10 +635,13 @@ pub fn thread_detail(view: &ThreadDetail) -> Vec<L> {
     lines.push(blank());
     lines.push(section(format!("timeline ({})", view.timeline.len())));
     for item in &view.timeline {
+        // The bundle projects an automated notice as an actor with an empty id and no name;
+        // `actor` cannot name that, so fall back to the Source that sent it.
         let who = item
             .actor
             .as_ref()
             .map(actor)
+            .filter(|name| !name.is_empty())
             .unwrap_or_else(|| item.source.clone());
         let at = item.at.as_deref().map(short_at).unwrap_or_default();
         lines.push(Line::from(vec![
@@ -805,7 +808,8 @@ pub fn help() -> Vec<L> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{clip, reason, short_at};
+    use super::{clip, reason, short_at, thread_detail};
+    use crate::model::ThreadDetail;
     use serde_json::json;
 
     #[test]
@@ -819,6 +823,55 @@ mod tests {
     fn shortens_iso_timestamps() {
         assert_eq!(short_at("2026-11-04T10:20:30.000Z"), "11-04 10:20");
         assert_eq!(short_at("not-a-date"), "not-a-date");
+    }
+
+    #[test]
+    fn an_automated_notice_names_its_source_in_the_timeline() {
+        let view: ThreadDetail = serde_json::from_value(json!({
+            "key": "github:o/r#12",
+            "source": "github",
+            "title": "Issue #12 flaky retry",
+            "stage": "subscribed",
+            "timeline": [{
+                "id": "tr-1",
+                "source": "github",
+                "actor": { "source": "github", "id": "alice", "name": { "zh": "爱丽丝", "en": "Alice" } },
+                "human": true,
+                "at": "2026-11-04T09:00:00.000Z",
+                "preview": "@agent please fix this"
+            }, {
+                // The bundle projects an automated notice as an actor with an empty id and no
+                // name. It is not "some actor with no name": the source is the sender we know.
+                "id": "tr-2",
+                "source": "github",
+                "actor": { "source": "github", "id": "" },
+                "human": false,
+                "at": "2026-11-04T09:05:00.000Z",
+                "preview": "workflow retry failed"
+            }],
+            "decisions": []
+        }))
+        .expect("the bundle's thread view decodes");
+        let shown: Vec<String> = thread_detail(&view)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let notice = shown
+            .iter()
+            .find(|line| line.contains("workflow retry failed"))
+            .expect("the automated notice is shown");
+        assert!(
+            notice.contains("github"),
+            "an automated notice must name its Source, not leave the sender blank: {notice:?}"
+        );
+        let human = shown
+            .iter()
+            .find(|line| line.contains("@agent please fix this"))
+            .expect("the human message is shown");
+        assert!(
+            human.contains("爱丽丝"),
+            "a named actor still wins over the Source: {human:?}"
+        );
     }
 
     #[test]
