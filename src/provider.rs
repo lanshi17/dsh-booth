@@ -227,7 +227,13 @@ fn write_ref(name: &str, secret: &str) -> Result<(), String> {
     let mut root: Value = match fs::read_to_string(&path) {
         Ok(text) => serde_norway::from_str(&text)
             .map_err(|error| format!("cannot parse {}: {error}", path.display()))?,
-        Err(_) => json!({ "version": 1, "refs": {}, "records": {} }),
+        // Only an absent file is a fresh store. Any other read failure — an unreadable mode, a
+        // truncated write, an I/O error — must not read as "empty": the write below would then
+        // replace the shared file and take every other ref and DSH's records with it.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            json!({ "version": 1, "refs": {}, "records": {} })
+        }
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
     };
     if !root.is_object() {
         root = json!({ "version": 1, "refs": {}, "records": {} });
@@ -506,6 +512,34 @@ mod tests {
         let root: Value = serde_norway::from_str(&text).unwrap();
         assert_eq!(root["refs"]["A_KEY"], "secret");
         assert_eq!(root["version"], 1);
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn a_credentials_file_it_cannot_read_is_not_replaced() {
+        // The shared store holds DSH's own refs and records, including the account grant. A
+        // read failure is not an empty store: rewriting it would drop all of that.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let path = cfg.dsh_home.join(".credentials.yaml");
+        fs::write(
+            &path,
+            "version: 1\nrefs:\n  KEEP_ME: keep\nrecords:\n  deepseek/grant:\n    kind: grant\n    payload:\n      token: t\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        // Readable by no one, writable by its owner: reading fails, rewriting would succeed.
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o200)).unwrap();
+        let error = write_ref("NEW_KEY", "n").unwrap_err();
+        assert!(error.contains("cannot read"), "{error}");
+
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["refs"]["KEEP_ME"], "keep", "the other refs survive");
+        assert_eq!(root["records"]["deepseek/grant"]["payload"]["token"], "t");
+        assert!(root["refs"].get("NEW_KEY").is_none(), "no key was written");
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
     }
 
