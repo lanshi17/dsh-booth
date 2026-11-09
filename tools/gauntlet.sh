@@ -80,8 +80,12 @@ status "suite health (random order, repeated)"
 # EVIDENCE records it as SUBSTITUTED rather than as the real layer.
 cargo test -- --test-threads=1
 record "suite health (serial)" $?
-for _ in 1 2 3; do cargo test --quiet || { record "suite health (repeat)" 1; break; }; done
-record "suite health (repeat)" 0
+# Record the repeat layer once: a failed repeat must not be overwritten by a later PASS line.
+repeat=0
+for _ in 1 2 3; do
+  cargo test --quiet || { repeat=$?; break; }
+done
+record "suite health (repeat)" "$repeat"
 
 status "secrets"
 tools/secrets.sh
