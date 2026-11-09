@@ -45,6 +45,8 @@ src/app.rs:3606 assertion failure message: evaluated only when that assertion fa
 src/app.rs:3612 assertion failure message: evaluated only when that assertion fails
 src/intake.rs:284 a closing brace llvm-cov attributes to a later region; the statement above is covered
 src/main.rs:207 the CLI dispatcher, reached only through `main`
+src/oauth.rs:157 asks platform.deepseek.com; a unit test must not open that socket
+src/oauth.rs:166 asks platform.deepseek.com; a unit test must not open that socket
 src/provider.rs:245 a closing brace llvm-cov attributes to a later region; the statement above is covered
 src/provider.rs:349 the `?` that propagates a failed add_endpoint; the success path is covered
 src/service.rs:148 spawns the service, so a unit test cannot reach it

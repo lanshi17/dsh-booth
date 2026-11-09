@@ -154,7 +154,7 @@ pub fn exchange(attempt: &Attempt, code: &str) -> Result<(), String> {
         "code": code,
         "code_verifier": attempt.verifier,
         "redirect_uri": attempt.redirect_uri,
-        "device_id": device,
+        "device_id": &device,
         "device_model": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
         "os_version": os_version(),
     });
@@ -163,7 +163,7 @@ pub fn exchange(attempt: &Attempt, code: &str) -> Result<(), String> {
         .get("token")
         .and_then(Value::as_str)
         .ok_or("auth_exchange returned no token")?;
-    store_grant(token)
+    store_grant(token, &device)
 }
 
 fn post(method: &str, body: &Value) -> Result<Value, String> {
@@ -228,7 +228,7 @@ pub fn account_signed_in() -> bool {
         .is_some_and(|token| !token.is_empty())
 }
 
-fn store_grant(token: &str) -> Result<(), String> {
+fn store_grant(token: &str, device: &str) -> Result<(), String> {
     let path = credentials_path()?;
     let mut root: Value = match fs::read_to_string(&path) {
         Ok(text) => serde_norway::from_str(&text)
@@ -247,12 +247,12 @@ fn store_grant(token: &str) -> Result<(), String> {
         .as_object_mut()
         .ok_or("credentials `records` is not a map")?;
 
-    if !records.contains_key(DEVICE_KEY) {
-        records.insert(
-            DEVICE_KEY.to_owned(),
-            json!({ "kind": "grant", "payload": { "id": uuid_v4() } }),
-        );
-    }
+    // Keep the device the exchange just named. A different id here would mean the platform
+    // registered one device and the next sign-in presented another.
+    records.insert(
+        DEVICE_KEY.to_owned(),
+        json!({ "kind": "grant", "payload": { "id": device } }),
+    );
     records.insert(
         GRANT_KEY.to_owned(),
         json!({
@@ -422,6 +422,16 @@ fn os_version() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
+/// Put `DSH_HOME` back the way a test found it: the tests below share one process, so a value
+/// one of them overwrites is another one's starting state.
+#[cfg(test)]
+fn restore_dsh_home(previous: Option<std::ffi::OsString>) {
+    match previous {
+        Some(value) => std::env::set_var("DSH_HOME", value),
+        None => std::env::remove_var("DSH_HOME"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,24 +474,29 @@ mod tests {
 
     #[test]
     fn stores_the_grant_dsh_reads() {
-        let home = std::env::temp_dir().join(format!("booth-oauth-{}", std::process::id()));
+        // DSH_HOME is process-wide: take the lock and put it back, or a test running beside
+        // this one reads or writes this directory.
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-{}", uuid_v4()));
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(
             home.join(".credentials.yaml"),
             "version: 1\nrecords:\n  keep/me:\n    kind: grant\n    payload: {}\n",
         )
         .unwrap();
+        let previous = std::env::var_os("DSH_HOME");
         std::env::set_var("DSH_HOME", &home);
-        store_grant("tok-123").unwrap();
+        store_grant("tok-123", "device-1").unwrap();
         let path = home.join(".credentials.yaml");
         let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");
         assert_eq!(root["records"][GRANT_KEY]["payload"]["issuer"], ORIGIN);
-        assert!(root["records"][DEVICE_KEY]["payload"]["id"].is_string());
+        assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "device-1");
         assert!(root["records"]["keep/me"].is_object());
         use std::os::unix::fs::PermissionsExt;
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+        restore_dsh_home(previous);
         std::fs::remove_dir_all(&home).ok();
     }
 
@@ -540,10 +555,58 @@ mod device_tests {
         .unwrap();
         assert_eq!(device_id().unwrap(), "kept-device");
 
-        match previous {
-            Some(value) => std::env::set_var("DSH_HOME", value),
-            None => std::env::remove_var("DSH_HOME"),
-        }
+        restore_dsh_home(previous);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    /// `exchange` reads the device id before the network call and stores the grant after it.
+    /// Both must be the same device: the platform registers the grant against the id it was
+    /// shown, so storing another one means the next sign-in presents an unknown device.
+    #[test]
+    fn the_grant_is_stored_beside_the_device_that_signed_in() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-signin-device-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+
+        let signed_in_with = device_id().unwrap();
+        store_grant("tok", &signed_in_with).unwrap();
+        assert_eq!(
+            device_id().unwrap(),
+            signed_in_with,
+            "the grant is stored beside the device the exchange used"
+        );
+
+        // A second sign-in presents the same device instead of inventing another one.
+        store_grant("tok-2", &signed_in_with).unwrap();
+        assert_eq!(device_id().unwrap(), signed_in_with);
+
+        restore_dsh_home(previous);
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod env_tests {
+    use super::restore_dsh_home;
+    use std::ffi::{OsStr, OsString};
+
+    /// Both shapes of "put DSH_HOME back": a caller may have had it set, or not set at all.
+    #[test]
+    fn dsh_home_is_restored_either_way() {
+        let _env = crate::testkit::env_lock();
+        let previous = std::env::var_os("DSH_HOME");
+
+        restore_dsh_home(Some(OsString::from("/tmp/booth-restored-home")));
+        assert_eq!(
+            std::env::var_os("DSH_HOME").as_deref(),
+            Some(OsStr::new("/tmp/booth-restored-home"))
+        );
+
+        restore_dsh_home(None);
+        assert!(std::env::var_os("DSH_HOME").is_none());
+
+        restore_dsh_home(previous);
     }
 }
