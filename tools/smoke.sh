@@ -22,7 +22,9 @@ free_port() {
   python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()'
 }
 listening() {
-  curl -s --max-time 1 -o /dev/null "$1/" 2>/dev/null
+  # Loopback only: an HTTP proxy from the environment would answer (or fail) in the
+  # fixture's place, so no probe may be routed through it.
+  curl -s --noproxy '*' --max-time 1 -o /dev/null "$1/" 2>/dev/null
 }
 if listening "$base"; then
   if [ -n "${SMOKE_PORT:-}" ]; then
@@ -44,7 +46,7 @@ trap 'kill "$server" 2>/dev/null; wait "$server" 2>/dev/null' EXIT
 ready=0
 for _ in $(seq 1 50); do
   jobs -rp | grep -qx "$server" || break
-  if curl -sf --max-time 1 -H 'x-orchestrator-request: 1' "$base/orchestrator/api/state" >/dev/null 2>&1; then
+  if curl -sf --noproxy '*' --max-time 1 -H 'x-orchestrator-request: 1' "$base/orchestrator/api/state" >/dev/null 2>&1; then
     ready=1
     break
   fi
