@@ -219,9 +219,16 @@ fn serve(
             let method = parts.next().unwrap_or_default().to_owned();
             let path = parts.next().unwrap_or_default().to_owned();
             let body = text.split("\r\n\r\n").nth(1).unwrap_or_default().to_owned();
-            let guarded = text
-                .to_ascii_lowercase()
-                .contains("x-orchestrator-request: 1");
+            // The same-origin guard is a header. Scanning the whole request would accept a
+            // headerless save whose body happens to contain the header text, which is exactly
+            // the mistake this fake exists to catch.
+            let head_block = text.split("\r\n\r\n").next().unwrap_or_default();
+            let guarded = head_block.lines().any(|line| {
+                line.split_once(':').is_some_and(|(name, value)| {
+                    name.trim().eq_ignore_ascii_case("x-orchestrator-request")
+                        && value.trim() == "1"
+                })
+            });
 
             // A queued failure answers this PUT instead of the normal handler. Only a PUT pops
             // one: a GET must not swallow a failure meant for the save that follows it.
@@ -317,4 +324,68 @@ fn block_mut<'a>(settings: &'a mut Value, name: &str) -> Option<&'a mut Value> {
             .find(|source| source.get("id").and_then(Value::as_str) == Some(id));
     }
     settings.get_mut("blocks")?.get_mut(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::time::Duration;
+
+    /// Sends one raw request, so a test can leave out a header the real client always sets.
+    fn raw(base: &str, request: &str) -> String {
+        let addr = base.strip_prefix("http://").expect("a loopback base");
+        let mut stream = TcpStream::connect(addr).expect("connect to the fake");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        response
+    }
+
+    fn status(response: &str) -> u16 {
+        response
+            .split_whitespace()
+            .nth(1)
+            .and_then(|code| code.parse().ok())
+            .expect("a status line")
+    }
+
+    fn save_policy(header: Option<&str>, body: &str) -> String {
+        let header = header.map(|value| format!("x-orchestrator-request: {value}\r\n"));
+        format!(
+            "PUT /orchestrator/api/settings/policy HTTP/1.1\r\n\
+             host: 127.0.0.1\r\n\
+             content-type: application/json\r\n\
+             content-length: {}\r\n\
+             {}\
+             connection: close\r\n\
+             \r\n\
+             {body}",
+            body.len(),
+            header.unwrap_or_default()
+        )
+    }
+
+    #[test]
+    fn the_same_origin_header_must_be_a_header_not_body_text() {
+        let api = FakeApi::start();
+        // A settings value can hold arbitrary text; it must not stand in for the header.
+        let body = r#"{"value":{"note":"x-orchestrator-request: 1"},"revision":0}"#;
+        let response = raw(&api.base, &save_policy(None, body));
+        assert_eq!(status(&response), 403, "{response}");
+        assert_eq!(api.put_count(), 0, "a refused request must not save");
+    }
+
+    #[test]
+    fn a_request_with_the_same_origin_header_is_accepted() {
+        let api = FakeApi::start();
+        let body = r#"{"value":{"note":"a save"},"revision":0}"#;
+        let response = raw(&api.base, &save_policy(Some("1"), body));
+        assert_eq!(status(&response), 200, "{response}");
+        assert_eq!(api.put_count(), 1);
+    }
 }
