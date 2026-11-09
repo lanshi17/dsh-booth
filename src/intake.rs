@@ -431,7 +431,9 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
             ))
         }
     };
-    let directory = (!directory.is_empty()).then(|| directory.to_owned());
+    // The management API only accepts an absolute `executor.directory`; expand the one home
+    // form a user can type here, and refuse the rest before anything is saved.
+    let directory = ticket_directory(directory)?;
 
     // A newer gh unlocks the GitHub front door; the system one still lets the agent push.
     // `BOOTH_NO_GH_INSTALL` keeps a test or an offline machine from a 13 MB download.
@@ -629,6 +631,40 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
         inbox(cfg).display()
     )));
     Ok(lines)
+}
+
+/// The ticket directory `/setup` hands the service, or `None` to leave the default in place.
+///
+/// The executor settings validate `directory` as an absolute path, and an empty value keeps
+/// `<stateDir>/work`. A slash command has no shell in front of it, so the README's
+/// `/setup owner/name ~/src/work` used to reach the service as the literal `~/src/work` and the
+/// save was refused after the repository, policy and console Source had already been written.
+/// Expand the one home form a person can type, and refuse a relative path here — before the
+/// first save — rather than leave a half-written setup behind.
+fn ticket_directory(directory: &str) -> Result<Option<String>, String> {
+    if directory.is_empty() {
+        return Ok(None);
+    }
+    let expanded = if directory == "~" {
+        home()?
+    } else if let Some(rest) = directory.strip_prefix("~/") {
+        format!("{}/{}", home()?.trim_end_matches('/'), rest)
+    } else if directory.starts_with('/') {
+        directory.to_owned()
+    } else {
+        return Err(format!(
+            "{directory} is not an absolute path; the ticket directory must be one, such as /work or ~/work"
+        ));
+    };
+    Ok(Some(expanded))
+}
+
+/// `HOME`, which is what `~` means to the service's executor as well.
+fn home() -> Result<String, String> {
+    std::env::var("HOME")
+        .ok()
+        .filter(|home| !home.is_empty())
+        .ok_or_else(|| "HOME is not set, so ~ cannot be expanded; give an absolute path".to_owned())
 }
 
 /// The pause before the single retry of a CLI the kernel refused to execute.
@@ -1467,6 +1503,110 @@ mod api_tests {
         assert_eq!(executor["value"]["directory"], "/tmp/ticket work");
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn a_ticket_directory_is_a_home_path_or_absolute() {
+        let _env = env_lock();
+        // The test needs a real HOME to expand, and restores exactly the one it found.
+        let previous = std::env::var("HOME").expect("the test needs a HOME to expand");
+        std::env::set_var("HOME", "/tmp/booth-home-probe");
+        assert_eq!(ticket_directory("").unwrap(), None);
+        assert_eq!(
+            ticket_directory("~").unwrap().as_deref(),
+            Some("/tmp/booth-home-probe")
+        );
+        assert_eq!(
+            ticket_directory("~/src/work").unwrap().as_deref(),
+            Some("/tmp/booth-home-probe/src/work")
+        );
+        // The service's own rule: an absolute directory, spaces and all.
+        assert_eq!(
+            ticket_directory("/tmp/ticket work").unwrap().as_deref(),
+            Some("/tmp/ticket work")
+        );
+        let error = ticket_directory("work").unwrap_err();
+        assert!(error.contains("absolute"), "{error}");
+
+        // A HOME that already ends with a slash does not double it.
+        std::env::set_var("HOME", "/tmp/booth-home-probe/");
+        assert_eq!(
+            ticket_directory("~/src/work").unwrap().as_deref(),
+            Some("/tmp/booth-home-probe/src/work")
+        );
+
+        std::env::remove_var("HOME");
+        let error = ticket_directory("~/work").unwrap_err();
+        assert!(error.contains("HOME"), "{error}");
+
+        std::env::set_var("HOME", previous);
+    }
+
+    #[test]
+    fn setup_expands_the_home_a_ticket_directory_may_start_with() {
+        // The README shows `/setup owner/name ~/src/work`, but the executor only accepts an
+        // absolute `directory`: sent literally, the `~` made the last save answer 400 after the
+        // repository, policy and console Source had already been written.
+        let _env = env_lock();
+        let dir = scratch("setup-home-dir");
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp  use with --paginate';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        // The test does not set HOME: expanding the real one is what it checks, and changing it
+        // would need restoring after a panic.
+        let home = std::env::var("HOME").expect("the test expands ~ against HOME");
+
+        let api = FakeApi::start();
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r ~/ticket work");
+        std::env::remove_var("BOOTH_GH");
+
+        let text: String = lines
+            .unwrap()
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let wanted = format!("{}/ticket work", home.trim_end_matches('/'));
+        assert!(text.contains(wanted.as_str()), "{text}");
+        let executor = api
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(name, _)| name == "executor")
+            .map(|(_, body)| body.clone())
+            .unwrap();
+        assert_eq!(executor["value"]["directory"], wanted);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn setup_refuses_a_relative_ticket_directory_before_it_saves_anything() {
+        // A relative path cannot be resolved by the service (its executor runs elsewhere), so
+        // the console names the rule instead of failing on the last of four saves.
+        let _env = env_lock();
+        let dir = scratch("setup-relative-dir");
+        let gh = dir.join("gh");
+        std::fs::write(&gh, "#!/bin/sh\necho tester\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        let error = setup(&Api::new(&api.base), &cfg(&dir), "o/r work").unwrap_err();
+        std::env::remove_var("BOOTH_GH");
+        assert!(error.contains("absolute"), "{error}");
+        assert_eq!(
+            api.put_count(),
+            0,
+            "nothing is written for a directory the service would refuse"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
