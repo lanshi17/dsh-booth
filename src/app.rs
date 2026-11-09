@@ -69,6 +69,18 @@ const LOGIN_METHODS: &[(&str, &str)] = &[
     ("Custom endpoint", "any OpenAI-compatible base URL"),
 ];
 
+/// One ticket poll: the open rows plus what a tracked ticket's detail said, the total behind the
+/// open page, and the person count when the page was too short to carry every open ticket.
+///
+/// The page is a window (`limit=50`), so its length is not the number of open tickets. Carrying
+/// the total lets the header say 120 open while the page holds 50, and a tracked ticket missing
+/// from the window is looked up by id instead of being called closed.
+struct TicketPoll {
+    rows: Vec<crate::model::TicketRow>,
+    open_total: u32,
+    person: Option<u32>,
+}
+
 enum Msg {
     Lines(Vec<L>),
     Error(String),
@@ -77,7 +89,7 @@ enum Msg {
     Decisions(Vec<crate::model::Decision>),
     /// The service's model catalog, fetched with every poll so the view is never stale.
     Catalog(Box<Catalog>),
-    Tickets(Vec<crate::model::TicketRow>),
+    Tickets(TicketPoll),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
@@ -251,6 +263,15 @@ struct Tracked {
     stage: String,
 }
 
+/// One instruction the console sent and has not seen judged, with what it has already said.
+struct Awaiting {
+    sent: Instant,
+    /// The 20-second notice has been shown.
+    warned: bool,
+    /// The 10-minute explanation has been shown.
+    stale: bool,
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -272,11 +293,11 @@ pub struct App {
     modal: Option<Modal>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
-    /// Agent messages already shown; the outbox is reread whole on each poll.
+    /// Agent messages already shown in this run, so a poll cannot show one twice.
     seen: std::collections::HashSet<String>,
     /// Trigger ids of the instructions this console sent and has not seen judged yet, with when
-    /// they were sent and whether the console already said the judgement is slow.
-    pending: std::collections::HashMap<String, (Instant, bool)>,
+    /// they were sent and what the console has already said about the wait.
+    pending: std::collections::HashMap<String, Awaiting>,
     /// Tickets this console opened, with what it has already shown about each.
     tracked: std::collections::HashMap<String, Tracked>,
     /// Set after an accept: the next instruction goes to that ticket's thread instead of a new one.
@@ -340,21 +361,15 @@ impl App {
             .as_ref()
             .and_then(intake::follow)
             .map(|(ticket, thread)| Follow { thread, ticket });
-        // A restart shows the recent conversation, not the whole outbox: read the tail of the
-        // file rather than all of it, and mark everything older as already shown.
-        let tail = Arc::new(std::sync::Mutex::new(intake::Tail::fresh()));
-        let mut seen = std::collections::HashSet::new();
-        if let Some(config) = &config {
-            let mut reader = intake::Tail::fresh();
-            let replies = intake::replies_from(config, &mut reader);
-            let skip = replies.len().saturating_sub(20);
-            for reply in replies.into_iter().take(skip) {
-                seen.insert(reply.id);
-            }
-            if let Ok(mut shared) = tail.lock() {
-                *shared = reader;
-            }
-        }
+        // A restarted console starts with an empty transcript: skip past what the outbox already
+        // holds instead of reading and parsing the history, so startup does not grow with the
+        // deployment's age. The poll below then sees only what arrives from now on.
+        let tail = Arc::new(std::sync::Mutex::new(
+            config
+                .as_ref()
+                .map(intake::Tail::at_end)
+                .unwrap_or_default(),
+        ));
         Self {
             api,
             config,
@@ -374,7 +389,7 @@ impl App {
             started: Instant::now(),
             tx,
             rx,
-            seen,
+            seen: std::collections::HashSet::new(),
             pending: std::collections::HashMap::new(),
             tracked: std::collections::HashMap::new(),
             continues,
@@ -494,7 +509,7 @@ impl App {
                         }
                     }
                 }
-                Msg::Tickets(rows) => self.show_tickets(rows),
+                Msg::Tickets(poll) => self.show_tickets(poll),
                 Msg::Replies(replies) => {
                     let mut fresh = Vec::new();
                     for reply in replies {
@@ -574,19 +589,17 @@ impl App {
 
     /// Reports the stage of the tickets this console opened, once per change; a report the agent
     /// did not also send as a reply is shown as a short fallback.
-    fn show_tickets(&mut self, rows: Vec<crate::model::TicketRow>) {
-        self.open = rows
-            .iter()
-            .filter(|row| row.state == "open")
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX);
-        self.person = rows
-            .iter()
-            .filter(|row| row.state == "open" && row.stage == "person")
-            .count()
-            .try_into()
-            .unwrap_or(u32::MAX);
+    fn show_tickets(&mut self, poll: TicketPoll) {
+        let rows = poll.rows;
+        // The page is a window: its length is not the number of open tickets.
+        self.open = poll.open_total;
+        self.person = poll.person.unwrap_or_else(|| {
+            rows.iter()
+                .filter(|row| row.state == "open" && row.stage == "person")
+                .count()
+                .try_into()
+                .unwrap_or(u32::MAX)
+        });
         let by_id: std::collections::HashMap<&str, &crate::model::TicketRow> =
             rows.iter().map(|row| (row.id.as_str(), row)).collect();
         let replied = self.replied.clone();
@@ -594,12 +607,9 @@ impl App {
         let mut done: Vec<String> = Vec::new();
         for (id, tracked) in self.tracked.iter_mut() {
             let short = short_id(id);
+            // A ticket the poll could not resolve (a failed lookup, say) is not a closure:
+            // keep following it and ask again on the next poll.
             let Some(row) = by_id.get(id.as_str()) else {
-                if tracked.stage != "closed" {
-                    tracked.stage = "closed".into();
-                    lines.push(ticket_line(&format!("{short} · closed")));
-                }
-                done.push(id.clone());
                 continue;
             };
             let stage = if row.state == "ended" {
@@ -703,8 +713,13 @@ impl App {
 
     /// Shows one message the agent wrote back: an acknowledgement, a reply, or a notice.
     fn push_agent(&mut self, reply: intake::Reply) {
-        if let Some(ticket) = &reply.ticket {
-            self.replied.insert(ticket.clone());
+        // Only a reply or a notice reports on the work; an acknowledgement only says the agent
+        // took the instruction up. Counting it as the report would hide the ticket's summary
+        // whenever the worker later ends the ticket without writing one.
+        if reply.kind != "acknowledgement" {
+            if let Some(ticket) = &reply.ticket {
+                self.replied.insert(ticket.clone());
+            }
         }
         let label = match reply.kind.as_str() {
             "acknowledgement" => "agent · accepted",
@@ -789,8 +804,14 @@ impl App {
                     None => {
                         // A follow-up fans out to its ticket without a decision, so only a new
                         // instruction is awaited as one.
-                        self.pending
-                            .insert(format!("local-{id}"), (Instant::now(), false));
+                        self.pending.insert(
+                            format!("local-{id}"),
+                            Awaiting {
+                                sent: Instant::now(),
+                                warned: false,
+                                stale: false,
+                            },
+                        );
                         vec![Line::from(vec![
                             Span::styled("  ↑ ", Style::default().fg(GREEN)),
                             Span::styled("sent to the agent", Style::default().fg(GREEN)),
@@ -831,45 +852,33 @@ impl App {
     }
 
     /// Says so when a sent instruction is not judged, instead of leaving "sent" as the last word.
+    ///
+    /// Each line is said once. The 20-second notice and the 10-minute explanation are states of
+    /// the wait, not a countdown: repeating them every poll would push everything else out of the
+    /// transcript while a slow assessment runs.
     fn check_pending(&mut self) {
         let now = Instant::now();
-        let slow: Vec<String> = self
-            .pending
-            .iter()
-            .filter(|(_, (sent, warned))| {
-                !warned && now.duration_since(*sent) > Duration::from_secs(20)
-            })
-            .map(|(trigger, _)| trigger.clone())
-            .collect();
-        for trigger in slow {
-            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
-                *warned = true;
+        let mut lines = Vec::new();
+        for entry in self.pending.values_mut() {
+            let waited = now.duration_since(entry.sent);
+            if !entry.warned && waited > Duration::from_secs(20) {
+                entry.warned = true;
+                lines.push(Line::from(Span::styled(
+                    "  ⋯ no decision yet · /sources shows whether the source is polling",
+                    Style::default().fg(FAINT),
+                )));
+            } else if entry.warned && !entry.stale && waited > Duration::from_secs(600) {
+                // An assessment can legitimately take minutes: the Eval timeout is 120 s and the
+                // model may be queued behind another turn. Keep waiting instead of declaring
+                // failure, and say what a long wait usually means.
+                entry.stale = true;
+                lines.push(warn_line(
+                    "10 minutes without a judgement · /status shows whether a model failure stopped it; \
+                     a late answer still appears here",
+                ));
             }
-            self.push(Line::from(Span::styled(
-                "  ⋯ no decision yet · /sources shows whether the source is polling",
-                Style::default().fg(FAINT),
-            )));
         }
-        // An assessment can legitimately take minutes: the Eval timeout is 120 s and the model
-        // may be queued behind another turn. Keep waiting instead of declaring failure, and say
-        // what a long wait usually means.
-        let stale: Vec<String> = self
-            .pending
-            .iter()
-            .filter(|(_, (sent, warned))| {
-                *warned && now.duration_since(*sent) > Duration::from_secs(600)
-            })
-            .map(|(trigger, _)| trigger.clone())
-            .collect();
-        for trigger in stale {
-            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
-                *warned = false;
-            }
-            self.push(warn_line(
-                "10 minutes without a judgement · /status shows whether a model failure stopped it; \
-                 a late answer still appears here",
-            ));
-        }
+        self.push_lines(lines);
     }
 
     fn refresh_status(&self) {
@@ -903,18 +912,48 @@ impl App {
             }
             // Open tickets are the header's counts as well as the followed tickets' stages.
             let mut rows = Vec::new();
+            let mut open_total = 0;
+            let mut person = None;
             let mut fetched = false;
             if let Ok(page) = polled.tickets("open") {
+                open_total = page.total;
+                let complete = page.items.len() as u32 >= page.total;
                 rows.extend(page.items);
                 fetched = true;
-            }
-            if !tracked.is_empty() {
-                if let Ok(page) = polled.tickets("ended") {
-                    rows.extend(page.items);
+                if !complete {
+                    // The page carries only the first 50 of `total`; ask the overview for the
+                    // exact number of tickets waiting for a person instead of counting the window.
+                    if let Ok(view) = polled.overview() {
+                        person = Some(view.person.len() as u32);
+                    }
+                }
+                // A tracked ticket the page did not carry is not necessarily closed: the page is
+                // a window. Ask for the ticket itself, and let only a definite answer end it.
+                for id in &tracked {
+                    if rows.iter().any(|row| &row.id == id) {
+                        continue;
+                    }
+                    match polled.ticket(id) {
+                        Ok(detail) => rows.push(row_from_detail(&detail)),
+                        Err(crate::api::ApiError::Status(404, _)) => {
+                            rows.push(crate::model::TicketRow {
+                                id: id.clone(),
+                                state: "ended".into(),
+                                ..crate::model::TicketRow::default()
+                            });
+                        }
+                        // A transport or protocol failure says nothing about the ticket; the
+                        // next poll asks again rather than reporting a closure that did not happen.
+                        Err(_) => {}
+                    }
                 }
             }
             if fetched {
-                let _ = tx.send(Msg::Tickets(rows));
+                let _ = tx.send(Msg::Tickets(TicketPoll {
+                    rows,
+                    open_total,
+                    person,
+                }));
             }
             if let Ok(models) = polled.models() {
                 let _ = tx.send(Msg::Catalog(Box::new(Catalog::parse(&models))));
@@ -2518,6 +2557,28 @@ fn warn_line(text: &str) -> L {
     Line::from(Span::styled(format!("! {text}"), Style::default().fg(RED)))
 }
 
+/// A ticket detail reduced to the row fields the poll and the transcript read. The list routes
+/// omit the summary and the action of a ticket outside their page; the detail route has both.
+fn row_from_detail(detail: &crate::model::TicketDetail) -> crate::model::TicketRow {
+    crate::model::TicketRow {
+        id: detail.id.clone(),
+        title: detail.title.clone(),
+        state: detail.state.clone(),
+        stage: detail.stage.clone(),
+        action: detail.action.clone(),
+        note: detail.note.clone(),
+        summary: detail.summary.clone(),
+        directory: detail.directory.clone(),
+        session_id: detail.session_id.clone(),
+        created_at: detail.created_at.clone(),
+        updated_at: detail.updated_at.clone(),
+        strength: detail.strength.clone(),
+        attention: detail.attention.clone(),
+        actions: detail.actions.clone(),
+        ..crate::model::TicketRow::default()
+    }
+}
+
 /// The first eight characters of an id, for the one-line ticket markers. Counts characters,
 /// not bytes: a byte slice panics when it lands inside one (SPEC defect A).
 fn short_id(id: &str) -> String {
@@ -2789,6 +2850,17 @@ mod transcript_tests {
         }
     }
 
+    /// The poll a page holding exactly these rows stands for; the tests that drive
+    /// `show_tickets` directly do not go through the service.
+    fn tickets_poll(rows: Vec<TicketRow>) -> TicketPoll {
+        let open_total = rows.iter().filter(|row| row.state == "open").count() as u32;
+        TicketPoll {
+            rows,
+            open_total,
+            person: None,
+        }
+    }
+
     #[test]
     fn a_ticket_stage_is_reported_once_per_change() {
         let (mut app, dir, _env) = console("stages");
@@ -2798,16 +2870,20 @@ mod transcript_tests {
                 stage: "new".into(),
             },
         );
-        app.show_tickets(vec![row("abcdef1234567890", "working", None)]);
+        app.show_tickets(tickets_poll(vec![row("abcdef1234567890", "working", None)]));
         assert!(text(&app).contains("abcdef12 · working"), "{}", text(&app));
 
         // The same stage again says nothing new.
         let before = app.lines.len();
-        app.show_tickets(vec![row("abcdef1234567890", "working", None)]);
+        app.show_tickets(tickets_poll(vec![row("abcdef1234567890", "working", None)]));
         assert_eq!(app.lines.len(), before, "a repeated stage is not repeated");
 
         // A stage with an action names the action.
-        app.show_tickets(vec![row("abcdef1234567890", "person", Some("review"))]);
+        app.show_tickets(tickets_poll(vec![row(
+            "abcdef1234567890",
+            "person",
+            Some("review"),
+        )]));
         assert!(
             text(&app).contains("abcdef12 · needs a person · review"),
             "{}",
@@ -2830,12 +2906,12 @@ mod transcript_tests {
             ticket: "abcdef1234567890".into(),
         });
         app.replied.insert("abcdef1234567890".into());
-        app.show_tickets(vec![TicketRow {
+        app.show_tickets(tickets_poll(vec![TicketRow {
             id: "abcdef1234567890".into(),
             state: "ended".into(),
             stage: "idle".into(),
             ..TicketRow::default()
-        }]);
+        }]));
         assert!(text(&app).contains("abcdef12 · closed"), "{}", text(&app));
         // With a reply already shown, the summary is not printed twice.
         assert!(!text(&app).contains("report"), "{}", text(&app));
@@ -2853,6 +2929,37 @@ mod transcript_tests {
                 stage: "working".into(),
             },
         );
+        app.show_tickets(tickets_poll(vec![TicketRow {
+            id: "abcdef1234567890".into(),
+            state: "ended".into(),
+            stage: "idle".into(),
+            summary: Some("the worker changed the README".into()),
+            ..TicketRow::default()
+        }]));
+        let shown = text(&app);
+        assert!(shown.contains("report"), "{shown}");
+        assert!(shown.contains("the worker changed the README"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_acknowledgement_does_not_hide_the_silent_report() {
+        // The normal accepted path: the agent acknowledges the instruction, then ends the ticket
+        // with its report in the ticket but no reply. The summary is the only report shown, so the
+        // acknowledgement must not stand in for it.
+        let (mut app, dir, _env) = console("ack-silent");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        app.push_agent(intake::Reply {
+            id: "a1".into(),
+            kind: "acknowledgement".into(),
+            text: "收到".into(),
+            ticket: Some("abcdef1234567890".into()),
+        });
         app.show_tickets(vec![TicketRow {
             id: "abcdef1234567890".into(),
             state: "ended".into(),
@@ -2861,7 +2968,7 @@ mod transcript_tests {
             ..TicketRow::default()
         }]);
         let shown = text(&app);
-        assert!(shown.contains("report"), "{shown}");
+        assert!(shown.contains("abcdef12 · report"), "{shown}");
         assert!(shown.contains("the worker changed the README"), "{shown}");
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -2917,9 +3024,17 @@ mod transcript_tests {
         assert!(shown.contains("abcdef12"), "{shown}");
         assert!(shown.contains("收到"), "{shown}");
         assert!(
-            app.replied.contains("abcdef1234567890"),
-            "the ticket is marked answered"
+            !app.replied.contains("abcdef1234567890"),
+            "an acknowledgement does not stand in for the report"
         );
+        // A reply or a notice does report on the work, so no summary fallback follows it.
+        app.push_agent(intake::Reply {
+            id: "m2".into(),
+            kind: "reply".into(),
+            text: "done".into(),
+            ticket: Some("abcdef1234567890".into()),
+        });
+        assert!(app.replied.contains("abcdef1234567890"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3015,6 +3130,7 @@ mod transcript_tests {
 mod editor_tests {
     use super::*;
     use crate::testkit::FakeApi;
+    use serde_json::json;
 
     /// A console whose editor is driven directly; no terminal, no event loop.
     fn editor(name: &str) -> (App, std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
@@ -3026,6 +3142,47 @@ mod editor_tests {
         std::env::set_var("DSH_HOME", &dir);
         let api = FakeApi::start();
         (App::new(Api::new(&api.base)), dir, guard)
+    }
+
+    /// The same console, with the fake service kept so a test can replace its routes.
+    fn editor_with_api(
+        name: &str,
+    ) -> (
+        App,
+        std::path::PathBuf,
+        FakeApi,
+        std::sync::MutexGuard<'static, ()>,
+    ) {
+        let guard = crate::testkit::env_lock();
+        let dir =
+            std::env::temp_dir().join(format!("booth-editor-{name}-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("BOOTH_STATE_DIR", &dir);
+        std::env::set_var("DSH_HOME", &dir);
+        let api = FakeApi::start();
+        let app = App::new(Api::new(&api.base));
+        (app, dir, api, guard)
+    }
+
+    /// Waits for the poll's ticket message, which is what these tests drive.
+    fn next_tickets(app: &App) -> TicketPoll {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match app.rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(Msg::Tickets(poll)) => return poll,
+                Ok(_) => continue,
+                Err(_) if Instant::now() < deadline => continue,
+                Err(error) => panic!("the poll never sent tickets: {error}"),
+            }
+        }
+    }
+
+    fn rendered(app: &App) -> String {
+        app.lines
+            .iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -3275,6 +3432,96 @@ mod editor_tests {
         let replies = delivered.expect("the poll delivers what the agent wrote");
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].text, "done");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_slow_judgement_is_reported_once_at_each_threshold() {
+        let (mut app, dir, _env) = editor("pending-slow");
+        let rendered = |app: &App| {
+            app.lines
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        app.pending.insert(
+            "local-1".into(),
+            Awaiting {
+                sent: Instant::now() - Duration::from_secs(21),
+                warned: false,
+                stale: false,
+            },
+        );
+        app.check_pending();
+        assert!(rendered(&app).contains("no decision yet"));
+        let after_warning = rendered(&app);
+        app.check_pending();
+        assert_eq!(
+            rendered(&app),
+            after_warning,
+            "the 20-second line is said once"
+        );
+
+        // A judgement behind another turn may take minutes; the 10-minute line is the next and
+        // last notice instead of the 20-second one starting over.
+        if let Some(entry) = app.pending.get_mut("local-1") {
+            entry.sent = Instant::now() - Duration::from_secs(601);
+        }
+        app.check_pending();
+        assert!(rendered(&app).contains("10 minutes without a judgement"));
+        let after_stale = rendered(&app);
+        app.check_pending();
+        app.check_pending();
+        assert_eq!(
+            rendered(&app),
+            after_stale,
+            "the 10-minute line is said once, not on every poll"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_restarted_console_skips_the_outbox_it_found() {
+        let _env = crate::testkit::env_lock();
+        let dir = std::env::temp_dir().join(format!("booth-restart-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("BOOTH_STATE_DIR", &dir);
+        std::env::set_var("DSH_HOME", &dir);
+        // A transcript's worth of history the console did not show, because it was not running.
+        let history: String = (0..20)
+            .map(|index| {
+                format!("{{\"id\":\"old-{index}\",\"kind\":\"reply\",\"text\":\"old {index}\"}}\n")
+            })
+            .collect();
+        std::fs::write(dir.join("booth-outbox.jsonl"), history).unwrap();
+        let api = FakeApi::start();
+        let app = App::new(Api::new(&api.base));
+        assert!(
+            app.lines.is_empty(),
+            "a restart starts with an empty transcript"
+        );
+        // The tail the polls share sits at the end of what was already there, so the first poll
+        // has nothing to deliver; parsing the history would only cost startup time.
+        let config = app
+            .config
+            .clone()
+            .expect("the test set the state directory");
+        let mut tail = app.tail.lock().unwrap();
+        assert!(
+            intake::replies_from(&config, &mut tail).is_empty(),
+            "the history is not replayed"
+        );
+        // A message that arrives after the restart is still delivered.
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join("booth-outbox.jsonl"))
+            .unwrap();
+        file.write_all(b"{\"id\":\"new-1\",\"kind\":\"reply\",\"text\":\"new\"}\n")
+            .unwrap();
+        let fresh = intake::replies_from(&config, &mut tail);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "new-1");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

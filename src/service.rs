@@ -1,6 +1,6 @@
 //! Service lifecycle: the same binary that talks to the API also owns the service behind it.
 //!
-//! `booth init` prepares a DSH profile from the pinned `superagent/` checkout; `booth start`
+//! `booth init` prepares a DSH profile from the pinned `superagent/` checkout; `booth up`
 //! runs `dsh --profile <name> --no-open` detached and waits for the management API; `booth stop`
 //! ends it. No tmux, no shell script: the pid and the log live under the state directory.
 
@@ -892,14 +892,60 @@ fn is_service(pid: u32, profile: &str) -> bool {
 }
 
 fn alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
+    // A child that exited but was never reaped is still listed under /proc. It cannot answer, so
+    // starting must not wait for it (the READY_TIMEOUT would pass while the console blames the
+    // port rather than the dead service).
+    let dir = Path::new("/proc").join(pid.to_string());
+    if !dir.exists() {
+        return false;
+    }
+    match fs::read_to_string(dir.join("status")) {
+        Ok(status) => !status
+            .lines()
+            .any(|line| line.starts_with("State:") && line.contains('Z')),
+        // Listed but not readable: the pid exists, which is all this check used to ask.
+        Err(_) => true,
+    }
+}
+
+/// The last `count` lines of `path`, read from the end instead of loading the whole file.
+///
+/// `booth.log` only grows; `booth logs` and a failed start must stay cheap on a long one.
+fn tail_lines(path: &Path, count: usize) -> std::io::Result<Vec<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let mut window = 8 * 1024u64;
+    loop {
+        let start = size.saturating_sub(window);
+        let mut raw = vec![0u8; (size - start) as usize];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut raw)?;
+        let text = String::from_utf8_lossy(&raw);
+        let mut lines: Vec<&str> = text.lines().collect();
+        if start > 0 {
+            // A window that begins inside a line leaves a fragment at the front. If the byte just
+            // before the window is the newline, the window begins on a whole line and nothing is
+            // dropped.
+            let mut lead = [0u8; 1];
+            file.seek(SeekFrom::Start(start - 1))?;
+            file.read_exact(&mut lead)?;
+            if lead[0] != b'\n' && !lines.is_empty() {
+                lines.remove(0);
+            }
+        }
+        if start == 0 || lines.len() >= count {
+            let take = lines.len().saturating_sub(count);
+            return Ok(lines[take..].iter().map(|line| line.to_string()).collect());
+        }
+        window = window.saturating_mul(2);
+    }
 }
 
 fn tail(cfg: &Config, lines: usize) {
-    match fs::read_to_string(cfg.log()) {
-        Ok(text) => {
-            let all: Vec<&str> = text.lines().collect();
-            for line in &all[all.len().saturating_sub(lines)..] {
+    match tail_lines(&cfg.log(), lines) {
+        Ok(lines) => {
+            for line in lines {
                 println!("{line}");
             }
         }
@@ -1417,6 +1463,62 @@ mod patch_tests {
             ),
             Err(error) => assert!(error.contains("cannot read"), "{error}"),
         }
+    }
+
+    #[test]
+    fn tail_lines_reads_only_the_end_of_a_long_log() {
+        let cfg = config("tail-lines");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let path = cfg.log();
+        let body: String = (0..100_000).map(|line| format!("line {line}\n")).collect();
+        fs::write(&path, body).unwrap();
+        assert_eq!(
+            tail_lines(&path, 3).unwrap(),
+            vec!["line 99997", "line 99998", "line 99999"]
+        );
+
+        // Fewer lines than asked for is the whole file, and one line is still exact.
+        let small = cfg.state_dir.join("small.log");
+        fs::write(&small, "a\nb\n").unwrap();
+        assert_eq!(tail_lines(&small, 5).unwrap(), vec!["a", "b"]);
+        assert_eq!(tail_lines(&small, 1).unwrap(), vec!["b"]);
+
+        // A record longer than the first window is found by growing the window, not by reading
+        // a truncated line.
+        let long = cfg.state_dir.join("long.log");
+        let wide = "x".repeat(20_000);
+        fs::write(&long, format!("first\n{wide}\n")).unwrap();
+        assert_eq!(tail_lines(&long, 1).unwrap(), vec![wide]);
+        std::fs::remove_dir_all(cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_zombie_is_not_a_running_service() {
+        // `start` never waits for the child it spawns, so a dsh that exits at once stays listed
+        // in /proc as a zombie; waiting for it to answer would burn the whole READY_TIMEOUT.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let mut zombie = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            zombie = stat
+                .rsplit_once(')')
+                .map(|(_, rest)| rest.trim_start().starts_with('Z'))
+                .unwrap_or(false);
+            if zombie {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(zombie, "the child should be a zombie until it is reaped");
+        assert!(!alive(pid), "a zombie cannot serve");
+        child.wait().unwrap();
+        assert!(!alive(pid), "a reaped pid is gone");
     }
 
     #[test]

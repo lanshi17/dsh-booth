@@ -193,126 +193,85 @@ becomes `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml`. An earlier install 
 
 ---
 
-## Evidence Report — worker sessions in `reset-sessions` and the session count (after 0.2.0)
+## Evidence Report — an acknowledgement no longer hides a silent report
 
-- **Request:** a sixth self-iteration pass in this repository; the five earlier fixes (outbox
-  replacement, search items, provider migration, silent reports, open-ticket pagination) stay
-  untouched, and the `superagent/` submodule is not modified.
-- **Source state:** branch `agent/self-iteration-round6-792775821782`, based on `30279cb`.
-- **Entry point:** `tools/gauntlet.sh quick` (the workflow's content) plus `tools/smoke.sh`.
+- **Request:** the fourth self-iteration pass — find a different real defect from PR #12–#14's
+  areas, fix it, run the relevant checks and open a separate pull request for review.
+- **Source state:** `30279cb` (`origin/master`) plus this branch. No submodule or dependency
+  change. The change is confined to `App::push_agent` and its tests, a region none of the open
+  PRs (#11–#14) touches.
+- **Entry point:** `tools/gauntlet.sh quick` (the fast layers of the repository's single check
+  entry point) and `tools/smoke.sh`.
 
 ### The defect
 
-`service::session_root` assumed a deployment had one session tree: DSH's project directory for the
-orchestrator Session, keyed by the state directory. DSH actually keeps one project tree per
-session working directory, and a worker Session's working directory is the ticket worktree
-`<executor.directory>/<worktree>` (the bundle's default is `<state>/work/...`). As a result:
+`App::push_agent` recorded every agent message that named a ticket as that ticket's report. An
+acknowledgement names the ticket, so the normal accepted path — agent acknowledges, then ends the
+ticket without writing a reply — was treated as already reported. `show_tickets` then skipped its
+summary fallback and the console printed only `closed`; the outcome stayed invisible unless
+`/ticket <id>` was run. `README.md` promises the opposite: "A silent report is not lost. When the
+agent did not also send a reply, the console prints the ticket's own summary under
+`◇ ticket … · report`."
 
-- `booth reset-sessions` moved only the orchestrator's tree. Every ticket's worker Session — the
-  one that names the removed provider on its next turn — stayed where it was.
-- `/agents` printed `sessions 1` on a deployment with 21 worker project trees and 22 worker
-  sessions on disk; the doc comment said "router and workers together".
+Reproduction, driving the real console in a pty against a fixture where the agent acknowledges
+and the ticket ends with a summary but no outbox reply (100×30, same session and keys):
 
-The two symptoms were observed on the live deployment at `~/.dsh` before the change: the console
-printed `sessions 1`, while the store held one orchestrator session and 22 worker sessions.
+Before (`30279cb`):
+
+```text
+◆ agent · accepted  abcdef12
+  收到，开始处理
+◇ ticket abcdef12 · working
+◇ ticket abcdef12 · closed
+  · that ticket is closed; the next instruction starts a new one
+```
+
+After (this branch):
+
+```text
+◆ agent · accepted  abcdef12
+  收到，开始处理
+◇ ticket abcdef12 · working
+◇ ticket abcdef12 · closed
+◇ ticket abcdef12 · report
+  Reproduced the race; the retry now waits for the queue.
+  · that ticket is closed; the next instruction starts a new one
+```
+
+The capture is the console's own screen output with ANSI sequences stripped; no colour, layout or
+key semantics changed, so there is no frame screenshot difference beyond the transcript line.
 
 ### What changed
 
-- `service::project_key` reproduces DSH's `projectKey` for a session's working directory
-  (separator runs collapse, unsafe UTF-16 code units become `~XXXX`, the leading dash run is
-  dropped, the result is wrapped in `--` and cut to 251 characters). Booth had re-implemented a
-  simplified version of this convention, which also missed spaces, `:` and trailing separators.
-- `service::execution_root` reads `executor.directory` from the profile's settings block, falling
-  back to `<state>/work` when the setting is empty or the service is unreachable.
-- `service::project_dirs` returns the orchestrator's tree plus every project tree under the
-  execution root, so the count and the move see the same set.
-- `booth reset-sessions` and `booth agents` (the CLI and `/agents`) pass that root through.
-- The README now says the command moves the orchestrator's session and every ticket's worker
-  session.
+- `push_agent` marks a ticket reported only for `reply` and `notice` messages; an acknowledgement
+  is shown as before but no longer stands in for the report.
+- `an_acknowledgement_does_not_hide_the_silent_report` is the regression test. On `30279cb` it
+  fails with the transcript above (`◇ ticket abcdef12 · closed` and no summary); it passes after
+  the change.
+- `an_agent_reply_names_its_ticket_and_kind` now pins both sides: an acknowledgement is displayed
+  but does not mark the ticket answered, a reply does.
 
-### Before / after: the live deployment
-
-Same host, same service, same state directory; baseline `30279cb`, changed revision this branch.
-This is the real command run against the running deployment (not a fixture); only the `sessions`
-line differs.
-
-Before (`30279cb`):
-
-```text
-now
-workers       1 running · 0 queued · 1 idle
-need a person 5
-sessions      1
-```
-
-After (this branch):
-
-```text
-now
-workers       1 running · 0 queued · 1 idle
-need a person 5
-sessions      23
-```
-
-### Before / after: the move
-
-A synthetic `DSH_HOME` with one orchestrator tree, one worker tree under the state directory's
-`work/`, and one unrelated project tree; `booth reset-sessions --url http://127.0.0.1:1` (the
-service is down, so the default execution root applies). Same tree in both runs.
-
-Before (`30279cb`):
-
-```text
-before : --elsewhere--/orchestrator-bbb  --<state>--/orchestrator-aaa  --<state>-work-t-1--/worker-t-1
-sessions moved to $DEMO/home/state/superagent/sessions-1794124081
-after  : --elsewhere--/orchestrator-bbb  --<state>-work-t-1--/worker-t-1
-backup : sessions-1794124081/orchestrator-aaa
-```
-
-After (this branch):
-
-```text
-before : --elsewhere--/orchestrator-bbb  --<state>--/orchestrator-aaa  --<state>-work-t-1--/worker-t-1
-sessions moved to $DEMO/home/state/superagent/sessions-1794124081
-after  : --elsewhere--/orchestrator-bbb
-backup : sessions-1794124081/orchestrator-aaa  sessions-1794124081/worker-t-1
-```
-
-The unrelated tree is untouched in both runs.
-
-### Checks
+### Gauntlet (quick, final fresh run, exit 0)
 
 | Layer | Result |
 |---|---|
-| `cargo fmt --check` | clean |
-| `cargo check --all-targets` | 0 errors |
-| `cargo clippy --all-targets -- -D warnings` | 0 warnings |
-| `cargo test` | 134 passed, 0 failed |
-| `tools/gauntlet.sh quick` | all quick layers passed |
-| `tools/smoke.sh` | every one-shot command ran against the fixture |
+| Format | clean |
+| Types | 0 errors |
+| Lint | `clippy --all-targets -- -D warnings` clean |
+| Tests | 132 passed, 0 failed (131 before; one new regression test) |
+| Real execution | `tools/smoke.sh`: every one-shot command ran against `dev/mock-api.py` |
 
-The suite was run with an old `gh` first on `PATH`, the pre-existing environment assumption in
-`intake::api_tests::setup_uses_a_capable_cli_installed_under_the_state_directory` (open PR #11
-fixes that test to do this itself). Without the shim, only that test fails here, on `30279cb`
-too.
+Host notes: the run exported `BOOTH_SUPERAGENT_DIR` because this worktree's `superagent/`
+submodule is not initialized, and put an older `gh` first on `PATH` because
+`intake::setup_uses_a_capable_cli_installed_under_the_state_directory` assumes the host `gh` is
+older than 2.57 (the same pre-existing host condition recorded by PRs #11–#14). No test or code
+changed for either.
 
-Coverage and mutation were not rerun: no route, response shape or dependency changed, and the
-repository's diff-scoped ledgers are maintained against the last release tag (open PRs #13 and
-#14 already edit those files).
+### Material limitations
 
-### Honest notes
-
-- **The count reports sessions on disk, including those of ended tickets** — that is what
-  "memory" means in this view. On the live deployment it reads 23 (one orchestrator, 22 workers),
-  not the number of currently running workers.
-- **A running service keeps its live Session objects.** Moving the files is what the next start
-  reads; this was already true of the orchestrator tree and is unchanged. The command is a file
-  move, as its help says.
-- **DSH's directory naming is lossy** (a path separator and a literal `-` produce the same
-  character), so the worker trees are matched by the encoded execution root's prefix. A project
-  directory whose path merely shares that prefix with the configured execution root would be
-  counted too; the deployment's own tree is the case this view exists for.
-- **The configured execution root is read from the service.** With the service down, a profile
-  that moved `executor.directory` outside the state directory counts only the orchestrator tree;
-  the default location is still covered.
-
+- No live agent produced the fixture transcript; the pty run uses a local fixture that serves the
+  same routes with the same same-origin guard. The unit tests pin the same two message types.
+- The slower gauntlet layers (changed-line coverage, mutation, supply chain, serial/repeated
+  suite) were not rerun for this pass: the change touches no route, dependency or credential
+  file, and the quick layers are the ones CI runs.
+- A person merges this PR; the agent did not enable auto-merge.

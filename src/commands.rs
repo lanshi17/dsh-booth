@@ -33,7 +33,7 @@ pub const PALETTE: &[(&str, &str)] = &[
         "/send <text>",
         "send an instruction; bare text does the same",
     ),
-    ("/search <text>", "find tickets, threads and decisions"),
+    ("/search <text>", "find tickets, threads and messages"),
     ("/stop <id>", "withdraw a ticket's mandate"),
     ("/retry <id>", "start a fresh assignment"),
     (
