@@ -119,6 +119,13 @@ impl FakeApi {
         }
     }
 
+    /// Replaces the canned answer for one route, such as `/tickets?state=open&limit=50`.
+    pub fn set_route(&self, path: &str, body: Value) {
+        let mut routes = self.routes.lock().unwrap();
+        routes.retain(|(known, _)| known != path);
+        routes.push((path.to_owned(), body));
+    }
+
     /// Makes the next `times` PUTs fail with `status` and `message`.
     pub fn fail_next_puts(&self, times: usize, status: u16, message: &str) {
         let mut failures = self.failures.lock().unwrap();
