@@ -131,10 +131,10 @@ check the deployment guide asks for.
 | `Ctrl+L` | Clear the transcript |
 | `Ctrl+C` | Quit |
 
-Commands are the same grammar as the one-shot CLI: `/overview`, `/status`, `/tickets`,
+Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
-`/stop`, `/retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/pause`, `/resume`, plus
-`/send`, `/setup`, `/agents`, `/eval`, `/new`, `/model`, `/provider`, `/login`, `/keys`,
+`/stop`, `/retry`, `/pause`, `/resume`, `/send`, `/setup`, `/agents`, `/eval` and `/provider`.
+The console adds `/requeue`, `/dismiss`, `/unsubscribe`, `/new`, `/model`, `/login`, `/keys`,
 `/history`, `/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
