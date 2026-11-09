@@ -100,7 +100,7 @@ pub fn ensure(cfg: &service::Config, download: bool) -> Result<Option<String>, S
 
 fn installing_hint(local: &Path) -> String {
     format!(
-        "the system gh is too old for dsh-superagent's reads; `booth gh` installs {}",
+        "the system gh is too old for dsh-superagent's reads; `booth gh --install` installs {}",
         local.display()
     )
 }
@@ -347,6 +347,35 @@ mod tests {
             state_dir: root.join("state"),
             bundle: root.to_path_buf(),
         }
+    }
+
+    #[test]
+    fn the_offline_error_names_the_command_that_installs() {
+        let _env = crate::testkit::env_lock();
+        let root = scratch("offline");
+        // An older gh first on PATH: `/setup` can read nothing with it, and this run may not
+        // download the pinned release, so the error must name the command that would.
+        let shadow = root.join("path");
+        fs::create_dir_all(&shadow).unwrap();
+        let older = shadow.join("gh");
+        fs::write(&older, "#!/bin/sh\necho '      --paginate'\n").unwrap();
+        fs::set_permissions(&older, fs::Permissions::from_mode(0o755)).unwrap();
+        let previous = std::env::var_os("PATH");
+        let mut search = vec![shadow];
+        if let Some(path) = previous.as_deref() {
+            search.extend(std::env::split_paths(path));
+        }
+        std::env::set_var("PATH", std::env::join_paths(search).unwrap());
+        let error = ensure(&config(&root), false).unwrap_err();
+        match previous {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+
+        // `booth gh` only reports the choice; `booth gh --install` downloads the pinned release.
+        assert!(error.contains("`booth gh --install`"), "{error}");
+        assert!(error.contains("bin/gh"), "{error}");
+        fs::remove_dir_all(&root).ok();
     }
 
     fn sha256(bytes: &[u8]) -> String {
