@@ -227,8 +227,8 @@ the system CLI. `booth gh` reports the choice; `booth gh --install` installs it 
 A session keeps the provider it was created with, so the overlay always registers **every** stored
 provider: signing in drops only the default model, which makes the DeepSeek account the default
 while sessions that still name an API-key provider keep their adapter and their history. Nothing
-is discarded on sign-in or on `/model`. `booth reset-sessions` moves the sessions aside by hand
-if a session ever ends up naming a provider that is genuinely gone.
+is discarded on sign-in or on `/model`. `booth reset-sessions` moves the orchestrator's session
+and every ticket's worker session aside if one ends up naming a provider that is genuinely gone.
 
 The concurrency limit, the worker model and the prompts stay where they were: `/model` and the
 web panel.
@@ -281,9 +281,9 @@ port, paste the callback URL into the same window and press Enter — quotes, a 
 bare `code=…&state=…` are accepted. `BOOTH_OAUTH_PORT` picks another port.
 
 A machine that ran an earlier booth is migrated once, on `booth up`: `provider.json` is turned
-into the profile entries and credential refs above, then renamed to `provider.json.migrated`
-and the stale `provider.yml` is deleted. `booth provider` prints the shared view and never a
-secret.
+into the profile entries and credential refs above, keeping the provider it marked `current` as
+the default, then renamed to `provider.json.migrated` and the stale `provider.yml` is deleted.
+`booth provider` prints the shared view and never a secret.
 
 ## Design notes
 

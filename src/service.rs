@@ -1,6 +1,6 @@
 //! Service lifecycle: the same binary that talks to the API also owns the service behind it.
 //!
-//! `booth init` prepares a DSH profile from the pinned `superagent/` checkout; `booth start`
+//! `booth init` prepares a DSH profile from the pinned `superagent/` checkout; `booth up`
 //! runs `dsh --profile <name> --no-open` detached and waits for the management API; `booth stop`
 //! ends it. No tmux, no shell script: the pid and the log live under the state directory.
 
@@ -152,16 +152,8 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         println!("the booth console Source is not linked into the profile; run `booth init` to install it");
     }
 
-    fs::create_dir_all(&cfg.state_dir)
-        .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
-    let log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(cfg.log())
-        .map_err(|error| format!("cannot open {}: {error}", cfg.log().display()))?;
-    let errors = log
-        .try_clone()
-        .map_err(|error| format!("cannot open the log twice: {error}"))?;
+    create_private_state_dir(cfg)?;
+    let (log, errors) = open_log(cfg)?;
 
     // No `--patch` and no injected keys: the profile's own layer is where models live, so the
     // service starts with exactly the configuration the web panel and the profile share.
@@ -217,6 +209,46 @@ pub fn start(cfg: &Config) -> Result<(), String> {
     }
 }
 
+/// Creates the state directory, and keeps it private.
+///
+/// The directory holds the database, the message files and the service log; the log carries the
+/// web panel's access token (see `open_log`). `create_dir_all` uses the umask, so a new directory
+/// is normally world-traversable, and a directory created by an earlier booth keeps its mode.
+fn create_private_state_dir(cfg: &Config) -> Result<(), String> {
+    fs::create_dir_all(&cfg.state_dir)
+        .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&cfg.state_dir, fs::Permissions::from_mode(0o700))
+            .map_err(|error| format!("cannot keep {} private: {error}", cfg.state_dir.display()))?;
+    }
+    Ok(())
+}
+
+/// Opens the service log, and the second handle dsh's stderr is redirected to.
+///
+/// The service prints its web panel URL, including the access token, while it starts; the log
+/// therefore holds a credential and must stay private. The file is created by this call, but an
+/// earlier booth or a hand-made log keeps whatever mode it had, so it is tightened every time.
+fn open_log(cfg: &Config) -> Result<(fs::File, fs::File), String> {
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(cfg.log())
+        .map_err(|error| format!("cannot open {}: {error}", cfg.log().display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        log.set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("cannot keep {} private: {error}", cfg.log().display()))?;
+    }
+    let errors = log
+        .try_clone()
+        .map_err(|error| format!("cannot open the log twice: {error}"))?;
+    Ok((log, errors))
+}
+
 pub fn stop(cfg: &Config) -> Result<(), String> {
     let Some(pid) = read_pid(cfg) else {
         return Err("no pid file — the service was not started by booth".into());
@@ -255,33 +287,160 @@ pub fn restart(cfg: &Config) -> Result<(), String> {
     start(cfg)
 }
 
-/// The DSH session tree for this state directory, such as
-/// `~/.dsh/sessions/--home-me-.dsh-state-superagent--`.
-pub fn session_root(cfg: &Config) -> PathBuf {
-    let encoded = format!(
-        "--{}--",
-        cfg.state_dir
-            .display()
-            .to_string()
-            .trim_start_matches('/')
-            .replace('/', "-")
-    );
-    cfg.dsh_home.join("sessions").join(encoded)
+/// The root DSH keeps its session stores under: one project tree per working directory.
+fn sessions_root(cfg: &Config) -> PathBuf {
+    cfg.dsh_home.join("sessions")
 }
 
-/// Moves the sessions aside so the next ones are created with the current default model.
+/// DSH's name for a session's project directory, given the session's working directory.
+///
+/// Reproduces `projectKey` in DSH's JSONL session store: separators (`/`, `\`, `:`) collapse
+/// into one `-`, every other unsafe UTF-16 code unit becomes `~XXXX` (uppercase), the leading
+/// dash run is dropped, and the result is wrapped in `--` and cut to 251 characters. The
+/// mapping is lossy on purpose: it is the name DSH created, not a path that can be reversed.
+pub fn project_key(path: &str) -> String {
+    let mut readable = String::new();
+    let mut separator = false;
+    for unit in path.encode_utf16() {
+        match char::from_u32(unit as u32) {
+            Some('/') | Some('\\') | Some(':') => {
+                if !separator {
+                    readable.push('-');
+                }
+                separator = true;
+            }
+            Some(ch)
+                if ch == '~'
+                    || !(ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-') =>
+            {
+                readable.push_str(&format!("~{unit:04X}"));
+                separator = false;
+            }
+            Some(ch) => {
+                readable.push(ch);
+                separator = false;
+            }
+            None => {
+                // A lone surrogate cannot occur in Rust text, but DSH escapes one all the same.
+                readable.push_str(&format!("~{unit:04X}"));
+                separator = false;
+            }
+        }
+    }
+    let readable = readable.trim_start_matches('-');
+    let readable = if readable.is_empty() {
+        "root"
+    } else {
+        readable
+    };
+    let readable: String = readable.chars().take(251).collect();
+    format!("--{readable}--")
+}
+
+/// The orchestrator Session's project tree, such as
+/// `~/.dsh/sessions/--home-me-.dsh-state-superagent--`.
+pub fn session_root(cfg: &Config) -> PathBuf {
+    sessions_root(cfg).join(project_key(&cfg.state_dir.display().to_string()))
+}
+
+/// Where the service puts a ticket's worktree, and with it that ticket's worker Session.
+///
+/// The profile's `executor.directory` wins; an unset directory or an unreachable service means
+/// the bundle's own default, the state directory's `work/`.
+pub fn execution_root(api: &Api, cfg: &Config) -> PathBuf {
+    api.block("executor")
+        .ok()
+        .and_then(|(value, _)| {
+            value
+                .get("directory")
+                .and_then(|directory| directory.as_str())
+                .map(str::to_owned)
+        })
+        .filter(|directory| !directory.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| cfg.state_dir.join("work"))
+}
+
+/// This deployment's project trees: the orchestrator's, plus one per worker under the
+/// execution root.
+///
+/// A worker's tree is named after its ticket directory, `<root>/<worktree>`, so the encoded
+/// root is the prefix to match. DSH's naming is lossy (a separator and a literal `-` produce
+/// the same character), which is why the router tree is matched by its own exact key.
+fn project_dirs(cfg: &Config, execution_root: &Path) -> Vec<PathBuf> {
+    let router = project_key(&cfg.state_dir.display().to_string());
+    let root = execution_root.display().to_string();
+    // `Path` keeps a trailing separator, which would encode as an extra dash and break the
+    // prefix; the service joins child names without one.
+    let trimmed = root.trim_end_matches(['/', '\\']);
+    let trimmed = if trimmed.is_empty() {
+        root.as_str()
+    } else {
+        trimmed
+    };
+    let worker = project_key(trimmed);
+    let prefix = format!("{}-", worker.strip_suffix("--").unwrap_or(&worker));
+    let Ok(entries) = fs::read_dir(sessions_root(cfg)) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter(|path| {
+            path.file_name()
+                .map(|name| {
+                    let name = name.to_string_lossy();
+                    name == router || name.starts_with(&prefix)
+                })
+                .unwrap_or(false)
+        })
+        .collect();
+    dirs.sort();
+    dirs
+}
+
+/// How many sessions this deployment holds: the router's and every worker's.
+///
+/// Sessions of ended tickets are still on disk, so they count: the number reports how much
+/// conversation the deployment can still read back.
+pub fn session_count(cfg: &Config, execution_root: &Path) -> usize {
+    project_dirs(cfg, execution_root)
+        .iter()
+        .map(|dir| {
+            fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .filter(|entry| entry.path().is_dir())
+                        .count()
+                })
+                .unwrap_or(0)
+        })
+        .sum()
+}
+
+/// Moves this deployment's sessions aside so the next ones are created with the current
+/// default model.
 ///
 /// A DSH session keeps the provider and model it was created with. After a sign-in or a model
 /// switch that provider can disappear, and every turn then fails with `no adapter registered for
-/// provider …` — an error a person cannot act on. The sessions are moved, not deleted, so the
-/// transcripts can still be read.
-pub fn reset_sessions(cfg: &Config) -> Result<Option<PathBuf>, String> {
-    let root = session_root(cfg);
-    if !root.is_dir()
-        || fs::read_dir(&root)
-            .map(|mut it| it.next().is_none())
-            .unwrap_or(true)
-    {
+/// provider …` — an error a person cannot act on. The orchestrator's tree and every worker's
+/// are moved, not deleted, so the transcripts can still be read. A worker keeps the conversation
+/// its ticket resumes, so moving only the orchestrator's tree would leave that failure in place.
+pub fn reset_sessions(cfg: &Config, execution_root: &Path) -> Result<Option<PathBuf>, String> {
+    let mut sessions = Vec::new();
+    for project in project_dirs(cfg, execution_root) {
+        let Ok(entries) = fs::read_dir(&project) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                sessions.push(entry.path());
+            }
+        }
+    }
+    if sessions.is_empty() {
         return Ok(None);
     }
     let stamp = std::time::SystemTime::now()
@@ -291,22 +450,16 @@ pub fn reset_sessions(cfg: &Config) -> Result<Option<PathBuf>, String> {
     let target = cfg.state_dir.join(format!("sessions-{stamp}"));
     fs::create_dir_all(&target)
         .map_err(|error| format!("cannot create {}: {error}", target.display()))?;
-    for entry in fs::read_dir(&root)
-        .map_err(|error| format!("cannot read {}: {error}", root.display()))?
-        .flatten()
-    {
-        let destination = target.join(entry.file_name());
-        fs::rename(entry.path(), destination)
-            .map_err(|error| format!("cannot move {} aside: {error}", entry.path().display()))?;
+    for session in sessions {
+        let destination = target.join(
+            session
+                .file_name()
+                .unwrap_or_else(|| std::ffi::OsStr::new("session")),
+        );
+        fs::rename(&session, destination)
+            .map_err(|error| format!("cannot move {} aside: {error}", session.display()))?;
     }
     Ok(Some(target))
-}
-
-/// How many sessions the state directory holds, router and workers together.
-pub fn session_count(cfg: &Config) -> usize {
-    fs::read_dir(session_root(cfg))
-        .map(|entries| entries.flatten().count())
-        .unwrap_or(0)
 }
 
 /// The profile's own patch layer, which DSH composes without any `--patch` flag.
@@ -771,14 +924,60 @@ fn is_service(pid: u32, profile: &str) -> bool {
 }
 
 fn alive(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
+    // A child that exited but was never reaped is still listed under /proc. It cannot answer, so
+    // starting must not wait for it (the READY_TIMEOUT would pass while the console blames the
+    // port rather than the dead service).
+    let dir = Path::new("/proc").join(pid.to_string());
+    if !dir.exists() {
+        return false;
+    }
+    match fs::read_to_string(dir.join("status")) {
+        Ok(status) => !status
+            .lines()
+            .any(|line| line.starts_with("State:") && line.contains('Z')),
+        // Listed but not readable: the pid exists, which is all this check used to ask.
+        Err(_) => true,
+    }
+}
+
+/// The last `count` lines of `path`, read from the end instead of loading the whole file.
+///
+/// `booth.log` only grows; `booth logs` and a failed start must stay cheap on a long one.
+fn tail_lines(path: &Path, count: usize) -> std::io::Result<Vec<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let mut window = 8 * 1024u64;
+    loop {
+        let start = size.saturating_sub(window);
+        let mut raw = vec![0u8; (size - start) as usize];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut raw)?;
+        let text = String::from_utf8_lossy(&raw);
+        let mut lines: Vec<&str> = text.lines().collect();
+        if start > 0 {
+            // A window that begins inside a line leaves a fragment at the front. If the byte just
+            // before the window is the newline, the window begins on a whole line and nothing is
+            // dropped.
+            let mut lead = [0u8; 1];
+            file.seek(SeekFrom::Start(start - 1))?;
+            file.read_exact(&mut lead)?;
+            if lead[0] != b'\n' && !lines.is_empty() {
+                lines.remove(0);
+            }
+        }
+        if start == 0 || lines.len() >= count {
+            let take = lines.len().saturating_sub(count);
+            return Ok(lines[take..].iter().map(|line| line.to_string()).collect());
+        }
+        window = window.saturating_mul(2);
+    }
 }
 
 fn tail(cfg: &Config, lines: usize) {
-    match fs::read_to_string(cfg.log()) {
-        Ok(text) => {
-            let all: Vec<&str> = text.lines().collect();
-            for line in &all[all.len().saturating_sub(lines)..] {
+    match tail_lines(&cfg.log(), lines) {
+        Ok(lines) => {
+            for line in lines {
                 println!("{line}");
             }
         }
@@ -824,6 +1023,53 @@ mod tests {
         assert!(start(&cfg).is_ok());
         // The stale pid file is cleared first, then the answering service is reported.
         assert!(!cfg.pid().exists(), "a stale pid file is removed");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_state_directory_is_private_even_when_it_already_existed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cfg = config("state-private");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        fs::set_permissions(&cfg.state_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        create_private_state_dir(&cfg).unwrap();
+        let mode = fs::metadata(&cfg.state_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o700,
+            "the state directory holds the database and the messages"
+        );
+
+        // A directory this run creates is private from the start, whatever the umask says.
+        fs::remove_dir_all(&cfg.state_dir).unwrap();
+        create_private_state_dir(&cfg).unwrap();
+        let mode = fs::metadata(&cfg.state_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "a fresh state directory is private");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_service_log_is_private_even_when_it_already_existed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cfg = config("log-private");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        // A log written by an earlier booth (or by hand) is group/world-readable; opening it for
+        // the next start must not leave the token-bearing file that way.
+        fs::write(cfg.log(), "old line\n").unwrap();
+        fs::set_permissions(cfg.log(), fs::Permissions::from_mode(0o644)).unwrap();
+
+        drop(open_log(&cfg).unwrap());
+        let mode = fs::metadata(cfg.log()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the service log holds the web token");
+
+        // A log this run creates is private from the start, whatever the umask says.
+        fs::remove_file(cfg.log()).unwrap();
+        drop(open_log(&cfg).unwrap());
+        let mode = fs::metadata(cfg.log()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "a fresh service log is private");
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
     }
 
@@ -978,33 +1224,108 @@ mod tests {
     }
 
     #[test]
-    fn finds_the_session_tree_of_the_state_directory() {
+    fn names_the_session_tree_the_way_dsh_does() {
+        // The store's convention, from `projectKey` in its JSONL session backend.
+        assert_eq!(
+            project_key("/home/me/.dsh/state/superagent"),
+            "--home-me-.dsh-state-superagent--"
+        );
+        // Unsafe code units are escaped rather than passed through.
+        assert_eq!(project_key("/home/me/my work"), "--home-me-my~0020work--");
+        // Separator runs collapse, and the leading run is dropped.
+        assert_eq!(project_key("//home//me/"), "--home-me---");
+        assert_eq!(project_key("C:\\Users\\me"), "--C-Users-me--");
+        // A non-ASCII path is escaped per UTF-16 code unit.
+        assert_eq!(project_key("ünïcode"), "--~00FCn~00EFcode--");
+
         let cfg = config("sessions-path");
         let root = session_root(&cfg);
-        // `/home/me/.dsh/state/superagent` becomes `--home-me-.dsh-state-superagent--`.
-        let encoded = cfg
-            .state_dir
-            .display()
-            .to_string()
-            .trim_start_matches('/')
-            .replace('/', "-");
         assert_eq!(
             root.file_name().unwrap().to_string_lossy(),
-            format!("--{encoded}--")
+            project_key(&cfg.state_dir.display().to_string())
         );
         assert!(root.parent().unwrap().ends_with("sessions"));
     }
 
     #[test]
-    fn moves_sessions_aside_and_tolerates_none() {
+    fn counts_the_orchestrator_and_every_worker_session() {
+        let cfg = config("sessions-count");
+        let root = sessions_root(&cfg);
+        let work = cfg.state_dir.join("work");
+        let router = session_root(&cfg);
+        let worker_one = root.join(project_key(&work.join("t-1").display().to_string()));
+        let worker_two = root.join(project_key(&work.join("t-2").display().to_string()));
+        fs::create_dir_all(router.join("orchestrator-x")).unwrap();
+        fs::create_dir_all(worker_one.join("worker-t-1")).unwrap();
+        fs::create_dir_all(worker_two.join("worker-t-2")).unwrap();
+        // A project tree another deployment owns must not be counted.
+        fs::create_dir_all(root.join("--elsewhere--").join("orchestrator-y")).unwrap();
+        assert_eq!(session_count(&cfg, &work), 3);
+        // A file inside a session is not a second session.
+        fs::write(worker_one.join("worker-t-1").join("session.json"), "{}").unwrap();
+        assert_eq!(session_count(&cfg, &work), 3);
+    }
+
+    #[test]
+    fn moves_the_orchestrators_and_every_workers_sessions_aside() {
         let cfg = config("sessions-move");
-        assert_eq!(reset_sessions(&cfg).unwrap(), None);
-        let root = session_root(&cfg);
-        fs::create_dir_all(root.join("orchestrator-x")).unwrap();
-        fs::write(root.join("orchestrator-x").join("session.json"), "{}").unwrap();
-        let moved = reset_sessions(&cfg).unwrap().expect("a move");
+        let work = cfg.state_dir.join("work");
+        assert_eq!(reset_sessions(&cfg, &work).unwrap(), None);
+        let root = sessions_root(&cfg);
+        let router = session_root(&cfg);
+        fs::create_dir_all(router.join("orchestrator-x")).unwrap();
+        fs::write(router.join("orchestrator-x").join("session.json"), "{}").unwrap();
+        let worker = root.join(project_key(&work.join("fix-parser").display().to_string()));
+        fs::create_dir_all(worker.join("worker-t-9")).unwrap();
+        fs::write(worker.join("worker-t-9").join("session.json"), "{}").unwrap();
+        let foreign = root.join("--elsewhere--");
+        fs::create_dir_all(foreign.join("orchestrator-y")).unwrap();
+
+        let moved = reset_sessions(&cfg, &work).unwrap().expect("a move");
         assert!(moved.join("orchestrator-x").join("session.json").is_file());
-        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        assert!(
+            moved.join("worker-t-9").join("session.json").is_file(),
+            "a worker keeps the conversation its ticket resumes"
+        );
+        assert_eq!(fs::read_dir(&router).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(&worker).unwrap().count(), 0);
+        assert!(
+            foreign.join("orchestrator-y").is_dir(),
+            "another deployment's tree is untouched"
+        );
+        assert_eq!(session_count(&cfg, &work), 0);
+    }
+
+    #[test]
+    fn follows_a_configured_execution_directory_with_or_without_a_trailing_separator() {
+        let cfg = config("sessions-custom");
+        let work = PathBuf::from("/srv/booth/work");
+        let worker =
+            sessions_root(&cfg).join(project_key(&work.join("fix-parser").display().to_string()));
+        fs::create_dir_all(worker.join("worker-t-3")).unwrap();
+        assert_eq!(session_count(&cfg, &work), 1);
+        // The profile may name the directory with a trailing separator; the service joins
+        // child names without one, so the prefix must come out the same.
+        assert_eq!(session_count(&cfg, &PathBuf::from("/srv/booth/work/")), 1);
+        let moved = reset_sessions(&cfg, &PathBuf::from("/srv/booth/work/"))
+            .unwrap()
+            .expect("a move");
+        assert!(moved.join("worker-t-3").is_dir());
+    }
+
+    #[test]
+    fn reads_the_execution_directory_from_the_profile() {
+        let fake = crate::testkit::FakeApi::start();
+        let cfg = config("sessions-root");
+        let api = Api::new(&fake.base);
+        // The default is the bundle's own `<state>/work`.
+        assert_eq!(execution_root(&api, &cfg), cfg.state_dir.join("work"));
+        fake.settings.lock().unwrap()["blocks"]["executor"]["value"]["directory"] =
+            serde_json::json!("/srv/booth/work");
+        assert_eq!(execution_root(&api, &cfg), PathBuf::from("/srv/booth/work"));
+        // A service that is down must not hide the default.
+        let down = Api::new("http://127.0.0.1:1");
+        assert_eq!(execution_root(&down, &cfg), cfg.state_dir.join("work"));
     }
 
     #[test]
@@ -1221,6 +1542,62 @@ mod patch_tests {
             ),
             Err(error) => assert!(error.contains("cannot read"), "{error}"),
         }
+    }
+
+    #[test]
+    fn tail_lines_reads_only_the_end_of_a_long_log() {
+        let cfg = config("tail-lines");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let path = cfg.log();
+        let body: String = (0..100_000).map(|line| format!("line {line}\n")).collect();
+        fs::write(&path, body).unwrap();
+        assert_eq!(
+            tail_lines(&path, 3).unwrap(),
+            vec!["line 99997", "line 99998", "line 99999"]
+        );
+
+        // Fewer lines than asked for is the whole file, and one line is still exact.
+        let small = cfg.state_dir.join("small.log");
+        fs::write(&small, "a\nb\n").unwrap();
+        assert_eq!(tail_lines(&small, 5).unwrap(), vec!["a", "b"]);
+        assert_eq!(tail_lines(&small, 1).unwrap(), vec!["b"]);
+
+        // A record longer than the first window is found by growing the window, not by reading
+        // a truncated line.
+        let long = cfg.state_dir.join("long.log");
+        let wide = "x".repeat(20_000);
+        fs::write(&long, format!("first\n{wide}\n")).unwrap();
+        assert_eq!(tail_lines(&long, 1).unwrap(), vec![wide]);
+        std::fs::remove_dir_all(cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_zombie_is_not_a_running_service() {
+        // `start` never waits for the child it spawns, so a dsh that exits at once stays listed
+        // in /proc as a zombie; waiting for it to answer would burn the whole READY_TIMEOUT.
+        let mut child = std::process::Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let mut zombie = false;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let stat = fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            zombie = stat
+                .rsplit_once(')')
+                .map(|(_, rest)| rest.trim_start().starts_with('Z'))
+                .unwrap_or(false);
+            if zombie {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(zombie, "the child should be a zombie until it is reaped");
+        assert!(!alive(pid), "a zombie cannot serve");
+        child.wait().unwrap();
+        assert!(!alive(pid), "a reaped pid is gone");
     }
 
     #[test]
