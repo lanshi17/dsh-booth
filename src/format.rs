@@ -766,9 +766,10 @@ pub fn sources(view: &[SourceStatus]) -> Vec<L> {
 
 pub fn search(view: &SearchView) -> Vec<L> {
     let mut lines = vec![section(format!(
-        "search · {} tickets · {} threads",
+        "search · {} tickets · {} threads · {} messages",
         view.tickets.len(),
-        view.threads.len()
+        view.threads.len(),
+        view.items.len()
     ))];
     for ticket in &view.tickets {
         lines.extend(ticket_lines(ticket));
@@ -784,10 +785,57 @@ pub fn search(view: &SearchView) -> Vec<L> {
             )));
         }
     }
-    if view.tickets.is_empty() && view.threads.is_empty() {
+    // The bundle searches Triggers too, not just the tickets and threads they reached. A hit
+    // only in a message is still a hit, so dropping `items` made `/search` report silence.
+    if !view.items.is_empty() {
+        lines.push(blank());
+        lines.push(section("messages"));
+        lines.extend(view.items.iter().map(message_line));
+    }
+    if view.tickets.is_empty() && view.threads.is_empty() && view.items.is_empty() {
         lines.push(bullet("nothing matched"));
     }
     lines
+}
+
+/// One matched message: when, who, its preview, and the thread or filter that explains it.
+fn message_line(item: &SearchItem) -> L {
+    let at = item.at.as_deref().map(short_at).unwrap_or_default();
+    let who = item
+        .actor
+        .as_ref()
+        .map(actor)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| item.source.clone());
+    let mut spans = vec![
+        span(format!("{at:<12}"), Style::default().fg(Color::DarkGray)),
+        span(
+            format!("{:<14}", clip(&who, 13)),
+            Style::default().fg(if item.human {
+                Color::Green
+            } else {
+                Color::DarkGray
+            }),
+        ),
+        span(clip(&item.preview, 80), Style::default()),
+    ];
+    if let Some(title) = item
+        .thread_title
+        .as_deref()
+        .filter(|title| !title.is_empty())
+    {
+        spans.push(span(
+            format!("  · {}", clip(title, 40)),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    if let Some(reason) = item.filtered.as_deref().filter(|reason| !reason.is_empty()) {
+        spans.push(span(
+            format!("  · filtered: {}", clip(reason, 40)),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    Line::from(spans)
 }
 
 pub fn help() -> Vec<L> {
@@ -806,7 +854,7 @@ pub fn help() -> Vec<L> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{clip, reason, short_at};
+    use super::{clip, reason, short_at, SearchView};
     use serde_json::json;
 
     #[test]
@@ -847,5 +895,71 @@ mod tests {
             reason(&json!([{"code": "said", "values": {"text": "greeting"}}])),
             "greeting"
         );
+    }
+
+    #[test]
+    fn search_shows_a_message_that_no_ticket_or_thread_matched() {
+        let view: SearchView = serde_json::from_value(json!({
+            "tickets": [],
+            "threads": [],
+            "items": [{
+                "id": "local-abc123",
+                "source": "local",
+                "actor": { "id": "operator", "name": { "zh": "操作员", "en": "operator" } },
+                "human": true,
+                "at": "2026-11-07T03:42:18.025Z",
+                "preview": "请重试一次部署",
+                "threads": ["local:t-local-abc123"],
+                "threadTitle": "重试部署"
+            }, {
+                "id": "local-def456",
+                "source": "github",
+                "human": false,
+                "preview": "a message with no actor or thread name",
+                "filtered": "sender is not on the allow-list"
+            }]
+        }))
+        .expect("the bundle's search view decodes");
+        let text: Vec<String> = super::search(&view)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            text.iter().any(|line| line.contains("请重试一次部署")),
+            "{text:?}"
+        );
+        assert!(text.iter().any(|line| line.contains("操作员")), "{text:?}");
+        assert!(
+            text.iter().any(|line| line.contains("11-07 03:42")),
+            "the time is shown: {text:?}"
+        );
+        assert!(
+            text.iter().any(|line| line.contains("重试部署")),
+            "{text:?}"
+        );
+        // Without an actor the source stands in, and a message with no thread name gets no
+        // dangling separator.
+        let bare = text
+            .iter()
+            .find(|line| line.contains("no actor or thread name"))
+            .expect("the second message is shown");
+        assert!(bare.contains("github"), "{bare:?}");
+        assert!(
+            bare.contains("no actor or thread name  · filtered: sender is not on the allow-list"),
+            "the preview runs straight into the filter reason, with no empty title: {bare:?}"
+        );
+        assert!(
+            !text.iter().any(|line| line.contains("nothing matched")),
+            "a message hit is a hit: {text:?}"
+        );
+    }
+
+    #[test]
+    fn search_says_nothing_matched_only_when_nothing_did() {
+        let text: Vec<String> = super::search(&SearchView::default())
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(text.last().map(String::as_str), Some("  · nothing matched"));
     }
 }
