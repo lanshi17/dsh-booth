@@ -7,8 +7,10 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
 fail=0
-# Values that look like real credentials, not test doubles.
-PATTERN='(sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+# Values that look like real credentials, not test doubles. Provider keys keep their prefix in
+# the secret (`sk-or-v1-...` for OpenRouter, `sk-proj-...` for OpenAI), so an `sk-` tail may
+# contain `-` or `_`; without them such a key is split at the prefix and passes as prose.
+PATTERN='(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
 
 # scan <label> <command...>
 # The scanner's exit code is read directly: 1 means "no match" for grep, anything else is a
