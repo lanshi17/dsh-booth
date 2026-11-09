@@ -251,6 +251,15 @@ struct Tracked {
     stage: String,
 }
 
+/// One instruction the console sent and has not seen judged, with what it has already said.
+struct Awaiting {
+    sent: Instant,
+    /// The 20-second notice has been shown.
+    warned: bool,
+    /// The 10-minute explanation has been shown.
+    stale: bool,
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -272,11 +281,11 @@ pub struct App {
     modal: Option<Modal>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
-    /// Agent messages already shown; the outbox is reread whole on each poll.
+    /// Agent messages already shown in this run, so a poll cannot show one twice.
     seen: std::collections::HashSet<String>,
     /// Trigger ids of the instructions this console sent and has not seen judged yet, with when
-    /// they were sent and whether the console already said the judgement is slow.
-    pending: std::collections::HashMap<String, (Instant, bool)>,
+    /// they were sent and what the console has already said about the wait.
+    pending: std::collections::HashMap<String, Awaiting>,
     /// Tickets this console opened, with what it has already shown about each.
     tracked: std::collections::HashMap<String, Tracked>,
     /// Set after an accept: the next instruction goes to that ticket's thread instead of a new one.
@@ -340,21 +349,15 @@ impl App {
             .as_ref()
             .and_then(intake::follow)
             .map(|(ticket, thread)| Follow { thread, ticket });
-        // A restart shows the recent conversation, not the whole outbox: read the tail of the
-        // file rather than all of it, and mark everything older as already shown.
-        let tail = Arc::new(std::sync::Mutex::new(intake::Tail::fresh()));
-        let mut seen = std::collections::HashSet::new();
-        if let Some(config) = &config {
-            let mut reader = intake::Tail::fresh();
-            let replies = intake::replies_from(config, &mut reader);
-            let skip = replies.len().saturating_sub(20);
-            for reply in replies.into_iter().take(skip) {
-                seen.insert(reply.id);
-            }
-            if let Ok(mut shared) = tail.lock() {
-                *shared = reader;
-            }
-        }
+        // A restarted console starts with an empty transcript: skip past what the outbox already
+        // holds instead of reading and parsing the history, so startup does not grow with the
+        // deployment's age. The poll below then sees only what arrives from now on.
+        let tail = Arc::new(std::sync::Mutex::new(
+            config
+                .as_ref()
+                .map(intake::Tail::at_end)
+                .unwrap_or_default(),
+        ));
         Self {
             api,
             config,
@@ -374,7 +377,7 @@ impl App {
             started: Instant::now(),
             tx,
             rx,
-            seen,
+            seen: std::collections::HashSet::new(),
             pending: std::collections::HashMap::new(),
             tracked: std::collections::HashMap::new(),
             continues,
@@ -789,8 +792,14 @@ impl App {
                     None => {
                         // A follow-up fans out to its ticket without a decision, so only a new
                         // instruction is awaited as one.
-                        self.pending
-                            .insert(format!("local-{id}"), (Instant::now(), false));
+                        self.pending.insert(
+                            format!("local-{id}"),
+                            Awaiting {
+                                sent: Instant::now(),
+                                warned: false,
+                                stale: false,
+                            },
+                        );
                         vec![Line::from(vec![
                             Span::styled("  ↑ ", Style::default().fg(GREEN)),
                             Span::styled("sent to the agent", Style::default().fg(GREEN)),
@@ -831,45 +840,33 @@ impl App {
     }
 
     /// Says so when a sent instruction is not judged, instead of leaving "sent" as the last word.
+    ///
+    /// Each line is said once. The 20-second notice and the 10-minute explanation are states of
+    /// the wait, not a countdown: repeating them every poll would push everything else out of the
+    /// transcript while a slow assessment runs.
     fn check_pending(&mut self) {
         let now = Instant::now();
-        let slow: Vec<String> = self
-            .pending
-            .iter()
-            .filter(|(_, (sent, warned))| {
-                !warned && now.duration_since(*sent) > Duration::from_secs(20)
-            })
-            .map(|(trigger, _)| trigger.clone())
-            .collect();
-        for trigger in slow {
-            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
-                *warned = true;
+        let mut lines = Vec::new();
+        for entry in self.pending.values_mut() {
+            let waited = now.duration_since(entry.sent);
+            if !entry.warned && waited > Duration::from_secs(20) {
+                entry.warned = true;
+                lines.push(Line::from(Span::styled(
+                    "  ⋯ no decision yet · /sources shows whether the source is polling",
+                    Style::default().fg(FAINT),
+                )));
+            } else if entry.warned && !entry.stale && waited > Duration::from_secs(600) {
+                // An assessment can legitimately take minutes: the Eval timeout is 120 s and the
+                // model may be queued behind another turn. Keep waiting instead of declaring
+                // failure, and say what a long wait usually means.
+                entry.stale = true;
+                lines.push(warn_line(
+                    "10 minutes without a judgement · /status shows whether a model failure stopped it; \
+                     a late answer still appears here",
+                ));
             }
-            self.push(Line::from(Span::styled(
-                "  ⋯ no decision yet · /sources shows whether the source is polling",
-                Style::default().fg(FAINT),
-            )));
         }
-        // An assessment can legitimately take minutes: the Eval timeout is 120 s and the model
-        // may be queued behind another turn. Keep waiting instead of declaring failure, and say
-        // what a long wait usually means.
-        let stale: Vec<String> = self
-            .pending
-            .iter()
-            .filter(|(_, (sent, warned))| {
-                *warned && now.duration_since(*sent) > Duration::from_secs(600)
-            })
-            .map(|(trigger, _)| trigger.clone())
-            .collect();
-        for trigger in stale {
-            if let Some((_, warned)) = self.pending.get_mut(&trigger) {
-                *warned = false;
-            }
-            self.push(warn_line(
-                "10 minutes without a judgement · /status shows whether a model failure stopped it; \
-                 a late answer still appears here",
-            ));
-        }
+        self.push_lines(lines);
     }
 
     fn refresh_status(&self) {
@@ -3275,6 +3272,96 @@ mod editor_tests {
         let replies = delivered.expect("the poll delivers what the agent wrote");
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].text, "done");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_slow_judgement_is_reported_once_at_each_threshold() {
+        let (mut app, dir, _env) = editor("pending-slow");
+        let rendered = |app: &App| {
+            app.lines
+                .iter()
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        app.pending.insert(
+            "local-1".into(),
+            Awaiting {
+                sent: Instant::now() - Duration::from_secs(21),
+                warned: false,
+                stale: false,
+            },
+        );
+        app.check_pending();
+        assert!(rendered(&app).contains("no decision yet"));
+        let after_warning = rendered(&app);
+        app.check_pending();
+        assert_eq!(
+            rendered(&app),
+            after_warning,
+            "the 20-second line is said once"
+        );
+
+        // A judgement behind another turn may take minutes; the 10-minute line is the next and
+        // last notice instead of the 20-second one starting over.
+        if let Some(entry) = app.pending.get_mut("local-1") {
+            entry.sent = Instant::now() - Duration::from_secs(601);
+        }
+        app.check_pending();
+        assert!(rendered(&app).contains("10 minutes without a judgement"));
+        let after_stale = rendered(&app);
+        app.check_pending();
+        app.check_pending();
+        assert_eq!(
+            rendered(&app),
+            after_stale,
+            "the 10-minute line is said once, not on every poll"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_restarted_console_skips_the_outbox_it_found() {
+        let _env = crate::testkit::env_lock();
+        let dir = std::env::temp_dir().join(format!("booth-restart-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("BOOTH_STATE_DIR", &dir);
+        std::env::set_var("DSH_HOME", &dir);
+        // A transcript's worth of history the console did not show, because it was not running.
+        let history: String = (0..20)
+            .map(|index| {
+                format!("{{\"id\":\"old-{index}\",\"kind\":\"reply\",\"text\":\"old {index}\"}}\n")
+            })
+            .collect();
+        std::fs::write(dir.join("booth-outbox.jsonl"), history).unwrap();
+        let api = FakeApi::start();
+        let app = App::new(Api::new(&api.base));
+        assert!(
+            app.lines.is_empty(),
+            "a restart starts with an empty transcript"
+        );
+        // The tail the polls share sits at the end of what was already there, so the first poll
+        // has nothing to deliver; parsing the history would only cost startup time.
+        let config = app
+            .config
+            .clone()
+            .expect("the test set the state directory");
+        let mut tail = app.tail.lock().unwrap();
+        assert!(
+            intake::replies_from(&config, &mut tail).is_empty(),
+            "the history is not replayed"
+        );
+        // A message that arrives after the restart is still delivered.
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(dir.join("booth-outbox.jsonl"))
+            .unwrap();
+        file.write_all(b"{\"id\":\"new-1\",\"kind\":\"reply\",\"text\":\"new\"}\n")
+            .unwrap();
+        let fresh = intake::replies_from(&config, &mut tail);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "new-1");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

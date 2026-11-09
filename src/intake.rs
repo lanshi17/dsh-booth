@@ -106,6 +106,9 @@ pub struct Tail {
     witness: Vec<u8>,
 }
 
+/// How much of the outbox is read to find its last complete line when skipping the history.
+const TAIL_WINDOW: u64 = 8 * 1024;
+
 impl Tail {
     pub fn fresh() -> Self {
         Self::default()
@@ -297,7 +300,6 @@ pub fn remember(cfg: &service::Config, line: &str) {
         let kept: Vec<&str> = existing.lines().skip(count - 500).collect();
         let _ = std::fs::write(&path, format!("{}\n", kept.join("\n")));
     }
-    use std::io::Write;
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = writeln!(file, "{}", line.replace('\n', " "));
     }
@@ -760,6 +762,91 @@ mod tests {
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].id, "new-1");
         assert_eq!(fresh[0].text, "hello");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_restart_skips_the_outbox_and_reads_only_what_arrives() {
+        // The console starts with an empty transcript, so a restart must not replay the history
+        // and must not parse it either: `at_end` reads only the last window to leave the offset
+        // on a line boundary.
+        let dir = scratch("at-end");
+        let cfg = config(dir.clone());
+        let body: String = (0..5000)
+            .map(|index| format!("{{\"id\":\"old-{index}\",\"kind\":\"reply\",\"text\":\"x\"}}\n"))
+            .collect();
+        std::fs::write(outbox(&cfg), &body).unwrap();
+        let mut tail = Tail::at_end(&cfg);
+        assert!(replies_from(&cfg, &mut tail).is_empty());
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(outbox(&cfg))
+            .unwrap();
+        file.write_all(b"{\"id\":\"new-1\",\"kind\":\"reply\",\"text\":\"hello\"}\n")
+            .unwrap();
+        let fresh = replies_from(&cfg, &mut tail);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "new-1");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_restart_leaves_a_half_written_record_for_the_next_poll() {
+        // `at_end` stops at the last newline, so a record the Source is still appending is read
+        // once complete, not dropped and not parsed mid-way.
+        let dir = scratch("at-end-partial");
+        let cfg = config(dir.clone());
+        std::fs::write(
+            outbox(&cfg),
+            "{\"id\":\"a\",\"kind\":\"reply\",\"text\":\"one\"}\n{\"id\":\"b\",\"kind\":\"re",
+        )
+        .unwrap();
+        let mut tail = Tail::at_end(&cfg);
+        assert!(replies_from(&cfg, &mut tail).is_empty());
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(outbox(&cfg))
+            .unwrap();
+        file.write_all(b"ply\",\"text\":\"two\"}\n").unwrap();
+        let complete = replies_from(&cfg, &mut tail);
+        assert_eq!(complete.len(), 1);
+        assert_eq!(complete[0].id, "b");
+        assert_eq!(complete[0].text, "two");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_restart_skips_a_record_longer_than_the_window() {
+        // The 8 KiB window does not reach the newline before a long partial record; walking back
+        // window by window still finds it, so the first poll reads the fragment, not the history.
+        let dir = scratch("at-end-long-partial");
+        let cfg = config(dir.clone());
+        let mut body = String::from("{\"id\":\"old\",\"kind\":\"reply\",\"text\":\"x\"}\n");
+        body.push_str(&"y".repeat(TAIL_WINDOW as usize * 2));
+        std::fs::write(outbox(&cfg), &body).unwrap();
+        let mut tail = Tail::at_end(&cfg);
+        assert!(
+            replies_from(&cfg, &mut tail).is_empty(),
+            "the history is not replayed for a long partial record"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_restart_with_no_outbox_reads_the_first_message() {
+        let dir = scratch("at-end-missing");
+        let cfg = config(dir.clone());
+        let mut tail = Tail::at_end(&cfg);
+        std::fs::write(
+            outbox(&cfg),
+            "{\"id\":\"first\",\"kind\":\"reply\",\"text\":\"hello\"}\n",
+        )
+        .unwrap();
+        let fresh = replies_from(&cfg, &mut tail);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].id, "first");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1542,6 +1629,29 @@ mod api_tests {
         let _env = env_lock();
         let dir = scratch("setup-local-gh");
         std::env::remove_var("BOOTH_GH");
+        // Whether this machine's own gh is new enough must not decide which CLI the test picks,
+        // so a too-old fixture goes first on PATH and stands in for the system one. The machine's
+        // PATH follows, so other processes a test spawns still resolve.
+        let shadow = dir.join("path");
+        std::fs::create_dir_all(&shadow).unwrap();
+        let system = shadow.join("gh");
+        std::fs::write(
+            &system,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --paginate';;\n  *) echo system-tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&system, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let previous = std::env::var_os("PATH");
+        let mut search = vec![shadow];
+        if let Some(path) = previous.as_deref() {
+            search.extend(std::env::split_paths(path));
+        }
+        std::env::set_var("PATH", std::env::join_paths(search).unwrap());
+        // A download would hide the branch under test and reach the network; the fixture below
+        // is capable, so the offline branch is the one that must answer.
+        std::env::set_var("BOOTH_NO_GH_INSTALL", "1");
+
         // `gh::ensure` looks here before offering a download, so a capable fixture means the
         // setup takes the real path with no network access.
         let bin = dir.join("bin");
@@ -1552,7 +1662,6 @@ mod api_tests {
             "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp  use with --paginate';;\n  *) echo local-tester;;\nesac\n",
         )
         .unwrap();
-        use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         // The host may have a capable gh of its own; put an older one first on PATH so the
@@ -1580,8 +1689,18 @@ mod api_tests {
         std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
 
         let api = FakeApi::start();
-        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r");
+
+        // Restore the machine's PATH before asserting: a failed expectation must not leak into
+        // every test that spawns a process after this one.
+        match previous {
+            Some(path) => std::env::set_var("PATH", path),
+            None => std::env::remove_var("PATH"),
+        }
+        std::env::remove_var("BOOTH_NO_GH_INSTALL");
+
         let text: String = lines
+            .unwrap()
             .iter()
             .map(|l| l.to_string())
             .collect::<Vec<_>>()
