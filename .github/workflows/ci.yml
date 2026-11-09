@@ -24,7 +24,20 @@ jobs:
           # `Config::from_env` resolves the bundle the service runs from, and the tests build a
           # console with it, so the pinned submodule is part of the test fixture.
           submodules: recursive
-      - name: Make sure the lint and format components exist
-        run: rustup component add clippy rustfmt
+      - name: Install the toolchain the repository records
+        # The hosted image ships its own stable, newer than the version `tools/versions.txt`
+        # records. Running the layers on the image's compiler hides a change the recorded one
+        # cannot build, and the gauntlet's "versions" line reads that file, so the run would
+        # report a toolchain it did not use. The file stays the single source of truth.
+        run: |
+          version=$(awk '$1 == "rustc" { print $3; exit }' tools/versions.txt)
+          if [ -z "$version" ]; then
+            echo "tools/versions.txt does not record a rustc version" >&2
+            exit 1
+          fi
+          rustup toolchain install "$version" --profile minimal
+          rustup component add --toolchain "$version" clippy rustfmt
+          echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+          RUSTUP_TOOLCHAIN="$version" rustc --version
       - name: Run the quick layers
         run: tools/gauntlet.sh quick
