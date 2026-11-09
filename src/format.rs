@@ -719,7 +719,7 @@ fn decision_line(decision: &Decision) -> L {
     let at = decision.at.as_deref().map(short_at).unwrap_or_default();
     Line::from(vec![
         span(
-            format!("{:<11}", decision.outcome),
+            format!("{:<11} ", decision.outcome),
             Style::default().fg(match decision.outcome.as_str() {
                 "accept" => Color::Green,
                 "stop" | "ignore" => Color::DarkGray,
@@ -740,7 +740,7 @@ pub fn decisions(view: &DecisionList) -> Vec<L> {
     for decision in &view.items {
         let mut line = vec![
             span(
-                format!("{:<11}", decision.outcome),
+                format!("{:<11} ", decision.outcome),
                 Style::default().fg(match decision.outcome.as_str() {
                     "accept" => Color::Green,
                     "stop" | "ignore" => Color::DarkGray,
@@ -902,7 +902,7 @@ pub fn help() -> Vec<L> {
 #[cfg(test)]
 mod tests {
     use super::{clip, reason, short_at, thread_detail, ticket_detail, ticket_list, SearchView};
-    use crate::model::{Page, ThreadDetail, TicketDetail, TicketRow};
+    use crate::model::{DecisionList, Page, ThreadDetail, TicketDetail, TicketRow};
     use serde_json::json;
     #[test]
     fn clips_by_characters_not_bytes() {
@@ -1096,5 +1096,72 @@ mod tests {
             .map(ToString::to_string)
             .collect();
         assert_eq!(text.last().map(String::as_str), Some("  · nothing matched"));
+    }
+
+    #[test]
+    fn a_decision_outcome_and_its_time_stay_separate_fields() {
+        // "unavailable" and "wouldAccept" are the longest real outcomes, eleven characters.
+        // The fixed eleven-wide outcome column therefore never padded them, and the timestamp
+        // started in the same cell: `unavailable11-04 10:20` instead of two fields.
+        let view: DecisionList = serde_json::from_value(json!({
+            "items": [
+                {
+                    "id": "d-1",
+                    "kind": "ignore",
+                    "outcome": "unavailable",
+                    "reason": { "code": "timeout" },
+                    "at": "2026-11-04T10:20:30.000Z"
+                },
+                {
+                    "id": "d-2",
+                    "kind": "ignore",
+                    "outcome": "wouldAccept",
+                    "reason": [{ "code": "addressed" }],
+                    "at": "2026-11-04T09:00:00.000Z"
+                }
+            ]
+        }))
+        .expect("the bundle's decision list decodes");
+        let shown: Vec<String> = super::decisions(&view)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            shown[1].starts_with("unavailable 11-04 10:20"),
+            "the outcome and its time must be separate fields: {shown:?}"
+        );
+        assert!(
+            shown[2].starts_with("wouldAccept 11-04 09:00"),
+            "the outcome and its time must be separate fields: {shown:?}"
+        );
+
+        // `/thread` renders its decisions with the same column, so it needs the same fix.
+        let detail: ThreadDetail = serde_json::from_value(json!({
+            "key": "github:o/r#12",
+            "source": "github",
+            "title": "Issue #12 flaky retry",
+            "stage": "subscribed",
+            "timeline": [],
+            "decisions": [{
+                "id": "d-1",
+                "kind": "ignore",
+                "outcome": "unavailable",
+                "reason": { "code": "timeout" },
+                "at": "2026-11-04T10:20:30.000Z"
+            }]
+        }))
+        .expect("the bundle's thread view decodes");
+        let shown: Vec<String> = thread_detail(&detail)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let decision = shown
+            .iter()
+            .find(|line| line.contains("timeout"))
+            .expect("the thread's decision is shown");
+        assert!(
+            decision.starts_with("unavailable 11-04 10:20"),
+            "the thread view uses the same separated column: {decision:?}"
+        );
     }
 }
