@@ -15,3 +15,4 @@ src/app.rs:2283:38: replace == with != in draw_model — the same highlight
 src/app.rs:2311:29: replace >= with < in draw_model — which row is drawn as the add row; pty only
 src/main.rs:201:5: replace run -> Result<(), String> with Ok(()) — the CLI dispatcher, reached only through `main`
 src/main.rs:193:5: replace show_provider -> Result<(), String> with Ok(()) — its only effect is printing; the lines it prints are tested directly through provider_lines
+src/oauth.rs:152:5: replace exchange -> Result<(), String> with Ok(()) — asks platform.deepseek.com; the tests drive store_grant, device_id and the callback parser directly
