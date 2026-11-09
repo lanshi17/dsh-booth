@@ -362,10 +362,35 @@ pub fn project_key(path: &str) -> String {
     format!("--{readable}--")
 }
 
+/// The path DSH keys a session tree by: the workspace's real path.
+///
+/// DSH canonicalizes a workspace with `fs.realpath` — trailing separators, `.`/`..` segments
+/// and symlinks all resolved — records that path in the session header, and keys the session
+/// tree by it. The configured spelling is not that path: a symlinked `DSH_HOME`, a `..` in
+/// `BOOTH_STATE_DIR`, or a trailing separator all encode differently. A path that does not
+/// exist cannot hold a session yet, so its configured spelling stands in for it. (Not applied
+/// off Unix: Rust's `fs::canonicalize` returns a `\\?\` verbatim path there, and this
+/// module's process checks are already `/proc`-only.)
+fn real_path(path: &Path) -> PathBuf {
+    #[cfg(unix)]
+    {
+        fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    }
+    #[cfg(not(unix))]
+    {
+        path.to_path_buf()
+    }
+}
+
+/// The key of this deployment's orchestrator tree, as DSH made it.
+fn router_key(cfg: &Config) -> String {
+    project_key(&real_path(&cfg.state_dir).display().to_string())
+}
+
 /// The orchestrator Session's project tree, such as
 /// `~/.dsh/sessions/--home-me-.dsh-state-superagent--`.
 pub fn session_root(cfg: &Config) -> PathBuf {
-    sessions_root(cfg).join(project_key(&cfg.state_dir.display().to_string()))
+    sessions_root(cfg).join(router_key(cfg))
 }
 
 /// Where the service puts a ticket's worktree, and with it that ticket's worker Session.
@@ -393,8 +418,11 @@ pub fn execution_root(api: &Api, cfg: &Config) -> PathBuf {
 /// root is the prefix to match. DSH's naming is lossy (a separator and a literal `-` produce
 /// the same character), which is why the router tree is matched by its own exact key.
 fn project_dirs(cfg: &Config, execution_root: &Path) -> Vec<PathBuf> {
-    let router = project_key(&cfg.state_dir.display().to_string());
-    let root = execution_root.display().to_string();
+    let router = router_key(cfg);
+    // A worker's tree is keyed by the real path of `<root>/<worktree>`; canonicalizing the root
+    // covers a symlinked or otherwise non-canonical execution directory, which the profile may
+    // name, while the worktree name is only a segment joined under it.
+    let root = real_path(execution_root).display().to_string();
     // `Path` keeps a trailing separator, which would encode as an extra dash and break the
     // prefix; the service joins child names without one.
     let trimmed = root.trim_end_matches(['/', '\\']);
@@ -1454,6 +1482,60 @@ mod tests {
             project_key(&cfg.state_dir.display().to_string())
         );
         assert!(root.parent().unwrap().ends_with("sessions"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finds_the_orchestrator_tree_through_a_symlinked_state_directory() {
+        use std::os::unix::fs::symlink;
+
+        let cfg = config("sessions-realpath-router");
+        let real = cfg.state_dir.with_file_name("real-state");
+        fs::create_dir_all(&real).unwrap();
+        symlink(&real, cfg.state_dir.clone()).unwrap();
+        // DSH records the real path in the session's header, so that is the spelling it keys
+        // the project tree by; the profile's configured spelling is only where the service was
+        // pointed.
+        let canonical = fs::canonicalize(&real).unwrap();
+        let key = project_key(&canonical.display().to_string());
+        fs::create_dir_all(sessions_root(&cfg).join(&key).join("orchestrator-x")).unwrap();
+
+        assert_eq!(
+            session_root(&cfg).file_name().unwrap().to_string_lossy(),
+            key,
+            "the tree is looked up by the path DSH keyed it with"
+        );
+        assert_eq!(session_count(&cfg, &cfg.state_dir.join("work")), 1);
+        let _ = fs::remove_dir_all(&cfg.dsh_home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn finds_worker_trees_under_a_symlinked_execution_root() {
+        use std::os::unix::fs::symlink;
+
+        let cfg = config("sessions-realpath-worker");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let real = cfg.state_dir.join("real-work");
+        let configured = cfg.state_dir.join("work");
+        fs::create_dir_all(&real).unwrap();
+        symlink(&real, &configured).unwrap();
+        // The service joins the worktree name under the configured root, and DSH keys that
+        // directory by its real path.
+        let canonical = fs::canonicalize(&real).unwrap();
+        let worker = sessions_root(&cfg).join(project_key(
+            &canonical.join("fix-parser").display().to_string(),
+        ));
+        fs::create_dir_all(worker.join("worker-t-3")).unwrap();
+
+        assert_eq!(session_count(&cfg, &configured), 1);
+        // The profile may name the root with a trailing separator, which encodes as an extra
+        // dash unless it is resolved the way DSH resolves it.
+        assert_eq!(
+            session_count(&cfg, &PathBuf::from(format!("{}/", configured.display()))),
+            1
+        );
+        let _ = fs::remove_dir_all(&cfg.dsh_home);
     }
 
     #[test]
