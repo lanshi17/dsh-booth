@@ -230,11 +230,13 @@ fn finish(response: Result<ureq::Response, ureq::Error>) -> Result<Value, ApiErr
                     .map(str::to_string)
             });
             match (code, message) {
-                // Every 404 dsh-superagent itself writes carries `{"error": …}`, including an
-                // unknown operation. A 404 without one is the DSH web server's fallback for a
-                // route whose owner has not registered yet (it starts listening first), so the
-                // management API is absent rather than answering "not found".
-                (404, None) => Err(ApiError::Transport(
+                // Every error dsh-superagent itself writes carries `{"error": …}`, including
+                // an unknown operation and a missing ticket. Without one, these two statuses
+                // are the DSH web server's fallback for a route whose owner has not registered
+                // yet (it starts listening first): the static frontend answers an unregistered
+                // GET with an empty 404 and any other method with an empty 405, so a POST or
+                // PUT during startup or restart arrived before the management API did.
+                (404 | 405, None) => Err(ApiError::Transport(
                     "the management API is not mounted yet; the service is starting or \
                      restarting, or --url points at another server"
                         .into(),
@@ -263,9 +265,60 @@ pub fn enc(segment: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use super::{enc, Api};
+    use super::{enc, Api, ApiError};
     use crate::testkit::FakeApi;
     use serde_json::json;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Answers one request with exactly `status` and `body`, so a test can pin a response the
+    /// typed fixture does not model, such as the DSH web server's fallback.
+    fn one_shot(status: u16, body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let response = format!(
+                "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        });
+        base
+    }
+
+    #[test]
+    fn an_empty_405_from_the_web_server_is_also_a_starting_service() {
+        // The DSH web server's static frontend serves GET/HEAD only and answers any other
+        // method with an empty 405, so `pause` (a POST) before dsh-superagent registers its
+        // routes used to print "the service answered HTTP 405" instead of the startup hint.
+        let api = Api::new(&one_shot(405, ""));
+        let error = api
+            .pause(true)
+            .expect_err("an empty 405 is not an answer from a mounted route");
+        match error {
+            ApiError::Transport(detail) => {
+                assert!(detail.contains("not mounted yet"), "{detail}");
+            }
+            other => panic!("a starting service is the transport class, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_405_with_the_bundles_error_is_still_a_status() {
+        // A mounted route's own answer keeps its message; only the empty fallback means the
+        // management API is absent.
+        let api = Api::new(&one_shot(405, r#"{"error":"Method not allowed"}"#));
+        match api.pause(true).expect_err("a 405 is an error") {
+            ApiError::Status(405, message) => assert_eq!(message, "Method not allowed"),
+            other => panic!("a JSON error is the service's answer, got {other:?}"),
+        }
+    }
 
     #[test]
     fn encodes_path_separators_but_not_ids() {
