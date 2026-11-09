@@ -2963,13 +2963,13 @@ mod transcript_tests {
             text: "收到".into(),
             ticket: Some("abcdef1234567890".into()),
         });
-        app.show_tickets(vec![TicketRow {
+        app.show_tickets(tickets_poll(vec![TicketRow {
             id: "abcdef1234567890".into(),
             state: "ended".into(),
             stage: "idle".into(),
             summary: Some("the worker changed the README".into()),
             ..TicketRow::default()
-        }]);
+        }]));
         let shown = text(&app);
         assert!(shown.contains("abcdef12 · report"), "{shown}");
         assert!(shown.contains("the worker changed the README"), "{shown}");
@@ -3637,6 +3637,187 @@ mod editor_tests {
         let fresh = intake::replies_from(&config, &mut tail);
         assert_eq!(fresh.len(), 1);
         assert_eq!(fresh[0].id, "new-1");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_header_counts_every_open_ticket_not_just_the_page() {
+        let (mut app, dir, api, _env) = editor_with_api("page-total");
+        // The service answers a window of 50, but 120 tickets are open and two want a person.
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({
+                "items": [
+                    { "id": "t-1", "title": "one", "state": "open", "stage": "working" }
+                ],
+                "total": 120,
+                "next_offset": 50
+            }),
+        );
+        api.set_route(
+            "/overview",
+            json!({
+                "problems": [],
+                "person": [
+                    { "id": "t-2", "title": "two", "state": "open", "stage": "person" },
+                    { "id": "t-3", "title": "three", "state": "open", "stage": "person" }
+                ],
+                "executor": { "running": 0, "queued": 0, "maxWorkers": 3, "idle": 0 },
+                "flow": {},
+                "policyVersion": "test"
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        assert_eq!(
+            app.open, 120,
+            "the header says the total, not the 1 row in the window"
+        );
+        assert_eq!(
+            app.person, 2,
+            "the person count comes from the overview, not the window"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_in_the_page_is_not_looked_up_again() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-in-page");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "new".into(),
+            },
+        );
+        // The page carries the tracked ticket; no detail route exists, so a lookup would 404
+        // and close it. Keeping it open is what proves the page was enough.
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({
+                "items": [
+                    { "id": "abcdef1234567890", "title": "in the page", "state": "open", "stage": "working" }
+                ],
+                "total": 120,
+                "next_offset": 50
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(shown.contains("abcdef12 · working"), "{shown}");
+        assert!(
+            app.tracked.contains_key("abcdef1234567890"),
+            "a page hit is not closed by a detail lookup"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_outside_the_page_is_looked_up_instead_of_closed() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-open");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({ "items": [], "total": 120, "next_offset": 50 }),
+        );
+        // The ticket is open, just past the first page: the detail route is the source of truth.
+        api.set_route(
+            "/tickets/abcdef1234567890",
+            json!({
+                "id": "abcdef1234567890",
+                "title": "still open",
+                "state": "open",
+                "stage": "person",
+                "action": "review"
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(!shown.contains("closed"), "{shown}");
+        assert!(
+            app.tracked.contains_key("abcdef1234567890"),
+            "the ticket is still followed"
+        );
+        assert!(shown.contains("needs a person · review"), "{shown}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_that_ended_outside_the_page_still_reports() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-ended");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({ "items": [], "total": 120, "next_offset": 50 }),
+        );
+        api.set_route(
+            "/tickets/abcdef1234567890",
+            json!({
+                "id": "abcdef1234567890",
+                "title": "finished",
+                "state": "ended",
+                "stage": "idle",
+                "summary": "the worker changed the README"
+            }),
+        );
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(shown.contains("abcdef12 · closed"), "{shown}");
+        assert!(shown.contains("abcdef12 · report"), "{shown}");
+        assert!(shown.contains("the worker changed the README"), "{shown}");
+        assert!(app.tracked.is_empty(), "a closed ticket is not tracked");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_tracked_ticket_the_service_no_longer_has_is_closed() {
+        let (mut app, dir, api, _env) = editor_with_api("page-tracked-gone");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        api.set_route(
+            "/tickets?state=open&limit=50",
+            json!({ "items": [], "total": 120, "next_offset": 50 }),
+        );
+        // No detail route: the fake answers 404, which is the service saying it has no such ticket.
+
+        app.refresh_status();
+        let poll = next_tickets(&app);
+        app.apply(Msg::Tickets(poll));
+
+        let shown = rendered(&app);
+        assert!(shown.contains("abcdef12 · closed"), "{shown}");
+        assert!(
+            app.tracked.is_empty(),
+            "a ticket the service dropped is closed"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
