@@ -51,12 +51,21 @@ fi
 
 status "changed-line coverage"
 if command -v cargo-llvm-cov >/dev/null 2>&1; then
+  # A failed report leaves the previous run's target/cov.json in place. Reading it would measure
+  # an older tree — a line this change adds looks like a comment to a report that never saw it —
+  # so remove it first: no fresh report then means no measurement, which fails closed below.
+  rm -f target/cov.json
   cargo llvm-cov --json --output-path target/cov.json
-  record "coverage report" $?
-  # Only the lines this change touched matter; global coverage is vanity. The base is the last
-  # release, so the check means "everything since the last release".
-  python3 tools/changed_lines.py ${GAUNTLET_BASE:+"$GAUNTLET_BASE"}
-  record coverage $?
+  report=$?
+  if [ "$report" -eq 0 ]; then
+    # Only the lines this change touched matter; global coverage is vanity. The base is the last
+    # release, so the check means "everything since the last release".
+    python3 tools/changed_lines.py ${GAUNTLET_BASE:+"$GAUNTLET_BASE"}
+    record coverage $?
+  else
+    # Record the layer once: a failed report must not be followed by a PASS for unmeasured code.
+    record coverage "$report"
+  fi
 else
   echo "cargo-llvm-cov is not installed (cargo install cargo-llvm-cov)"
   record coverage 1
