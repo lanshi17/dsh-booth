@@ -90,7 +90,7 @@ impl FakeApi {
             state_failures.clone(),
             settings_failures.clone(),
         );
-        std::thread::spawn(move || serve(listener, shared));
+        std::thread::spawn(move || serve(listener, shared, port));
         Self {
             base: format!("http://127.0.0.1:{port}"),
             settings,
@@ -176,6 +176,7 @@ fn serve(
         Remaining,
         Remaining,
     ),
+    port: u16,
 ) {
     let (settings, puts, routes, failures, state_failures, settings_failures) = shared;
     for stream in listener.incoming() {
@@ -220,16 +221,28 @@ fn serve(
             let method = parts.next().unwrap_or_default().to_owned();
             let path = parts.next().unwrap_or_default().to_owned();
             let body = text.split("\r\n\r\n").nth(1).unwrap_or_default().to_owned();
-            // The same-origin guard is a header. Scanning the whole request would accept a
-            // headerless save whose body happens to contain the header text, which is exactly
-            // the mistake this fake exists to catch.
+            // The same-origin guard checks three things (`sameOrigin()`): the Host is this
+            // loopback port in either spelling, the request carries the management header, and
+            // an Origin, when present, is the Host's own http origin. Scanning the whole request
+            // would accept a headerless save whose body happens to contain the header text;
+            // checking only that header would accept a foreign Host or Origin, which the service
+            // refuses. Both are the request-shape mistakes this fake exists to catch.
             let head_block = text.split("\r\n\r\n").next().unwrap_or_default();
-            let guarded = head_block.lines().any(|line| {
-                line.split_once(':').is_some_and(|(name, value)| {
-                    name.trim().eq_ignore_ascii_case("x-orchestrator-request")
-                        && value.trim() == "1"
+            let header = |wanted: &str| {
+                head_block.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.trim()
+                        .eq_ignore_ascii_case(wanted)
+                        .then(|| value.trim().to_owned())
                 })
-            });
+            };
+            let host = header("host").unwrap_or_default();
+            let loopback =
+                host == format!("127.0.0.1:{port}") || host == format!("localhost:{port}");
+            let origin = header("origin");
+            let guarded = loopback
+                && header("x-orchestrator-request").as_deref() == Some("1")
+                && origin.is_none_or(|origin| origin == format!("http://{host}"));
 
             // The real service registers `PUT settings/:block`; a path that merely ends in a
             // block name is an unknown operation, not a save.
@@ -393,31 +406,50 @@ mod tests {
             .expect("a status line")
     }
 
-    fn save_policy(header: Option<&str>, body: &str) -> String {
+    /// The `host:port` a loopback client sends in `Host` for this fixture.
+    fn authority(base: &str) -> &str {
+        base.strip_prefix("http://").expect("a loopback base")
+    }
+
+    fn save_policy(base: &str, header: Option<&str>, body: &str) -> String {
+        save_policy_as(authority(base), None, header, body)
+    }
+
+    /// Sends one save as `host`, with an optional `Origin`, so a test can leave the loopback.
+    fn save_policy_as(
+        host: &str,
+        origin: Option<&str>,
+        header: Option<&str>,
+        body: &str,
+    ) -> String {
         let header = header.map(|value| format!("x-orchestrator-request: {value}\r\n"));
+        let origin = origin.map(|value| format!("origin: {value}\r\n"));
         format!(
             "PUT /orchestrator/api/settings/policy HTTP/1.1\r\n\
-             host: 127.0.0.1\r\n\
+             host: {host}\r\n\
              content-type: application/json\r\n\
              content-length: {}\r\n\
+             {}\
              {}\
              connection: close\r\n\
              \r\n\
              {body}",
             body.len(),
-            header.unwrap_or_default()
+            header.unwrap_or_default(),
+            origin.unwrap_or_default()
         )
     }
 
     /// Sends one bodyless request with the guard header, so a test can choose the method.
-    fn method_request(method: &str, path: &str) -> String {
+    fn method_request(base: &str, method: &str, path: &str) -> String {
         format!(
             "{method} {path} HTTP/1.1\r\n\
-             host: 127.0.0.1\r\n\
+             host: {}\r\n\
              x-orchestrator-request: 1\r\n\
              content-length: 0\r\n\
              connection: close\r\n\
-             \r\n"
+             \r\n",
+            authority(base)
         )
     }
 
@@ -426,7 +458,7 @@ mod tests {
         let api = FakeApi::start();
         // A settings value can hold arbitrary text; it must not stand in for the header.
         let body = r#"{"value":{"note":"x-orchestrator-request: 1"},"revision":0}"#;
-        let response = raw(&api.base, &save_policy(None, body));
+        let response = raw(&api.base, &save_policy(&api.base, None, body));
         assert_eq!(status(&response), 403, "{response}");
         assert_eq!(api.put_count(), 0, "a refused request must not save");
     }
@@ -435,7 +467,41 @@ mod tests {
     fn a_request_with_the_same_origin_header_is_accepted() {
         let api = FakeApi::start();
         let body = r#"{"value":{"note":"a save"},"revision":0}"#;
-        let response = raw(&api.base, &save_policy(Some("1"), body));
+        let response = raw(&api.base, &save_policy(&api.base, Some("1"), body));
+        assert_eq!(status(&response), 200, "{response}");
+        assert_eq!(api.put_count(), 1);
+    }
+
+    #[test]
+    fn a_management_request_must_come_from_the_loopback_origin() {
+        let api = FakeApi::start();
+        let body = r#"{"value":{"note":"a save"},"revision":0}"#;
+
+        // `sameOrigin()` pins the Host to this loopback port. Checking only the management
+        // header answered a foreign Host as if it were the console, so a client pointed at
+        // another address still passed here.
+        for host in ["evil.example:80", "127.0.0.1"] {
+            let response = raw(&api.base, &save_policy_as(host, None, Some("1"), body));
+            assert_eq!(status(&response), 403, "host {host}: {response}");
+        }
+
+        // An Origin, when present, must be the Host's own http origin.
+        let host = authority(&api.base);
+        let response = raw(
+            &api.base,
+            &save_policy_as(host, Some("http://evil.example"), Some("1"), body),
+        );
+        assert_eq!(status(&response), 403, "{response}");
+        assert_eq!(api.put_count(), 0, "a refused request must not save");
+
+        // The other loopback spelling and its own Origin still answer, so refusing every
+        // request cannot satisfy the check.
+        let localhost = format!("localhost:{}", api.base.rsplit(':').next().unwrap());
+        let origin = format!("http://{localhost}");
+        let response = raw(
+            &api.base,
+            &save_policy_as(&localhost, Some(&origin), Some("1"), body),
+        );
         assert_eq!(status(&response), 200, "{response}");
         assert_eq!(api.put_count(), 1);
     }
@@ -449,13 +515,14 @@ mod tests {
         // console that dropped `/settings` from the route still save here.
         let request = format!(
             "PUT /orchestrator/api/policy HTTP/1.1\r\n\
-             host: 127.0.0.1\r\n\
+             host: {}\r\n\
              x-orchestrator-request: 1\r\n\
              content-type: application/json\r\n\
              content-length: {}\r\n\
              connection: close\r\n\
              \r\n\
              {body}",
+            authority(&api.base),
             body.len()
         );
         let response = raw(&api.base, &request);
@@ -479,13 +546,13 @@ mod tests {
             "/orchestrator/api/settings",
             "/orchestrator/api/overview",
         ] {
-            let response = raw(&api.base, &method_request("POST", path));
+            let response = raw(&api.base, &method_request(&api.base, "POST", path));
             assert_eq!(status(&response), 404, "POST {path}: {response}");
         }
         // The read itself still answers, so refusing every request cannot satisfy the loop.
         let response = raw(
             &api.base,
-            &method_request("GET", "/orchestrator/api/overview"),
+            &method_request(&api.base, "GET", "/orchestrator/api/overview"),
         );
         assert_eq!(status(&response), 200, "{response}");
     }
@@ -494,12 +561,15 @@ mod tests {
     fn a_save_against_a_revision_that_moved_on_is_a_conflict() {
         let api = FakeApi::start();
         let first = r#"{"value":{"note":"first"},"revision":0}"#;
-        assert_eq!(status(&raw(&api.base, &save_policy(Some("1"), first))), 200);
+        assert_eq!(
+            status(&raw(&api.base, &save_policy(&api.base, Some("1"), first))),
+            200
+        );
 
         // The service compares the revision the client read. A console that kept a stale copy,
         // or never reread it after another writer saved, must fail here instead of overwriting.
         let stale = r#"{"value":{"note":"second"},"revision":0}"#;
-        let response = raw(&api.base, &save_policy(Some("1"), stale));
+        let response = raw(&api.base, &save_policy(&api.base, Some("1"), stale));
         assert_eq!(status(&response), 409, "{response}");
         assert_eq!(api.put_count(), 1, "a conflict must not record a save");
         let settings = api.settings.lock().unwrap();
@@ -518,7 +588,7 @@ mod tests {
             r#"{"revision":0}"#,
             r#"{"value":null,"revision":0}"#,
         ] {
-            let response = raw(&api.base, &save_policy(Some("1"), body));
+            let response = raw(&api.base, &save_policy(&api.base, Some("1"), body));
             assert_eq!(status(&response), 400, "{body}: {response}");
         }
         assert_eq!(api.put_count(), 0, "a refused body must not save");
@@ -536,9 +606,9 @@ mod tests {
         api.fail_next_puts(1, 409, "the first conflict");
         api.fail_next_puts(1, 400, "the second refusal");
 
-        let first = raw(&api.base, &save_policy(Some("1"), body));
-        let second = raw(&api.base, &save_policy(Some("1"), body));
-        let third = raw(&api.base, &save_policy(Some("1"), body));
+        let first = raw(&api.base, &save_policy(&api.base, Some("1"), body));
+        let second = raw(&api.base, &save_policy(&api.base, Some("1"), body));
+        let third = raw(&api.base, &save_policy(&api.base, Some("1"), body));
 
         assert_eq!(status(&first), 409, "{first}");
         assert_eq!(status(&second), 400, "{second}");
@@ -556,8 +626,8 @@ mod tests {
         let body = r#"{"value":{"note":"a save"},"revision":0}"#;
         api.fail_next_puts(1, 503, "restarting");
 
-        let refused = raw(&api.base, &save_policy(None, body));
-        let save = raw(&api.base, &save_policy(Some("1"), body));
+        let refused = raw(&api.base, &save_policy(&api.base, None, body));
+        let save = raw(&api.base, &save_policy(&api.base, Some("1"), body));
 
         assert_eq!(status(&refused), 403, "{refused}");
         assert_eq!(
