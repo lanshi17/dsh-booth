@@ -72,7 +72,7 @@ impl Api {
         format!("{}/orchestrator/api{}", self.base, path)
     }
 
-    fn get(&self, path: &str) -> Result<Value, ApiError> {
+    pub(crate) fn get(&self, path: &str) -> Result<Value, ApiError> {
         let response = self
             .agent
             .get(&self.url(path))
@@ -97,7 +97,7 @@ impl Api {
         serde_json::from_value(value).map_err(|error| ApiError::Protocol(error.to_string()))
     }
 
-    fn put(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
+    pub(crate) fn put(&self, path: &str, body: &Value) -> Result<Value, ApiError> {
         let response = self
             .agent
             .put(&self.url(path))
