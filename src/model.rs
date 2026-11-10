@@ -62,6 +62,8 @@ pub struct StateView {
 #[serde(rename_all = "camelCase", default)]
 pub struct Link {
     pub source: String,
+    /// Empty when the bundle has no address to link to.
+    #[serde(default, deserialize_with = "empty_url_as_none")]
     pub url: Option<String>,
     /// The bundle sends a localized label; older routes send a plain string.
     #[serde(default, deserialize_with = "localized_or_text")]
@@ -87,6 +89,19 @@ where
             Raw::Map(map) => map,
         }),
     )
+}
+
+/// An optional link, where the bundle serves `""` for "there is no link".
+///
+/// `channelLink()` returns `url: ""` when the deployment lacks the facts a link needs, and a
+/// Thread's `url` falls back to that same value. Read as `Some("")`, that empty address made
+/// the console print a blank `link` line and an empty channel link instead of omitting the
+/// line or saying `(no link)`; an empty served URL is the model's "no link".
+fn empty_url_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.filter(|url| !url.is_empty()))
 }
 
 /// The Console's one-line note on a ticket, as the bundle's `ticketNote()` builds it.
@@ -207,6 +222,8 @@ pub struct ThreadFacts {
     pub key: String,
     pub source: String,
     pub title: String,
+    /// Empty when the bundle has no address to link to.
+    #[serde(default, deserialize_with = "empty_url_as_none")]
     pub url: Option<String>,
 }
 
@@ -293,6 +310,8 @@ pub struct ThreadRow {
     pub created_at: Option<String>,
     pub subscriptions: u32,
     pub pending: u32,
+    /// Empty when the bundle has no address to link to.
+    #[serde(default, deserialize_with = "empty_url_as_none")]
     pub url: Option<String>,
     pub tickets: Vec<ThreadTicket>,
     pub latest: Option<Latest>,
@@ -435,6 +454,8 @@ pub struct TimelineItem {
     pub at: Option<String>,
     pub preview: String,
     pub text: Option<String>,
+    /// Empty when the bundle has no address to link to.
+    #[serde(default, deserialize_with = "empty_url_as_none")]
     pub url: Option<String>,
     pub actions: Option<Value>,
 }
@@ -457,6 +478,8 @@ pub struct ThreadDetail {
     pub created_at: Option<String>,
     pub subscriptions: u32,
     pub pending: u32,
+    /// Empty when the bundle has no address to link to.
+    #[serde(default, deserialize_with = "empty_url_as_none")]
     pub url: Option<String>,
     pub context: Vec<String>,
     pub correlated: Vec<Correlated>,
@@ -536,8 +559,56 @@ pub struct SearchView {
 
 #[cfg(test)]
 mod tests {
-    use super::{DecisionList, SearchView};
+    use super::{DecisionList, SearchView, ThreadDetail, TicketDetail};
     use serde_json::json;
+
+    #[test]
+    fn an_empty_served_link_is_no_link() {
+        // `channelLink()` serves `url: ""` when the deployment has no address to link to; the
+        // console printed a blank channel link instead of `(no link)`.
+        let ticket: TicketDetail = serde_json::from_value(json!({
+            "id": "t1", "title": "a local ticket", "state": "open", "stage": "person",
+            "channels": [{ "source": "local", "url": "", "label": { "zh": "booth", "en": "booth" } }],
+            "threads": [{ "key": "local:t-demo", "source": "local", "title": "a local thread",
+                "stage": "subscribed", "url": "" }]
+        }))
+        .expect("a ticket whose local channel has no address decodes");
+        assert_eq!(ticket.channels[0].url, None);
+        assert_eq!(ticket.threads[0].url, None);
+    }
+
+    #[test]
+    fn an_empty_served_thread_link_is_no_link() {
+        // A Thread's `url` falls back to its first Trigger's `channelLink()`, so a local Thread
+        // serves `""` too; the console printed a `link` line with nothing after it.
+        let view: ThreadDetail = serde_json::from_value(json!({
+            "key": "local:t-demo", "source": "local", "title": "a local thread",
+            "stage": "subscribed", "url": "",
+            "tickets": [{ "id": "t1", "title": "a ticket", "state": "open",
+                "threads": [{ "key": "local:t-demo", "source": "local",
+                    "title": "a local thread", "url": "" }] }],
+            "timeline": [{ "id": "e1", "source": "local", "human": true,
+                "preview": "hello", "url": "" }]
+        }))
+        .expect("a local thread without an address decodes");
+        assert_eq!(view.url, None);
+        assert_eq!(view.tickets[0].threads[0].url, None);
+        assert_eq!(view.timeline[0].url, None);
+    }
+
+    #[test]
+    fn a_served_link_keeps_its_address() {
+        let ticket: TicketDetail = serde_json::from_value(json!({
+            "id": "t1", "title": "a github ticket", "state": "open", "stage": "person",
+            "channels": [{ "source": "github",
+                "url": "https://github.com/o/r/issues/12", "label": "Issue #12" }]
+        }))
+        .expect("a ticket with a real channel link decodes");
+        assert_eq!(
+            ticket.channels[0].url.as_deref(),
+            Some("https://github.com/o/r/issues/12")
+        );
+    }
 
     #[test]
     fn a_decision_page_keeps_the_served_cursor_and_has_no_total() {
