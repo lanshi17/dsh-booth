@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/parent-source-control.py", line 8, in <module>
+    print(module.verify(expected))
+          ~~~~~~~~~~~~~^^^^^^^^^^
+  File "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/gauntlet.py", line 12, in verify
+    if actual!=expected:raise RuntimeError('frozen source manifest mismatch')
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: frozen source manifest mismatch

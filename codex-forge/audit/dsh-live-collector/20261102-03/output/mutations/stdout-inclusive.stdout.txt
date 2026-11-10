@@ -1,0 +1,34 @@
+
+running 15 tests
+test blocked_stdin_still_obeys_wall_deadline ... ok
+test cancellation_kills_process_group ... ok
+test cli_collect_has_success_and_failure_exit_codes_without_claiming_observation ... ok
+test environment_is_cleared_and_only_allowlist_is_visible ... ok
+test evidence_directory_is_created_once_and_sealed_without_payloads ... ok
+test exact_stdout_limit_is_inclusive ... FAILED
+test exit_zero_without_final_never_counts_as_completed ... ok
+test exited_parent_does_not_leave_descendant_pipes_or_work_running ... ok
+test malformed_transcript_is_protocol_error ... ok
+test prompt_and_zero_limits_are_rejected_before_spawning ... ok
+test spawn_failure_leaves_a_sealed_failure_record ... ok
+test stderr_output_limit_is_bounded ... ok
+test successful_jsonl_process_is_parsed_and_not_billed ... ok
+test timeout_kills_process_and_returns_no_summary ... ok
+test valid_transcript_with_nonzero_exit_is_worker_failure ... ok
+
+failures:
+
+---- exact_stdout_limit_is_inclusive stdout ----
+
+thread 'exact_stdout_limit_is_inclusive' (3356916) panicked at tests/dsh_live.rs:85:5:
+assertion `left == right` failed
+  left: OutputLimit
+ right: Completed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    exact_stdout_limit_is_inclusive
+
+test result: FAILED. 14 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.92s
+

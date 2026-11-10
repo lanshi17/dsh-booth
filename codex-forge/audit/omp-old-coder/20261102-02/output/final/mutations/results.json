@@ -1,0 +1,68 @@
+[
+  {
+    "id": "reasoning-equality",
+    "outcome": "KILLED",
+    "test": "reasoning_equal_to_output_is_a_valid_subset_boundary",
+    "command": [
+      "cargo",
+      "test",
+      "--test",
+      "dsh_adapter",
+      "--locked",
+      "--offline",
+      "-j",
+      "2",
+      "--",
+      "--test-threads=4"
+    ],
+    "exit_code": 101,
+    "source_sha256": "36c5e1ee184292eb3496bb66c9be6693f0eccbe481e4ca14379893d36199a38d",
+    "mutant_sha256": "c540fc132e0ac1aaac928322b37842ddd76b78103cea4b97873555d5d9e298e3",
+    "tests_sha256": "7a56babbe38a7ea96da67149721ca299d1e95587de4d0660db98c85ad93fa988",
+    "manifest_path": "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/mutants/mutations/reasoning-equality/Cargo.toml"
+  },
+  {
+    "id": "inclusive-total-limit",
+    "outcome": "KILLED",
+    "test": "exact_total_byte_limit_accepts_whole_and_chunked_real_transcripts",
+    "command": [
+      "cargo",
+      "test",
+      "--test",
+      "dsh_adapter",
+      "--locked",
+      "--offline",
+      "-j",
+      "2",
+      "--",
+      "--test-threads=4"
+    ],
+    "exit_code": 101,
+    "source_sha256": "36c5e1ee184292eb3496bb66c9be6693f0eccbe481e4ca14379893d36199a38d",
+    "mutant_sha256": "f049f9ae59758fe2aa94c91f6c972a8d6f51a337913b993246e3181a2207297e",
+    "tests_sha256": "7a56babbe38a7ea96da67149721ca299d1e95587de4d0660db98c85ad93fa988",
+    "manifest_path": "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/mutants/mutations/inclusive-total-limit/Cargo.toml"
+  },
+  {
+    "id": "open-step-turn-end",
+    "outcome": "KILLED",
+    "test": "turn_end_with_an_open_step_is_a_terminal_protocol_error",
+    "command": [
+      "cargo",
+      "test",
+      "--test",
+      "dsh_adapter",
+      "--locked",
+      "--offline",
+      "-j",
+      "2",
+      "--",
+      "--test-threads=4"
+    ],
+    "exit_code": 101,
+    "source_sha256": "36c5e1ee184292eb3496bb66c9be6693f0eccbe481e4ca14379893d36199a38d",
+    "mutant_sha256": "61358a88538ac550666451699b8149c65314e97fb5217f9cc7f692697659ef41",
+    "tests_sha256": "7a56babbe38a7ea96da67149721ca299d1e95587de4d0660db98c85ad93fa988",
+    "manifest_path": "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/mutants/mutations/open-step-turn-end/Cargo.toml"
+  }
+]

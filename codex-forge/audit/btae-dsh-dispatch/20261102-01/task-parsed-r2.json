@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "usage_schema": "dsh-headless-0.2.1-rc.3.usage-v1",
+  "usage_source": "dsh_cli_self_reported",
+  "completed": true,
+  "completion_reasons": [],
+  "exit_code": 0,
+  "final_seen": true,
+  "session": {
+    "id_sha256": "df4e6bec1232e2a00fe33be6f688bb2613871ef422ccb9d84782a7a281648d89",
+    "cwd_sha256": "2c79a6f3e702fd524c00061997847fd6a4128fc1de01f11f13b7833b544feb39"
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "steps_started": 23,
+      "steps_ended": 23,
+      "completed": true,
+      "end_reason": "completed"
+    }
+  ],
+  "usage": {
+    "input_tokens": 1871486,
+    "output_tokens": 45968,
+    "total_tokens": 1917454,
+    "uncached_input_tokens": 92414,
+    "cache_read_tokens": 1779072,
+    "cache_write_tokens": null,
+    "reasoning_tokens": null
+  },
+  "observed_usage": {
+    "uncached_input_tokens": 92414,
+    "output_tokens": 45968,
+    "reported_total_tokens": 1917454,
+    "cache_read_tokens": 1779072,
+    "cache_write_tokens": null,
+    "reasoning_tokens": null
+  },
+  "usage_status": "complete",
+  "usage_coverage": {
+    "started_steps": 23,
+    "ended_steps": 23,
+    "input_tokens": {
+      "observed_steps": 23,
+      "total_steps": 23,
+      "complete": true
+    },
+    "uncached_input_tokens": {
+      "observed_steps": 23,
+      "total_steps": 23,
+      "complete": true
+    },
+    "output_tokens": {
+      "observed_steps": 23,
+      "total_steps": 23,
+      "complete": true
+    },
+    "total_tokens": {
+      "observed_steps": 23,
+      "total_steps": 23,
+      "complete": true
+    },
+    "reported_total_tokens": {
+      "observed_steps": 23,
+      "total_steps": 23,
+      "complete": true
+    },
+    "cache_read_tokens": {
+      "observed_steps": 23,
+      "total_steps": 23,
+      "complete": true
+    },
+    "cache_write_tokens": {
+      "observed_steps": 0,
+      "total_steps": 23,
+      "complete": false
+    },
+    "reasoning_tokens": {
+      "observed_steps": 0,
+      "total_steps": 23,
+      "complete": false
+    }
+  },
+  "steps_total": 23,
+  "steps_ended": 23,
+  "steps_with_usage": 23,
+  "steps_without_usage": 0,
+  "steps_complete": 23,
+  "event_counts": {
+    "session": 1,
+    "status": 48,
+    "turn_start": 1,
+    "step_start": 23,
+    "step_end": 23,
+    "turn_end": 1,
+    "text": 1,
+    "final_event": 1,
+    "thinking": 20,
+    "tool_call": 35,
+    "tool_result": 35,
+    "trace": 0,
+    "tool": 0
+  },
+  "text_events": 1,
+  "text_sha256": "5c579a1690cef58186299157e64a86f5efadb2350f1850c5bffeb0faad6fdcb0",
+  "final_text_sha256": "5c579a1690cef58186299157e64a86f5efadb2350f1850c5bffeb0faad6fdcb0",
+  "bytes_received": 166429,
+  "lines_received": 141,
+  "limits": {
+    "max_total_bytes": 16777216,
+    "max_line_bytes": 1048576,
+    "max_events": 100000
+  },
+  "billing_verified": false
+}

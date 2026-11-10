@@ -1,0 +1,7 @@
+# DSH live collector audit
+
+`output/final/summary.json` is the final validation record, bound to `source-state.json` (public executable sources, tests and frozen fixture inputs). Earlier logs directly under `output/` are historical checkpoints and are not final-source evidence. Raw OMP transcripts, private model state, mutant workspaces and builds remain ignored.
+
+From the repository root: `python3 audit/dsh-live-collector/20261102-03/verify.py output/replay`. The destination must be new. Tests, Clippy, formatting, expected readiness rejection and three targeted behavioral mutants run offline. The manifest is checked before/after, and mutant copies use only its public allowlist. Timeouts/compile errors fail the mutation layer. An uncached offline build may exceed the bounded checker timeout; that is a failed run requiring investigation, never a pass.
+
+The source guard's known-bad digest is rejected in the final entrypoint. Manual mutant success requires exit 101 plus the named test's failed assertion; the protocol mutant intentionally disables two redundant cleanup paths. These controls do not prove checker completeness. This is reduced assurance: no approved SPEC, complete RED history, coverage threshold, fuzz/property suite, random-order/minimum-version matrix, or completed independent review. See `review-status.json`. A separate actual DSH smoke on the same final source is summarized in `btae-eval/reports/DSH-LIVE-COLLECTOR.json`; replaying offline checks never makes a model call.

@@ -1,0 +1,4 @@
+   Compiling btae-eval v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/mutants/895188b66901/open-step-turn-end)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.89s
+     Running tests/dsh_adapter.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/mutation-target/debug/deps/dsh_adapter-1dab5d246214cd74)
+error: test failed, to rerun pass `--test dsh_adapter`

@@ -1,0 +1,35 @@
+[
+  {
+    "id": "m1",
+    "outcome": "SURVIVED",
+    "tests_passed": 54,
+    "original_sha256": "75ad89fb705cce4baaf4fbeedcf863957642c1f637802e1aab0279836a156249",
+    "mutant_sha256": "a9aa7ffb139dc91655546bed150bfaf893dd265168003be4c915598de561bea5",
+    "concrete_original_output": "OK completed=true status=Complete steps=1/1",
+    "concrete_mutant_output": "ERR dsh self-reported token usage is invalid: reasoningTokens exceeds outputTokens at event 4",
+    "manifest_path": "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/output/parent-final/mutants/m1/Cargo.toml",
+    "compile_and_test_log": "mutant-1-tests.stderr.txt"
+  },
+  {
+    "id": "m2",
+    "outcome": "SURVIVED",
+    "tests_passed": 54,
+    "original_sha256": "75ad89fb705cce4baaf4fbeedcf863957642c1f637802e1aab0279836a156249",
+    "mutant_sha256": "78acb8a35a0c50e5c670d477f7dfcc627192e94e06a23283d658365e698f71ca",
+    "concrete_original_output": "OK completed=false status=Unknown steps=0/0",
+    "concrete_mutant_output": "ERR dsh transcript exceeds the 35-byte total limit",
+    "manifest_path": "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/output/parent-final/mutants/m2/Cargo.toml",
+    "compile_and_test_log": "mutant-2-tests.stderr.txt"
+  },
+  {
+    "id": "m3",
+    "outcome": "SURVIVED",
+    "tests_passed": 54,
+    "original_sha256": "75ad89fb705cce4baaf4fbeedcf863957642c1f637802e1aab0279836a156249",
+    "mutant_sha256": "901d3d66edd913fa03335ccac0c92ec8bca6898f58d47f095af841476c9212cb",
+    "concrete_original_output": "ERR dsh event 4 violates the transcript protocol: turn_end while a step is open",
+    "concrete_mutant_output": "OK completed=false status=Unknown steps=0/1",
+    "manifest_path": "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-01/output/parent-final/mutants/m3/Cargo.toml",
+    "compile_and_test_log": "mutant-3-tests.stderr.txt"
+  }
+]

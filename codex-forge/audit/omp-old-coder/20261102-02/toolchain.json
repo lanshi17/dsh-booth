@@ -1,0 +1,6 @@
+{
+  "rustc --version": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "cargo --version": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "cargo clippy --version": "clippy 0.1.95 (59807616e1 2026-04-14)",
+  "python3 --version": "Python 3.14.4"
+}
