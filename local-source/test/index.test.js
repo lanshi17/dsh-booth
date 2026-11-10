@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -181,6 +181,37 @@ test('a rewritten inbox that grew keeps every new instruction', async () => {
       console.received.map(trigger => trigger.id),
       ['local-old', 'local-new-1', 'local-new-2'],
     )
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a cut-short outbox record does not swallow the next reply', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const outbox = join(dir, 'booth-outbox.jsonl')
+  const console = booth()
+  try {
+    // A crash or a full disk can leave the last record without its newline.
+    const damaged = '{"id":"torn","kind":"reply","text":"half'
+    writeFileSync(outbox, damaged)
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    const channel = console.ctx.get('orchestrator').sources.kind('local').channel
+    const message = id => ({ id, kind: 'reply', text: id, channel: { source: 'local', thread: 't-1', address: {} } })
+
+    assert.equal(await channel.send({}, message('fresh')), 'sent')
+
+    // The damaged record stays a line of its own, and the reply gets a line the console can parse.
+    const first = readFileSync(outbox, 'utf8').split('\n')
+    assert.equal(first.length, 3, 'the reply ends with one newline')
+    assert.equal(first[0], damaged, 'the damaged record is left as it was')
+    assert.equal(JSON.parse(first[1]).id, 'fresh')
+
+    // A terminated outbox gains no blank line between replies.
+    assert.equal(await channel.send({}, message('second')), 'sent')
+    const lines = readFileSync(outbox, 'utf8').split('\n')
+    assert.equal(lines.length, 4)
+    assert.equal(JSON.parse(lines[2]).id, 'second')
   } finally {
     console.stop()
     rmSync(dir, { recursive: true, force: true })
