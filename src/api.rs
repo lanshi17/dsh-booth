@@ -159,8 +159,34 @@ impl Api {
         self.get_as(&format!("/tickets/{}", enc(id)))
     }
 
+    /// Every Thread the service keeps for `filter`, not just the first page.
+    ///
+    /// `/threads` pages (`{ items, total, next_offset }`, at most 1000 a page), and
+    /// `format::thread_list` prints no cursor: `booth threads` showed the first 50 of `total`
+    /// and silently hid the rest. Follow the served cursor instead, so the list is complete.
     pub fn threads(&self, filter: &str) -> Result<Page<ThreadRow>, ApiError> {
-        self.get_as(&format!("/threads?filter={}&limit=50", enc(filter)))
+        let mut items = Vec::new();
+        let mut offset = 0u32;
+        let total;
+        loop {
+            let page: Page<ThreadRow> = self.get_as(&format!(
+                "/threads?filter={}&limit=50&offset={offset}",
+                enc(filter)
+            ))?;
+            items.extend(page.items);
+            match page.next_offset {
+                Some(next) if next > offset => offset = next,
+                _ => {
+                    total = page.total;
+                    break;
+                }
+            }
+        }
+        Ok(Page {
+            items,
+            total,
+            next_offset: None,
+        })
     }
 
     pub fn thread(&self, key: &str) -> Result<ThreadDetail, ApiError> {
@@ -324,6 +350,39 @@ mod tests {
     fn encodes_path_separators_but_not_ids() {
         assert_eq!(enc("t-abc_1.2~x"), "t-abc_1.2~x");
         assert_eq!(enc("github:o/r#12"), "github%3Ao%2Fr%2312");
+    }
+
+    #[test]
+    fn a_thread_list_follows_the_served_cursor_instead_of_stopping_at_one_page() {
+        // `/threads` pages at 50 and `format::thread_list` prints no cursor, so `booth threads`
+        // showed the first 50 of `total` and hid the rest. The list must read the pages.
+        let service = FakeApi::start();
+        service.set_route(
+            "/threads?filter=all&limit=50&offset=0",
+            json!({
+                "items": [
+                    { "key": "github:1", "source": "github", "title": "one", "stage": "subscribed" }
+                ],
+                "total": 2,
+                "next_offset": 1
+            }),
+        );
+        service.set_route(
+            "/threads?filter=all&limit=50&offset=1",
+            json!({
+                "items": [
+                    { "key": "github:2", "source": "github", "title": "two", "stage": "subscribed" }
+                ],
+                "total": 2,
+                "next_offset": null
+            }),
+        );
+        let page = Api::new(&service.base)
+            .threads("all")
+            .expect("both served pages decode");
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.total, 2);
+        assert_eq!(page.next_offset, None);
     }
 
     #[test]
