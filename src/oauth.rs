@@ -252,9 +252,7 @@ fn store_grant(token: &str, device: &str) -> Result<(), String> {
             }
             Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
         };
-        if !root.is_object() {
-            root = json!({ "version": 1, "records": {} });
-        }
+        root = versioned_store(root, &path)?;
         let records = root
             .as_object_mut()
             .expect("checked above")
@@ -282,6 +280,55 @@ fn store_grant(token: &str, device: &str) -> Result<(), String> {
             .map_err(|error| format!("cannot encode credentials: {error}"))?;
         replace_store(&path, &text)
     })
+}
+
+/// The document layout DSH's credentials store reads before this writer adds its records to it.
+/// DSH reads only `version: 1`, with one compatibility case: the pre-release flat layout (a
+/// top-level mapping of reference names to non-empty strings), which it upgrades on boot by
+/// nesting it under `refs:`. Sign-in has to perform the same upgrade first. Adding `records:` to
+/// an unversioned document makes DSH's flat-layout recognizer decline it — its entries are no
+/// longer all scalars — and the versioned parser then refuses the whole file as a pre-release
+/// layout, so the next DSH boot cannot read any credential in the store. A document whose layout
+/// this build does not read is refused untouched instead of being rewritten into one DSH cannot.
+fn versioned_store(root: Value, path: &Path) -> Result<Value, String> {
+    if !root.is_object() {
+        // An empty or comment-only document parses as no document at all: DSH reads that as an
+        // empty store, which needs no version.
+        return Ok(json!({ "version": 1, "refs": {}, "records": {} }));
+    }
+    match root.get("version").cloned() {
+        Some(version) if version.as_i64() == Some(1) => Ok(root),
+        Some(version) => Err(format!(
+            "cannot write {}: credentials document declares version {version}; DSH reads version 1",
+            path.display()
+        )),
+        None => {
+            let fields = root.as_object().expect("checked above");
+            if fields.is_empty() {
+                return Ok(json!({ "version": 1, "refs": {}, "records": {} }));
+            }
+            if is_flat_credentials_layout(fields) {
+                let refs = Value::Object(fields.clone());
+                return Ok(json!({ "version": 1, "refs": refs }));
+            }
+            Err(format!(
+                "cannot write {}: credentials document has no version, so DSH cannot read it",
+                path.display()
+            ))
+        }
+    }
+}
+
+/// Whether a document is the pre-release flat layout DSH migrates: every entry names a credential
+/// reference (`[A-Za-z_][A-Za-z0-9_]*`) and holds a non-empty string.
+fn is_flat_credentials_layout(fields: &serde_json::Map<String, Value>) -> bool {
+    !fields.is_empty()
+        && fields.iter().all(|(name, value)| {
+            let mut chars = name.chars();
+            let valid_name = matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+            valid_name && value.as_str().is_some_and(|text| !text.is_empty())
+        })
 }
 
 /// Hold the store's cross-process writer lock around one read-modify-rename cycle. The lock is a
@@ -760,6 +807,90 @@ mod tests {
         assert_eq!(root["records"]["keep/me"]["kind"], "grant");
         assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "kept-token");
         assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "kept-device");
+
+        restore_dsh_home(previous);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// DSH reads only the version-1 layout. A store left in the pre-release flat layout is upgraded
+    /// by DSH on boot by nesting its references under `refs:`; sign-in has to do the same. Adding
+    /// `records:` to the flat document without that upgrade makes DSH's recognizer decline it and
+    /// its versioned parser refuse the whole store, so the next boot loses every credential in it.
+    #[test]
+    fn a_pre_release_flat_store_is_upgraded_before_the_grant_is_added() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-flat-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join(".credentials.yaml");
+        std::fs::write(&path, "DEEPSEEK_API_KEY: sk-old\nBOOTH_OPEN_KEY: sk-two\n").unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+
+        store_grant("tok-123", "device-1").unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["version"], 1, "{text}");
+        assert!(
+            root.get("DEEPSEEK_API_KEY").is_none(),
+            "a flat reference stayed at the top level: {text}"
+        );
+        assert_eq!(root["refs"]["DEEPSEEK_API_KEY"], "sk-old");
+        assert_eq!(root["refs"]["BOOTH_OPEN_KEY"], "sk-two");
+        assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");
+        assert_eq!(root["records"][DEVICE_KEY]["payload"]["id"], "device-1");
+
+        restore_dsh_home(previous);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A document this build cannot read as version 1 must not be rewritten: the records would be
+    /// added to a file DSH still refuses, and entries this code did not understand could be lost.
+    #[test]
+    fn a_store_with_an_unreadable_layout_is_not_rewritten() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-layout-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join(".credentials.yaml");
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+
+        for document in [
+            "refs:\n  KEEP_ME: sk-kept\n",
+            "version: 2\nrefs:\n  KEEP_ME: sk-kept\n",
+        ] {
+            std::fs::write(&path, document).unwrap();
+            let error = store_grant("tok-new", "device-2").unwrap_err();
+            assert!(error.contains("cannot write"), "{error}");
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), document);
+            assert!(!home.join(".credentials.yaml.lock").exists(), "{error}");
+        }
+
+        restore_dsh_home(previous);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// An empty document and an empty mapping are both an empty store to DSH, not an unversioned
+    /// one; the grant write stamps the version so DSH keeps reading the result after the records
+    /// land.
+    #[test]
+    fn an_empty_store_is_stamped_with_its_version() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-empty-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join(".credentials.yaml");
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+
+        for document in ["", "{}\n"] {
+            std::fs::write(&path, document).unwrap();
+            store_grant("tok-123", "device-1").unwrap();
+
+            let text = std::fs::read_to_string(&path).unwrap();
+            let root: Value = serde_norway::from_str(&text).unwrap();
+            assert_eq!(root["version"], 1, "{document:?} became {text}");
+            assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-123");
+        }
 
         restore_dsh_home(previous);
         std::fs::remove_dir_all(&home).ok();
