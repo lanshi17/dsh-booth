@@ -1,0 +1,302 @@
+   Compiling forge-application v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/application)
+   Compiling forge-mcp-server v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/mcp-server)
+   Compiling forge-orchestrator v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/orchestrator)
+   Compiling forge-cli v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/cli)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.44s
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_backend-cea4c7abccacc082)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_dsh-9ed7826377a22a16)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/fake_dsh.rs (target/debug/deps/forge_fake_dsh-6ce2baab4b933e4d)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/executor.rs (target/debug/deps/executor-9332db6fa7dfbf4e)
+
+running 3 tests
+test start_wait_success_and_version_probe ... ok
+test rejects_stderr_bad_json_and_huge_logs ... ok
+test cancel_running_worker ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_omp-0450a5f2858e4644)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/fake_omp.rs (target/debug/deps/forge_fake_omp-fe18cb2244ebe7dc)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/executor.rs (target/debug/deps/executor-142d6886de51d546)
+
+running 3 tests
+test start_wait_success_and_version_probe ... ok
+test rejects_stderr_bad_json_and_huge_logs ... ok
+test cancel_running_worker ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_protocol-f3c99521a7836d09)
+
+running 2 tests
+test tests::translates_dsh_dialect ... ok
+test tests::parses_omp_and_rejects_bad_json ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_runtime-300517a7f79559e4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/fake_worker.rs (target/debug/deps/forge_fake_worker-2ed98143bdc80f70)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/supervisor.rs (target/debug/deps/supervisor-2db2afcb61a74271)
+
+running 4 tests
+test success_and_failure_exits ... ok
+test env_allowlist_drops_parent_vars_and_keeps_injection ... ok
+Initialized empty Git repository in /tmp/.tmpeuo7Xu/repo/.git/
+[master (root-commit) 70e544f] initial
+ 1 file changed, 1 insertion(+)
+ create mode 100644 protected.txt
+test sandbox_blocks_writes_to_main_repo ... ok
+test timeout_and_cancel_kill_process_group ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_application-52371d3b8b7eb070)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/durable_merge_auth.rs (target/debug/deps/durable_merge_auth-906d9ec44908c9cb)
+
+running 1 test
+Initialized empty Git repository in /tmp/.tmp8su5qi/repo/.git/
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+Switched to a new branch 'forge/5346af6b-d41a-4208-986f-252ecf1b22b3'
+[forge/5346af6b-d41a-4208-986f-252ecf1b22b3 5e24032] feature
+ 1 file changed, 1 insertion(+)
+ create mode 100644 feature.txt
+Switched to branch 'master'
+test durable_merge_auth_survives_reopen_and_merges_once ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/lifecycle.rs (target/debug/deps/lifecycle-ea918ef600b6bbdc)
+
+running 9 tests
+test accepting_does_not_authorize_execution_or_worker_privilege_escalation ... ok
+test failed_assignment_can_retry_but_old_report_and_workspace_are_rejected ... ok
+test independent_reviewer_can_reject_failing_checks ... ok
+test completion_requires_independent_review_then_explicit_merge_authority ... ok
+test mandate_restricts_backend_and_expiration ... ok
+test rejected_review_is_retained_and_does_not_authorize_merge ... ok
+test late_completion_cannot_resurrect_cancelled_assignment ... ok
+test wrong_worker_or_assignment_cannot_submit_a_result ... ok
+test review_cannot_substitute_another_commit_or_failed_tests ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/merge_gate.rs (target/debug/deps/merge_gate-ccfd8169ffe78d13)
+
+running 3 tests
+Initialized empty Git repository in /tmp/.tmplQmKCh/repo/.git/
+Initialized empty Git repository in /tmp/.tmpFZjDUe/repo/.git/
+Initialized empty Git repository in /tmp/.tmpq0CJaj/repo/.git/
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+Switched to a new branch 'forge/c859fd60-651b-4f10-b204-73769c38afd1'
+Switched to a new branch 'forge/6d216d83-e7df-48d4-9a49-a2ad8ee8bc38'
+Switched to a new branch 'forge/4b5799e8-acb5-458e-bb8c-c076941dfbd3'
+[forge/c859fd60-651b-4f10-b204-73769c38afd1 0194951] feature
+ 1 file changed, 1 insertion(+)
+ create mode 100644 feature.txt
+[forge/6d216d83-e7df-48d4-9a49-a2ad8ee8bc38 0194951] feature
+ 1 file changed, 1 insertion(+)
+ create mode 100644 feature.txt
+[forge/4b5799e8-acb5-458e-bb8c-c076941dfbd3 0194951] feature
+ 1 file changed, 1 insertion(+)
+ create mode 100644 feature.txt
+Switched to branch 'master'
+Switched to branch 'master'
+Switched to branch 'master'
+Switched to branch 'forge/c859fd60-651b-4f10-b204-73769c38afd1'
+Switched to branch 'forge/6d216d83-e7df-48d4-9a49-a2ad8ee8bc38'
+Switched to branch 'forge/4b5799e8-acb5-458e-bb8c-c076941dfbd3'
+test expired_authorization_cannot_merge ... ok
+Switched to branch 'master'
+test failed_host_checks_block_approval ... ok
+Switched to branch 'forge/c859fd60-651b-4f10-b204-73769c38afd1'
+[forge/c859fd60-651b-4f10-b204-73769c38afd1 d953230] drift
+ 1 file changed, 1 insertion(+)
+ create mode 100644 drift.txt
+Switched to branch 'master'
+Switched to branch 'forge/c859fd60-651b-4f10-b204-73769c38afd1'
+HEAD is now at 0194951 feature
+Switched to branch 'master'
+test real_merge_after_auth_rejects_drift_duplicate_and_expiry ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/signed_merge_and_push.rs (target/debug/deps/signed_merge_and_push-3eb0a8b1f2030ff9)
+
+running 2 tests
+Initialized empty Git repository in /tmp/.tmph1DEKE/repo/.git/
+Initialized empty Git repository in /tmp/.tmptZmMg3/remote.git/
+Initialized empty Git repository in /tmp/.tmptZmMg3/repo/.git/
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+Switched to a new branch 'forge/ba6266be-d8f6-45a1-9995-050b22e16c91'
+[forge/ba6266be-d8f6-45a1-9995-050b22e16c91 5e24032] feature
+ 1 file changed, 1 insertion(+)
+ create mode 100644 feature.txt
+Switched to branch 'master'
+test signed_merge_auth_required_and_tamper_rejected ... ok
+To /tmp/.tmptZmMg3/remote.git
+ * [new branch]      master -> master
+branch 'master' set up to track 'origin/master'.
+Switched to a new branch 'forge/27c61af1-787d-40e8-8326-f91acc5c46d3'
+[forge/27c61af1-787d-40e8-8326-f91acc5c46d3 507bdc7] feature
+ 1 file changed, 1 insertion(+)
+ create mode 100644 feature.txt
+Switched to branch 'master'
+Your branch is up to date with 'origin/master'.
+test merge_and_push_updates_bare_remote ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/main.rs (target/debug/deps/forge-a032d64611834479)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_config-137e361279d3993b)
+
+running 1 test
+test tests::rejects_unknown_permissions_and_zero_limits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_domain-2148c2e312903dbb)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_identity-d4507303d4996256)
+
+running 2 tests
+test tests::oidc_hs256_jwt_roundtrip_and_rejects_bad_aud ... ok
+test tests::signs_and_verifies_merge_claims ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_mcp_server-04f8d576e1ee6157)
+
+running 5 tests
+test tests::framing_roundtrip ... ok
+test tests::oidc_jwt_can_initialize_and_create ... ok
+test tests::rejects_unknown_protocol_and_unauthorized ... ok
+test tests::viewer_cannot_create_or_cancel ... ok
+test tests::create_status_and_duplicate_message_recovery ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_orchestrator-8db6246057ef0df4)
+
+running 1 test
+test tests::runner_blocks_dependents_when_dependency_fails ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_persistence-d37daed4e9fffcf0)
+
+running 10 tests
+test tests::mcp_inbox_deduplicates_message_ids ... ok
+test tests::rollback_leaves_prior_version ... ok
+test tests::empty_database_migrates_and_roundtrips ... ok
+test tests::unique_and_check_constraints ... ok
+test tests::migration_is_idempotent_on_reopen ... ok
+test tests::cas_conflict_rejects_stale_write ... ok
+test tests::outbox_survives_crash_until_delivered ... ok
+test tests::insert_conflict_when_expected_none ... ok
+test tests::merge_auth_survives_crash_and_consumes_once ... ok
+test tests::crash_restart_recovers_committed_state ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_review-fe9b4c42a5370763)
+
+running 3 tests
+test tests::stale_commit_missing_checks_and_failed_tests_cannot_pass ... ok
+Initialized empty Git repository in /tmp/.tmpgAybbg/remote.git/
+Initialized empty Git repository in /tmp/.tmpiXqpuS/repo/.git/
+Initialized empty Git repository in /tmp/.tmpgAybbg/work/.git/
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[master (root-commit) 7ff81ab] base
+ 1 file changed, 1 insertion(+)
+ create mode 100644 README
+[master 5e24032] feature
+ 1 file changed, 1 insertion(+)
+ create mode 100644 feature.txt
+test tests::collect_evidence_runs_real_git_and_checks ... ok
+test tests::push_branch_updates_bare_remote ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_task_scheduler-604ddfe3e94b5e10)
+
+running 3 tests
+test tests::dependencies_precede_dependents ... ok
+test tests::rejects_cycles_and_dangling_dependencies ... ok
+test tests::concurrency_limit_and_dependency_failure ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_worktree-6af9fccf3ce91b8b)
+
+running 2 tests
+test tests::rejects_overlapping_roots_and_duplicate_allocate ... ok
+test tests::allocates_isolated_worktrees_outside_main ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

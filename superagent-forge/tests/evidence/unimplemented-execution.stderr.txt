@@ -1,0 +1,5 @@
+error: unrecognized subcommand 'run'
+
+Usage: forge <COMMAND>
+
+For more information, try '--help'.

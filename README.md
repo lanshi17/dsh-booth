@@ -324,7 +324,15 @@ console, Feishu-specific reads, attaching to a worker Session, Windows service c
 The console and `dsh-superagent` versions are those the submodule pins. The console depends
 only on the management API and does not modify `dsh-superagent`'s source.
 
+## Superagent Forge
+
+[`superagent-forge/`](superagent-forge/) is the multi-agent orchestrator imported from
+[codex-forge](https://github.com/lanshi17/codex-forge). It has its own Cargo workspace and does
+not link the booth binary or the `superagent/` submodule. Build and test it from that directory.
+The leftover Codex tree in the source repository is not part of this import.
+
 ## License
 
 GPL-3.0-only. `dsh-superagent`, which this console talks to, is MIT and remains a research
-prototype; this project is not an official DeepSeek product.
+prototype; this project is not an official DeepSeek product. `superagent-forge/` stays
+Apache-2.0; its license is in that directory.

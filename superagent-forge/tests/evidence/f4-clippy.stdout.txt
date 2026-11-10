@@ -1,0 +1,6 @@
+    Checking forge-task-scheduler v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/task-scheduler)
+    Checking forge-persistence v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/persistence)
+    Checking forge-orchestrator v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/orchestrator)
+    Checking forge-mcp-server v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/mcp-server)
+    Checking forge-cli v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/cli)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.95s
