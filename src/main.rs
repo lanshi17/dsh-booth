@@ -7,6 +7,7 @@
 mod api;
 mod app;
 mod commands;
+mod forge;
 mod format;
 mod gh;
 mod intake;
@@ -49,6 +50,17 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum ForgeCommand {
+    /// Create one Forge task from the instruction.
+    Send {
+        #[arg(required = true, trailing_var_arg = true)]
+        text: Vec<String>,
+    },
+    /// Read one Forge task.
+    Status { task_id: String },
+}
+
+#[derive(Subcommand)]
 enum Command {
     /// Prepare the DSH profile and build the bundled superagent.
     Init,
@@ -75,6 +87,11 @@ enum Command {
     Send {
         #[arg(required = true, trailing_var_arg = true)]
         text: Vec<String>,
+    },
+    /// Hand work to Superagent Forge. Forge runs the DSH or OMP worker.
+    Forge {
+        #[command(subcommand)]
+        action: ForgeCommand,
     },
     /// Report the GitHub CLI the GitHub Source would use, or install a newer one.
     Gh {
@@ -267,6 +284,24 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             Ok(())
         }
         Command::Send { text } => send_instruction(&service::Config::from_env()?, text),
+        Command::Forge { action } => match action {
+            ForgeCommand::Send { text } => {
+                let result = forge::send(&text.join(" "))?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or(result.to_string())
+                );
+                Ok(())
+            }
+            ForgeCommand::Status { task_id } => {
+                let result = forge::status(&task_id)?;
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&result).unwrap_or(result.to_string())
+                );
+                Ok(())
+            }
+        },
         Command::Gh { install } => {
             let cfg = service::Config::from_env()?;
             let system = gh::version(std::path::Path::new("gh")).unwrap_or_else(|| "?".into());
