@@ -49,6 +49,7 @@ pub const PALETTE: &[(&str, &str)] = &[
     ),
     ("/pause", "stop the executor from taking work"),
     ("/resume", "let the executor take work"),
+    ("/help", "the commands on this screen (also /?)"),
     ("/keys", "the keyboard shortcuts, on one screen"),
     ("/history", "search what you typed before (Ctrl+R)"),
     ("/refresh", "reload the header"),
@@ -388,6 +389,24 @@ mod tests {
         assert!(help.contains("/new"), "/new missing from /help:\n{help}");
         let names: Vec<&str> = matches("/new").iter().map(|(name, _)| *name).collect();
         assert_eq!(names, vec!["/new"], "/new is not the palette's answer");
+    }
+
+    #[test]
+    fn help_and_the_palette_list_the_help_command() {
+        // `/help` and its `/?` alias are commands `execute` runs, but the table that
+        // `format::help` prints and the completer searches omitted the command itself. The
+        // help screen therefore never listed `/help`, and Tab could not reach it; only the
+        // alias in the footer or the unknown-command message hinted at it. Add the canonical
+        // command beside the other console controls and document the alias there.
+        let help: String = format::help()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(help.contains("/help"), "/help missing from /help:\n{help}");
+        assert!(help.contains("/?"), "the /? alias is missing:\n{help}");
+        let first = matches("/help").first().map(|(name, _)| *name);
+        assert_eq!(first, Some("/help"), "/help is not the palette's answer");
     }
 
     #[test]
