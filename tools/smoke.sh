@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Real execution: run the built binary against the fixture service, the way a user would.
+# Real execution: build the binary and run it against the fixture service, the way a user would.
 #
 # The mock API serves the same routes with the same same-origin guard, so this checks the
 # console end to end without a configured GitHub account. A terminal UI cannot run here, so the
@@ -11,8 +11,14 @@ port=${SMOKE_PORT:-3899}
 base="http://127.0.0.1:$port"
 fail=0
 
+# The layer exists to run the tree it is in. `cargo test` builds the test harness but not
+# `target/debug/booth`, so a checkout that has only been tested holds a binary that is missing
+# or older than the source: trusting it either fails the run on a clean tree or, worse, passes
+# it against the previous build. Build it here — cargo's incremental check is cheap — and let a
+# compile error fail the layer with the compiler's own message.
 booth=./target/debug/booth
-[ -x "$booth" ] || { echo "build first: cargo build"; exit 1; }
+cargo build --quiet --bin booth || { echo "FAIL build (cargo build --bin booth)"; exit 1; }
+[ -x "$booth" ] || { echo "FAIL build (no target/debug/booth)"; exit 1; }
 
 # A listener already on the port would answer every check below, so the layer would report
 # another process's answers as its own result — for example a concurrent checkout's smoke run.
