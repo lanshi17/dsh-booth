@@ -5,7 +5,7 @@
 //! the agent acknowledges and replies. Both live beside the service's state, so the console and the
 //! Source read the same paths without a protocol.
 
-use crate::api::Api;
+use crate::api::{Api, ApiError};
 use crate::format::L;
 use crate::oauth;
 use crate::provider::Catalog;
@@ -411,6 +411,38 @@ pub fn summary(catalog: &Catalog) -> Vec<L> {
     lines
 }
 
+/// Whether an error means the service is briefly between instances rather than refusing.
+///
+/// Saving a Source restarts dsh-superagent after the response, and its management routes are
+/// unregistered for a moment: the web server then answers an unmounted request with an empty
+/// 404, which `api` reads as a transport error, and a service that is still starting can answer
+/// 5xx. Both are "not back yet". A 4xx is not: the save loop separately retries the two it knows
+/// are the restart's side effect (a missing Source entry and a revision conflict).
+fn between_instances(error: &ApiError) -> bool {
+    match error {
+        ApiError::Transport(_) => true,
+        ApiError::Status(code, _) => *code >= 500,
+        ApiError::Protocol(_) => false,
+    }
+}
+
+/// Reads the settings, waiting out a restart until the deadline.
+///
+/// The registration loop in `setup` already retries a read that lands in a restart; the save
+/// loop only retried a missing Source entry or a revision conflict, so one interrupted read
+/// aborted the whole setup after the blocks already written.
+fn settings_after_restart(api: &Api, deadline: Instant) -> Result<Value, String> {
+    loop {
+        match api.settings() {
+            Ok(settings) => return Ok(settings),
+            Err(error) if between_instances(&error) && Instant::now() < deadline => {
+                sleep(Duration::from_millis(600));
+            }
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+}
+
 /// `/setup`: names the repository, allows the people who may ask for work, and turns on the console's Source.
 pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>, String> {
     // Only the first word names the repository; everything after it is the directory, so a
@@ -516,7 +548,7 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     let save = |block: &str, change: &dyn Fn(&mut Value)| -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(60);
         loop {
-            let settings = api.settings()?;
+            let settings = settings_after_restart(api, deadline)?;
             let source = block.strip_prefix("source:");
             let entry = match source {
                 Some(id) => settings
@@ -543,9 +575,15 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
             change(&mut value);
             match api.save(block, &value, revision) {
                 Ok(_) => return wait_ready(api),
-                Err(crate::api::ApiError::Status(code, message))
-                    if ((code == 404 && message.contains("Source not found")) || code == 409)
-                        && Instant::now() < deadline =>
+                Err(error)
+                    if Instant::now() < deadline
+                        && (between_instances(&error)
+                            || matches!(
+                                &error,
+                                ApiError::Status(code, message)
+                                    if (*code == 404 && message.contains("Source not found"))
+                                        || *code == 409
+                            )) =>
                 {
                     sleep(Duration::from_millis(600));
                 }
@@ -1644,6 +1682,96 @@ mod api_tests {
         assert!(names.contains(&"source:github".to_owned()), "{names:?}");
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_retries_a_save_the_restart_interrupted() {
+        let _env = env_lock();
+        // Saving a Source schedules the restart for after the response, so the next block's
+        // request can land while the management routes are unregistered. The loop already
+        // retries a Source that is briefly missing; an interrupted request must be retried too,
+        // or a first setup gives up after the blocks it has already written.
+        let dir = scratch("setup-restart-save");
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        // The restart that follows the first save is still running when its PUT arrives; the
+        // service answers for the unmounted management API, as it does between instances.
+        api.fail_next_puts(1, 503, "restarting");
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("o/r"), "{text}");
+        // The retried save landed, and the blocks after it did too.
+        let names: Vec<String> = api
+            .puts
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(name, _)| name.replace("source%3A", "source:"))
+            .collect();
+        assert!(names.contains(&"source:github".to_owned()), "{names:?}");
+        assert!(names.contains(&"source:local".to_owned()), "{names:?}");
+        assert!(names.contains(&"policy".to_owned()), "{names:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn a_settings_read_interrupted_by_a_restart_is_retried() {
+        // The same window on the read side: the request reaches the web server while the
+        // management routes are unregistered. `setup`'s save loop must not turn that into a
+        // half-written configuration.
+        let api = FakeApi::start();
+        api.refuse_settings(1);
+        let settings = settings_after_restart(
+            &Api::new(&api.base),
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(settings.get("sources").is_some(), "{settings}");
+    }
+
+    #[test]
+    fn a_settings_read_stops_retrying_at_its_deadline() {
+        let api = FakeApi::start();
+        api.refuse_settings(1);
+        // The deadline is checked before the wait: once it has passed, the read's own error is
+        // what setup reports instead of a loop that keeps sleeping.
+        let error = settings_after_restart(&Api::new(&api.base), Instant::now()).unwrap_err();
+        assert!(error.contains("503"), "{error}");
+    }
+
+    #[test]
+    fn only_an_answer_from_between_instances_is_retried() {
+        // A restart unregisters the management routes, so a transport error or a 5xx is the
+        // service saying "not back yet". A refusal it means (a bad origin, a bad body) must
+        // reach the operator; the save loop handles a revision conflict (409) separately.
+        assert!(between_instances(&ApiError::Transport("refused".into())));
+        assert!(between_instances(&ApiError::Status(
+            503,
+            "restarting".into()
+        )));
+        assert!(between_instances(&ApiError::Status(500, "boom".into())));
+        assert!(!between_instances(&ApiError::Status(
+            403,
+            "same-origin".into()
+        )));
+        assert!(!between_instances(&ApiError::Status(
+            409,
+            "conflict".into()
+        )));
+        assert!(!between_instances(&ApiError::Protocol("bad body".into())));
     }
 
     #[test]
