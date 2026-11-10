@@ -327,10 +327,12 @@ only on the management API and does not modify `dsh-superagent`'s source.
 ## Codex Forge
 
 [`codex-forge/`](codex-forge/) is the full [codex-forge](https://github.com/lanshi17/codex-forge)
-tree, history included, so that repository can be deleted. The orchestrator to build is
-[`codex-forge/superagent-forge/`](codex-forge/superagent-forge/). It has its own Cargo workspace
-and does not link the booth binary or the `superagent/` submodule. The rest of that tree
-(Codex sources, Bazel, audits) is kept as it was.
+tree, history included, so that repository can be deleted. Booth is the desk a person uses.
+Forge is the control plane behind it: it accepts a task, runs a DSH or OMP worker in its own
+worktree, and keeps review and merge on the host. Hand it work with `booth forge send`. The
+orchestrator to build is [`codex-forge/superagent-forge/`](codex-forge/superagent-forge/). It
+has its own Cargo workspace and does not link the booth binary or the `superagent/` submodule.
+The rest of that tree (Codex sources, Bazel, audits) is kept as it was.
 
 ## License
 
