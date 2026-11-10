@@ -24,7 +24,21 @@ pub struct Load {
     pub running: u32,
     pub queued: u32,
     pub max_workers: u32,
+    /// Open Tickets between turns. `/overview` serves it; the state view has no such count.
     pub idle: u32,
+}
+
+/// The `/state` answer's load: the Sessions running, the Tickets queued and the limit.
+///
+/// The state route serves no `idle` count — that number belongs to `/overview`, which counts
+/// open Tickets between turns, and sharing one `Load` made `booth status --json` print
+/// `"idle": 0` whatever the real count was, on a view that never carried the field.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct StateLoad {
+    pub running: u32,
+    pub queued: u32,
+    pub max_workers: u32,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -32,6 +46,10 @@ pub struct Load {
 pub struct SetupProblem {
     pub detail: String,
     pub code: Option<Value>,
+    /// Where the operator fixes it: `deployment`, `github` or `feishu`.
+    pub place: Option<String>,
+    /// The values the problem's sentence fills in.
+    pub values: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -44,7 +62,13 @@ pub struct Accounts {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Setup {
+    /// The problem that stops the deployment; `null` once setup resolved it.
     pub problem: Option<SetupProblem>,
+    /// A Feishu bot check that failed while the rest of setup resolved; the Sources then run
+    /// without Feishu. The state route always serves this key (null or a problem), and the
+    /// service's own status script reads it, so dropping it hid a deployment running without
+    /// Feishu from every `--json` caller.
+    pub feishu_problem: Option<SetupProblem>,
     pub accounts: Option<Accounts>,
 }
 
@@ -54,7 +78,7 @@ pub struct StateView {
     pub paused: bool,
     pub master_id: Option<String>,
     pub health: BTreeMap<String, Health>,
-    pub load: Load,
+    pub load: StateLoad,
     pub setup: Setup,
 }
 
@@ -559,7 +583,7 @@ pub struct SearchView {
 
 #[cfg(test)]
 mod tests {
-    use super::{DecisionList, SearchView, ThreadDetail, TicketDetail};
+    use super::{DecisionList, Overview, SearchView, StateView, ThreadDetail, TicketDetail};
     use serde_json::json;
 
     #[test]
@@ -716,5 +740,89 @@ mod tests {
         let printed = serde_json::to_value(&view).expect("the view serializes for --json");
         assert_eq!(printed["items"][0]["actions"]["requeue"], true);
         assert_eq!(printed["items"][0]["text"], "the full served text");
+    }
+
+    #[test]
+    fn a_state_view_keeps_the_setup_problems_the_service_serves() {
+        // The state route always serves `setup.feishuProblem` beside `setup.problem`, and each
+        // problem carries its `place` and `values`. Dropping them made `booth status --json`
+        // unable to say that the deployment runs without Feishu, or where a problem is fixed.
+        let served = json!({
+            "paused": false,
+            "masterId": "orchestrator-abc",
+            "health": {},
+            "load": { "running": 2, "queued": 1, "maxWorkers": 4 },
+            "setup": {
+                "problem": {
+                    "place": "github",
+                    "code": "repositoryReadOnly",
+                    "values": { "account": "agent-bot", "repository": "o/r" },
+                    "detail": "@agent-bot cannot push to o/r."
+                },
+                "feishuProblem": {
+                    "place": "feishu",
+                    "code": "feishuBotNotReady",
+                    "values": { "app": "cli_demo", "status": "disabled" },
+                    "detail": "The bot identity of app cli_demo is disabled."
+                },
+                "accounts": { "repository": "o/r", "agent": "agent-bot" }
+            }
+        });
+        let view: StateView =
+            serde_json::from_value(served).expect("the bundle's state view decodes");
+        let problem = view.setup.problem.as_ref().expect("the setup problem");
+        assert_eq!(problem.place.as_deref(), Some("github"));
+        assert_eq!(problem.values.as_ref().unwrap()["repository"], "o/r");
+        let feishu = view
+            .setup
+            .feishu_problem
+            .as_ref()
+            .expect("the Feishu setup problem");
+        assert_eq!(feishu.place.as_deref(), Some("feishu"));
+        assert_eq!(feishu.code.as_ref().unwrap(), "feishuBotNotReady");
+
+        let printed = serde_json::to_value(&view).expect("the state view serializes for --json");
+        assert_eq!(printed["setup"]["problem"]["place"], "github");
+        assert_eq!(
+            printed["setup"]["problem"]["values"]["account"],
+            "agent-bot"
+        );
+        assert_eq!(
+            printed["setup"]["feishuProblem"]["detail"],
+            "The bot identity of app cli_demo is disabled."
+        );
+    }
+
+    #[test]
+    fn a_state_load_has_no_idle_count_the_route_does_not_serve() {
+        // `stateView()` serves `running`, `queued` and `maxWorkers`; the overloaded `Load`
+        // printed `"idle": 0` on every status answer, whatever the real count was. `/overview`
+        // serves the real number, so its `idle` must survive.
+        let state: StateView = serde_json::from_value(json!({
+            "paused": false,
+            "health": {},
+            "load": { "running": 2, "queued": 1, "maxWorkers": 4 },
+            "setup": {}
+        }))
+        .expect("the state view without an idle count decodes");
+        let printed = serde_json::to_value(&state).expect("the state view serializes for --json");
+        assert_eq!(printed["load"]["running"], 2);
+        assert_eq!(printed["load"]["queued"], 1);
+        assert_eq!(printed["load"]["maxWorkers"], 4);
+        assert!(
+            printed["load"].get("idle").is_none(),
+            "the state route has no idle count; --json must not invent one"
+        );
+
+        let overview: Overview = serde_json::from_value(json!({
+            "problems": [],
+            "person": [],
+            "executor": { "running": 2, "queued": 1, "maxWorkers": 4, "idle": 3 },
+            "flow": {},
+            "policyVersion": "v"
+        }))
+        .expect("the overview keeps its executor load");
+        let printed = serde_json::to_value(&overview).expect("the overview serializes for --json");
+        assert_eq!(printed["executor"]["idle"], 3);
     }
 }
