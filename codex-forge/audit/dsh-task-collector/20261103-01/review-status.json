@@ -1,8 +1,0 @@
-{
-  "independent_review": "not performed against final source state",
-  "attempt": "OMP fresh blind review invoked with commandcode/deepseek/deepseek-v4.1-flash",
-  "reason": "deadline exceeded after initial artifact and source reads; no completed attacks or verdict",
-  "rounds_completed": 0,
-  "source_state": "32e94c2ffbd50878514bee1c2fb301c2861b2e83d8acb4a14eb26bbfec535392",
-  "full_tier3_assurance": false
-}

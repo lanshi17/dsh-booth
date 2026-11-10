@@ -1,2 +1,0 @@
-    Checking btae-eval v0.1.0 (/tmp/codex-forge-dsh-live-20261102/btae-eval)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.09s

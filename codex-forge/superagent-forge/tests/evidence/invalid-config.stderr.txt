@@ -1,1 +1,0 @@
-forge: paths must be absolute; workspaces cannot use /; limits must be positive; environment names must be valid

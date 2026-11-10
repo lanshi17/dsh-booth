@@ -1,2 +1,0 @@
-    Checking btae-eval v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/final-workspace/btae-eval)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s

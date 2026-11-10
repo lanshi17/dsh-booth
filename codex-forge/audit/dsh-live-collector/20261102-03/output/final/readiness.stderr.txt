@@ -1,3 +1,0 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running `/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target/debug/btae-eval check-ready datasets/pilot.json`
-btae-eval: study is not ready for empirical execution
