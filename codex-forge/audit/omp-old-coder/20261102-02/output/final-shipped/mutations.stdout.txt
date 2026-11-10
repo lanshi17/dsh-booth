@@ -1,5 +1,0 @@
-inclusive-line-limit KILLED by exact_line_byte_limit_accepts_content_before_a_later_lf
-reasoning-equality KILLED by reasoning_equal_to_output_is_a_valid_subset_boundary
-inclusive-total-limit KILLED by exact_total_byte_limit_accepts_whole_and_chunked_real_transcripts
-open-step-turn-end KILLED by turn_end_with_an_open_step_is_a_terminal_protocol_error
-4/4 manual mutants killed; no coverage/fuzzing completeness claim

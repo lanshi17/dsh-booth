@@ -1,3 +1,0 @@
-# Independent probe correction
-
-The R0 six probes and their failing output are preserved. The original task incorrectly assumed raw DSH input already included cache. Source inspection and all 23 real usage records contradicted this assumption. For R1, prefix fixtures use real cacheReadTokens with explicit totalTokens, canonical expected input for the real development trace is corrected from 92,414 (uncached only) to 1,871,486 (all input). The observed total is 1,917,454 including 45,968 output. Missing cache details remain unknown even when explicit total allows canonical input derivation. Eight additional acceptance probes were defined before R1 delivery. These are parser acceptance tests, not methodology trial observations.

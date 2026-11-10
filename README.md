@@ -324,18 +324,20 @@ console, Feishu-specific reads, attaching to a worker Session, Windows service c
 The console and `dsh-superagent` versions are those the submodule pins. The console depends
 only on the management API and does not modify `dsh-superagent`'s source.
 
-## Codex Forge
+## Who does the work
 
-[`codex-forge/`](codex-forge/) is the full [codex-forge](https://github.com/lanshi17/codex-forge)
-tree, history included, so that repository can be deleted. Booth is the desk a person uses.
-Forge is the control plane behind it: it accepts a task, runs a DSH or OMP worker in its own
-worktree, and keeps review and merge on the host. Hand it work with `booth forge send`. The
-orchestrator to build is [`codex-forge/superagent-forge/`](codex-forge/superagent-forge/). It
-has its own Cargo workspace and does not link the booth binary or the `superagent/` submodule.
-The rest of that tree (Codex sources, Bazel, audits) is kept as it was.
+The default worker is dsh. Name another coding agent when you want that one to do it:
+
+```sh
+booth send "fix the readme"            # dsh
+booth send --agent omp "fix the readme"
+booth send --agent claude "fix the readme"
+booth send --agent codex "fix the readme"
+```
+
+In the console, start the line with `@omp`, `@claude`, or `@codex`. A line with no prefix goes to dsh. The named agent runs the instruction itself. Booth does not keep a second control plane.
 
 ## License
 
 GPL-3.0-only. `dsh-superagent`, which this console talks to, is MIT and remains a research
-prototype; this project is not an official DeepSeek product. `codex-forge/` stays under the
-license it shipped with (Apache-2.0); see `codex-forge/LICENSE`.
+prototype; this project is not an official DeepSeek product.

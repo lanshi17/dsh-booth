@@ -1,1 +1,0 @@
-2/2 known-bad checker controls rejected; this does not prove checker completeness

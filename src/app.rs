@@ -794,8 +794,21 @@ impl App {
             ));
             return;
         };
+        let (who, text) = crate::worker::split(text);
+        if who != crate::worker::Who::Dsh {
+            self.busy = true;
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let message = match crate::worker::run(who, &text) {
+                    Ok(answer) => Msg::Lines(vec![Line::from(answer)]),
+                    Err(error) => Msg::Error(error),
+                };
+                let _ = tx.send(message);
+            });
+            return;
+        }
         let follow = self.continues.as_ref().map(|follow| follow.thread.clone());
-        match intake::send(&config, text, follow.as_deref()) {
+        match intake::send(&config, &text, follow.as_deref()) {
             Ok(id) => {
                 let lines = match &self.continues {
                     Some(follow) => vec![Line::from(vec![

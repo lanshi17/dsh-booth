@@ -1,4 +1,0 @@
-   Compiling btae-eval v0.1.0 (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/output/final/mutations/mutants/stop-on-error)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.39s
-     Running tests/dsh_live.rs (/tmp/codex-forge-dsh-live-20261102/audit/dsh-live-collector/20261102-03/target-stop-on-error/debug/deps/dsh_live-f7e93969be72f38e)
-error: test failed, to rerun pass `--test dsh_live`

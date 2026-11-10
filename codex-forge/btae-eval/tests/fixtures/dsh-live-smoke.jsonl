@@ -1,7 +1,0 @@
-{"type": "session", "sessionId": "session-fixture-text", "cwd": "/fixture/workspace"}
-{"type": "status", "phase": "turn_start", "turn": 1}
-{"type": "status", "phase": "step_start", "turn": 1, "step": 1}
-{"type": "text", "text": "BTAE_DSH_READY"}
-{"type": "status", "phase": "step_end", "turn": 1, "step": 1, "usage": {"inputTokens": 34746, "outputTokens": 10, "totalTokens": 34756}}
-{"type": "status", "phase": "turn_end", "turn": 1, "reason": {"kind": "completed"}}
-{"type": "final", "text": "BTAE_DSH_READY"}

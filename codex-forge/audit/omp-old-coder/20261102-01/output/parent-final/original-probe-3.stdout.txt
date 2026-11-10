@@ -1,1 +1,0 @@
-ERR dsh event 4 violates the transcript protocol: turn_end while a step is open

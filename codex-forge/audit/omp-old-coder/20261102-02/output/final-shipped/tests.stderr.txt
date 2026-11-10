@@ -1,9 +1,0 @@
-   Compiling btae-eval v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/final-workspace/btae-eval)
-    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s
-     Running unittests src/lib.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/deps/btae_eval-14835d8b54919317)
-     Running unittests src/main.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/deps/btae_eval-feaeda711d86ba59)
-     Running unittests src/bin/fixture_worker.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/deps/btae_fixture_worker-f5da27525ed29cbe)
-     Running tests/cli.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/deps/cli-9e36e94c8b18dde5)
-     Running tests/dsh_adapter.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/deps/dsh_adapter-1dab5d246214cd74)
-     Running tests/invariants.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/deps/invariants-2883992c3680c207)
-     Running tests/runner.rs (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/deps/runner-55d8ae554a4b5294)

@@ -1,7 +1,0 @@
-{
-  "chunk_id": "ca9731",
-  "wall_time_seconds": 0.00000775,
-  "exit_code": 0,
-  "original_token_count": 119,
-  "output": "   Compiling btae-eval v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/workspace/btae-eval)\n    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.64s\n     Running tests/dsh_adapter.rs (target/debug/deps/dsh_adapter-1dab5d246214cd74)\n\nrunning 1 test\ntest exact_line_byte_limit_accepts_content_before_a_later_lf ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 26 filtered out; finished in 0.00s\n\n"
-}

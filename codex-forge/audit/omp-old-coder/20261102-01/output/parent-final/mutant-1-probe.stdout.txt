@@ -1,1 +1,0 @@
-ERR dsh self-reported token usage is invalid: reasoningTokens exceeds outputTokens at event 4

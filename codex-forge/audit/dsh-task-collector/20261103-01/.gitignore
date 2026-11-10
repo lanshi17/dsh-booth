@@ -1,7 +1,0 @@
-/target*/
-mutants/
-smoke-run/
-sessions/
-*-events.jsonl
-*.log
-__pycache__/

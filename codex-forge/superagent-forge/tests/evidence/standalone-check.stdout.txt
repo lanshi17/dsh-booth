@@ -1,1 +1,0 @@
-configuration valid; concurrency=2; network_allowed=false; worker execution and SQLite backend are not implemented

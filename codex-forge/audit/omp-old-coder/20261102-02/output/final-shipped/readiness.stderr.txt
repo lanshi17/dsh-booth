@@ -1,3 +1,0 @@
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
-     Running `/data/yangzs/Projects/02_Reproduction/08_codex_hermes/audit/omp-old-coder/20261102-02/target/debug/btae-eval check-ready datasets/pilot.json`
-btae-eval: study is not ready for empirical execution
