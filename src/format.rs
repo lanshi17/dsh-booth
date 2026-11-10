@@ -233,6 +233,29 @@ fn problem_line(problem: &Value) -> L {
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("problem");
+    // A `source-error` problem carries the Source it concerns beside the health detail. The line
+    // used to print the detail alone, so with more than one Source the operator could not tell
+    // which one needed setup; the panel titles the row with the Source for the same reason.
+    let source = problem
+        .get("source")
+        .and_then(|source| source.get("title"))
+        .and_then(|title| {
+            title
+                .as_str()
+                .filter(|text| !text.is_empty())
+                .or_else(|| {
+                    title
+                        .get("zh")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                })
+                .or_else(|| {
+                    title
+                        .get("en")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                })
+        });
     let detail = problem
         .get("detail")
         .and_then(Value::as_str)
@@ -256,6 +279,11 @@ fn problem_line(problem: &Value) -> L {
                 .and_then(Value::as_str)
         })
         .unwrap_or("");
+    let detail = match (kind, source) {
+        ("source-error", Some(source)) if detail.is_empty() => source.to_string(),
+        ("source-error", Some(source)) => format!("{source} · {detail}"),
+        _ => detail.to_string(),
+    };
     let label = match kind {
         "setup" => "setup",
         "no-source" => "no Source is running",
@@ -271,7 +299,7 @@ fn problem_line(problem: &Value) -> L {
     if detail.is_empty() {
         bullet(label.to_string())
     } else {
-        bullet(format!("{label}: {}", clip(detail, 110)))
+        bullet(format!("{label}: {}", clip(&detail, 110)))
     }
 }
 
@@ -901,8 +929,10 @@ pub fn help() -> Vec<L> {
 }
 #[cfg(test)]
 mod tests {
-    use super::{clip, reason, short_at, thread_detail, ticket_detail, ticket_list, SearchView};
-    use crate::model::{DecisionList, Page, ThreadDetail, TicketDetail, TicketRow};
+    use super::{
+        clip, overview, reason, short_at, thread_detail, ticket_detail, ticket_list, SearchView,
+    };
+    use crate::model::{DecisionList, Overview, Page, ThreadDetail, TicketDetail, TicketRow};
     use serde_json::json;
     #[test]
     fn clips_by_characters_not_bytes() {
@@ -1163,5 +1193,66 @@ mod tests {
             decision.starts_with("unavailable 11-04 10:20"),
             "the thread view uses the same separated column: {decision:?}"
         );
+    }
+
+    #[test]
+    fn a_source_error_names_the_source_it_concerns() {
+        // The bundle's `source-error` problem carries the Source it concerns beside the health
+        // detail; the panel titles the row with it. Printing only the detail left an operator
+        // with two Sources unable to tell which one needs setup.
+        let view: Overview = serde_json::from_value(json!({
+            "problems": [{
+                "kind": "source-error",
+                "source": {
+                    "id": "feishu",
+                    "title": { "zh": "飞书", "en": "Feishu" },
+                    "health": { "state": "error", "detail": "bot CLI not configured" }
+                }
+            }, {
+                "kind": "source-error",
+                "source": {
+                    "id": "github",
+                    "title": "GitHub",
+                    "health": { "state": "error", "detail": "401 from api.github.com" }
+                }
+            }, {
+                "kind": "source-error",
+                "source": {
+                    "id": "local",
+                    "health": { "state": "error", "detail": "inbox unreadable" }
+                }
+            }],
+            "person": [],
+            "executor": {},
+            "flow": {},
+            "policyVersion": null
+        }))
+        .expect("the bundle's overview decodes");
+        let shown: Vec<String> = overview(&view, "http://127.0.0.1:3899")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let feishu = shown
+            .iter()
+            .find(|line| line.contains("bot CLI not configured"))
+            .expect("the Feishu error is shown");
+        assert!(
+            feishu.contains("飞书 · bot CLI not configured"),
+            "a localized Source title names the Source: {feishu:?}"
+        );
+        let github = shown
+            .iter()
+            .find(|line| line.contains("401 from api.github.com"))
+            .expect("the GitHub error is shown");
+        assert!(
+            github.contains("GitHub · 401 from api.github.com"),
+            "a plain Source title names the Source: {github:?}"
+        );
+        // A problem that reaches no titled Source keeps its detail instead of gaining a separator.
+        let untitled = shown
+            .iter()
+            .find(|line| line.contains("inbox unreadable"))
+            .expect("the untitled Source error is shown");
+        assert_eq!(untitled, "  · Source error: inbox unreadable");
     }
 }
