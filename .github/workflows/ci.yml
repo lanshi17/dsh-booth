@@ -1,9 +1,9 @@
 name: ci
 
 # The repository already has one entry point for every check, `tools/gauntlet.sh`; this runs its
-# quick layers (format, types, lint, tests) on every push and pull request so a change cannot
-# land without them. The slower layers (coverage, mutation, supply chain, real execution) stay
-# local: they need tools and a live service a hosted runner does not have.
+# quick layers (format, types, lint, tests) and its credential scan on every push and pull request
+# so a change cannot land without them. The slower layers (coverage, mutation, supply chain, real
+# execution) stay local: they need tools and a live service a hosted runner does not have.
 on:
   push:
     branches: [master]
@@ -21,6 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          # `tools/secrets.sh` reads the full history, so a depth-1 checkout would scan only the
+          # tip and miss a credential that a later commit removed.
+          fetch-depth: 0
           # `Config::from_env` resolves the bundle the service runs from, and the tests build a
           # console with it, so the pinned submodule is part of the test fixture.
           submodules: recursive
@@ -41,3 +44,8 @@ jobs:
           RUSTUP_TOOLCHAIN="$version" rustc --version
       - name: Run the quick layers
         run: tools/gauntlet.sh quick
+      - name: Scan the tree and history for credentials
+        # The quick layers stop before the gauntlet's secret layer, and a credential that lands in
+        # a commit is not fixed by deleting the file later. The scan needs only git, plus the
+        # `target/` directory the quick layers created for its history patch.
+        run: tools/secrets.sh
