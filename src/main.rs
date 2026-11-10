@@ -74,7 +74,17 @@ enum Command {
     /// Move the DSH sessions aside so the next turn uses the configured model.
     ResetSessions,
     /// Choose among the options a portal or a sub-agent submits on stdin.
-    Decide,
+    Decide {
+        /// Profile provider that serves the decision model.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Decision model. The default is typesafe/jev.
+        #[arg(long)]
+        model: Option<String>,
+        /// Remember this provider and model for later decisions.
+        #[arg(long)]
+        save: bool,
+    },
     /// Hand one instruction to a worker. The default worker is dsh.
     Send {
         /// Who does the work: dsh, omp, claude, codex, or cursor-agent.
@@ -273,7 +283,27 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             }
             Ok(())
         }
-        Command::Decide => decider::decide(&service::Config::from_env()?, &mut io::stdin()),
+        Command::Decide {
+            provider,
+            model,
+            save,
+        } => {
+            let cfg = service::Config::from_env()?;
+            if save {
+                decider::save_route(
+                    &cfg,
+                    provider.as_deref().unwrap_or(""),
+                    model.as_deref().unwrap_or(""),
+                )
+            } else {
+                decider::decide(
+                    &cfg,
+                    &mut io::stdin(),
+                    provider.as_deref(),
+                    model.as_deref(),
+                )
+            }
+        }
         Command::Send { agent, text } => {
             send_instruction(&service::Config::from_env()?, &agent, text)
         }
