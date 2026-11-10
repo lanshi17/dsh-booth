@@ -1,0 +1,12 @@
+[
+  {
+    "control": "positive",
+    "exit_code": 0,
+    "assertion": "exact frozen source matches"
+  },
+  {
+    "control": "negative",
+    "exit_code": 1,
+    "assertion": "mismatching expected source hash fails closed"
+  }
+]

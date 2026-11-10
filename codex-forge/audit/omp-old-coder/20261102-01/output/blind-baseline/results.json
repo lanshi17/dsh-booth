@@ -1,0 +1,57 @@
+{
+  "source_tree_sha256": "46d6c1801a41010f5bf5af249b0477c4dfdbd1fe6042e05c5c5fb52c6720c0c1",
+  "layers": [
+    {
+      "layer": "tests",
+      "command": [
+        "cargo",
+        "test",
+        "--all-targets",
+        "--locked",
+        "--offline",
+        "-j",
+        "2",
+        "--",
+        "--test-threads=4"
+      ],
+      "exit_code": 0
+    },
+    {
+      "layer": "types",
+      "command": [
+        "cargo",
+        "check",
+        "--all-targets",
+        "--locked",
+        "--offline",
+        "-j",
+        "2"
+      ],
+      "exit_code": 0
+    },
+    {
+      "layer": "lint",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-targets",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0
+    },
+    {
+      "layer": "format",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--check"
+      ],
+      "exit_code": 0
+    }
+  ]
+}

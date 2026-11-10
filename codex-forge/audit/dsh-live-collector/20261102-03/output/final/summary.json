@@ -1,0 +1,41 @@
+{
+  "layers": [
+    {
+      "name": "tests",
+      "exit": 0,
+      "expected": 0
+    },
+    {
+      "name": "clippy",
+      "exit": 0,
+      "expected": 0
+    },
+    {
+      "name": "fmt",
+      "exit": 0,
+      "expected": 0
+    },
+    {
+      "name": "readiness",
+      "exit": 1,
+      "expected": 1
+    }
+  ],
+  "tests_passed": 73,
+  "source_tree_sha256": "6d48bcee20bfce71f1a147f17765df6ccb08f8a0071e6c40020c307a17e2790c",
+  "source_guard_negative_control": "rejected",
+  "checker_sha256": {
+    "verify.py": "722c895c27e2021dc7d55e2dffd1b7bb9f877b664482cd6baf9711c7ec0e69fb",
+    "mutations.py": "725914a14a7db47f37ff404490ee71c28fcfa7362fe81eb1a3a7155027569d96",
+    "source_state.py": "88c3a494fd98921a246d3d668583578376473c7a869e65dfa40f72b22791ed7c"
+  },
+  "tool_versions": {
+    "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+    "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "python3": "Python 3.14.4"
+  },
+  "manual_mutants_killed": 3,
+  "manual_mutants_total": 3,
+  "formal_pilot": "NOT_RUN",
+  "full_tier3_assurance": false
+}

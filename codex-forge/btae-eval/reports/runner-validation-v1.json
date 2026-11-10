@@ -1,0 +1,610 @@
+{
+  "status": "LINUX_FIXTURE_SUPERVISOR_VERIFIED_STUDY_NOT_RUN",
+  "date": "2026-11-02",
+  "rust_tests_passed": 30,
+  "new_runner_tests": 15,
+  "diagnostic_cases_saved": 12,
+  "records": [
+    {
+      "case": "success",
+      "expected": "completed",
+      "actual": "completed",
+      "attempts": 1,
+      "elapsed_ms": 751,
+      "directory": "runs/runner-v1/success",
+      "diagnostic_sha256": "9351523ea579f4400c640f8d56eeefe5e13d2e2d11d1c8f8f74caf0de928164e"
+    },
+    {
+      "case": "failure",
+      "expected": "worker_failed",
+      "actual": "worker_failed",
+      "attempts": 2,
+      "elapsed_ms": 1040,
+      "directory": "runs/runner-v1/failure",
+      "diagnostic_sha256": "9c2d8f00c26e62538f9e8890611cc2f3d03bbeb3cab0514444fbd07b70cdd458"
+    },
+    {
+      "case": "retry",
+      "expected": "completed",
+      "actual": "completed",
+      "attempts": 2,
+      "elapsed_ms": 1505,
+      "directory": "runs/runner-v1/retry",
+      "diagnostic_sha256": "6b3bee76a7442df134e0f44e23dadb66e011e26c35f5406908669798f7fc8e80"
+    },
+    {
+      "case": "retry-budget",
+      "expected": "token_limit",
+      "actual": "token_limit",
+      "attempts": 2,
+      "elapsed_ms": 1492,
+      "directory": "runs/runner-v1/retry-budget",
+      "diagnostic_sha256": "9061849b90c0a5e2a91d576d9edfbce9d31d3f831ca31103d9960be24bd1b585"
+    },
+    {
+      "case": "timeout",
+      "expected": "timed_out",
+      "actual": "timed_out",
+      "attempts": 0,
+      "elapsed_ms": 717,
+      "directory": "runs/runner-v1/timeout",
+      "diagnostic_sha256": "8c60c8a0220de3a0b0bcc5f3fe71350fb4d1b803b7726ba03bfef35c6c24bf3e"
+    },
+    {
+      "case": "descendant",
+      "expected": "timed_out",
+      "actual": "timed_out",
+      "attempts": 1,
+      "elapsed_ms": 1177,
+      "directory": "runs/runner-v1/descendant",
+      "diagnostic_sha256": "07a3a1285d92f21675d53a42929011b91e3065b6b3c9032ce85da8f0d4804755"
+    },
+    {
+      "case": "log-flood",
+      "expected": "log_limit",
+      "actual": "log_limit",
+      "attempts": 1,
+      "elapsed_ms": 882,
+      "directory": "runs/runner-v1/log-flood",
+      "diagnostic_sha256": "e39fe687aa1659bff28147f9712a814b9dae7c0249539b2b28b08896662c870b"
+    },
+    {
+      "case": "malformed",
+      "expected": "protocol_error",
+      "actual": "protocol_error",
+      "attempts": 1,
+      "elapsed_ms": 478,
+      "directory": "runs/runner-v1/malformed",
+      "diagnostic_sha256": "a0d58dbac019713bfb36b04fe691603e810158e997225915176022552c556aaa"
+    },
+    {
+      "case": "forged-approval",
+      "expected": "protocol_error",
+      "actual": "protocol_error",
+      "attempts": 1,
+      "elapsed_ms": 564,
+      "directory": "runs/runner-v1/forged-approval",
+      "diagnostic_sha256": "1463505b6aeb209925749f1826001e87aba25fabb5bc03e07774c8444abddf67"
+    },
+    {
+      "case": "nonmonotonic-usage",
+      "expected": "protocol_error",
+      "actual": "protocol_error",
+      "attempts": 1,
+      "elapsed_ms": 734,
+      "directory": "runs/runner-v1/nonmonotonic-usage",
+      "diagnostic_sha256": "e810080266a2c074461f4babbcff06d5890978b95828a9f31fd351c3a75229a8"
+    },
+    {
+      "case": "environment",
+      "expected": "completed",
+      "actual": "completed",
+      "attempts": 1,
+      "elapsed_ms": 885,
+      "directory": "runs/runner-v1/environment",
+      "diagnostic_sha256": "efd427ecedbcff77eb02076fb9e1e2c83e69108039831bfa075c46337dbeb2bf"
+    },
+    {
+      "case": "isolation",
+      "expected": "completed",
+      "actual": "completed",
+      "attempts": 1,
+      "elapsed_ms": 1367,
+      "directory": "runs/runner-v1/isolation",
+      "diagnostic_sha256": "ba0ffc3fc696173357f463b2c4dcd119e0b1d0513c9169ddb64d1591031a3ad1"
+    }
+  ],
+  "checks": [
+    {
+      "name": "test-final",
+      "command": [
+        "cargo",
+        "test",
+        "--all-targets",
+        "--locked",
+        "--offline",
+        "-j",
+        "2",
+        "--",
+        "--test-threads=4"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 2.712
+    },
+    {
+      "name": "clippy-final",
+      "command": [
+        "cargo",
+        "clippy",
+        "--all-targets",
+        "--locked",
+        "--offline",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.397
+    },
+    {
+      "name": "fmt-final",
+      "command": [
+        "cargo",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.044
+    },
+    {
+      "name": "build-final",
+      "command": [
+        "cargo",
+        "build",
+        "--bins",
+        "--locked",
+        "--offline",
+        "-j",
+        "2"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.051
+    },
+    {
+      "name": "case-success",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/success",
+        "--scenario",
+        "success",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.042
+    },
+    {
+      "name": "verify-success",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/success",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.006
+    },
+    {
+      "name": "case-failure",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/failure",
+        "--scenario",
+        "failure",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.35
+    },
+    {
+      "name": "verify-failure",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/failure",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.006
+    },
+    {
+      "name": "case-retry",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/retry",
+        "--scenario",
+        "retry",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.833
+    },
+    {
+      "name": "verify-retry",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/retry",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.006
+    },
+    {
+      "name": "case-retry-budget",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/retry-budget",
+        "--scenario",
+        "retry",
+        "--tokens",
+        "8",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.801
+    },
+    {
+      "name": "verify-retry-budget",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/retry-budget",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.009
+    },
+    {
+      "name": "case-timeout",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/timeout",
+        "--scenario",
+        "timeout",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "200"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.027
+    },
+    {
+      "name": "verify-timeout",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/timeout",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.006
+    },
+    {
+      "name": "case-descendant",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/descendant",
+        "--scenario",
+        "descendant",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "700"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.496
+    },
+    {
+      "name": "verify-descendant",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/descendant",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.006
+    },
+    {
+      "name": "case-log-flood",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/log-flood",
+        "--scenario",
+        "log-flood",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.173
+    },
+    {
+      "name": "verify-log-flood",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/log-flood",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.005
+    },
+    {
+      "name": "case-malformed",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/malformed",
+        "--scenario",
+        "malformed",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.77
+    },
+    {
+      "name": "verify-malformed",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/malformed",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.005
+    },
+    {
+      "name": "case-forged-approval",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/forged-approval",
+        "--scenario",
+        "forged-approval",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.86
+    },
+    {
+      "name": "verify-forged-approval",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/forged-approval",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.007
+    },
+    {
+      "name": "case-nonmonotonic-usage",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/nonmonotonic-usage",
+        "--scenario",
+        "nonmonotonic-usage",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.048
+    },
+    {
+      "name": "verify-nonmonotonic-usage",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/nonmonotonic-usage",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.009
+    },
+    {
+      "name": "case-environment",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/environment",
+        "--scenario",
+        "environment",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.198
+    },
+    {
+      "name": "verify-environment",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/environment",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.009
+    },
+    {
+      "name": "case-isolation",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "diagnose",
+        "--fixture-worker",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-fixture-worker",
+        "--output",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/isolation",
+        "--scenario",
+        "isolation",
+        "--tokens",
+        "32",
+        "--wall-ms",
+        "1500"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 1.688
+    },
+    {
+      "name": "verify-isolation",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "verify-diagnostic",
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/runs/runner-v1/isolation",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.008
+    },
+    {
+      "name": "formal-readiness-unchanged",
+      "command": [
+        "/data/yangzs/Projects/02_Reproduction/08_codex_hermes/btae-eval/target/debug/btae-eval",
+        "check-ready",
+        "datasets/pilot.json"
+      ],
+      "exit_code": 1,
+      "expected_exit_code": 1,
+      "seconds": 0.001
+    },
+    {
+      "name": "metadata-final",
+      "command": [
+        "cargo",
+        "metadata",
+        "--format-version",
+        "1",
+        "--locked",
+        "--offline"
+      ],
+      "exit_code": 0,
+      "expected_exit_code": 0,
+      "seconds": 0.247
+    }
+  ],
+  "source_sha256": {},
+  "prior_test_failure": {
+    "tests": 13,
+    "passed": 12,
+    "failed": 1,
+    "name": "host_cancellation_terminates_the_process_tree_and_is_sealed",
+    "reason": "Fixed-delay cancel could precede descendant heartbeat; changed test to synchronize on heartbeat before cancellation",
+    "corrected_runner_tests_passed": 15
+  },
+  "actual_agent_runs": 0,
+  "model_calls": 0,
+  "billable_usage_measured": false,
+  "readiness_blockers_unchanged": true,
+  "not_implemented": [
+    "DSH JSONL adapter and real provider metering",
+    "M1-M6 method enforcement and validated SDD baselines",
+    "independently reviewed ground truth and hidden tests",
+    "medium/real repositories and full multi-round runner",
+    "trusted empirical collector and paired completeness analysis",
+    "disk quotas, memory/CPU cgroups, seccomp hardening and production recovery"
+  ]
+}

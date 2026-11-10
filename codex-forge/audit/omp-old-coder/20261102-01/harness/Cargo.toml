@@ -1,0 +1,10 @@
+[package]
+name = "blind-probe"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+btae-eval = { path = "../workspace/btae-eval" }
+serde_json = "1"
+
+[workspace]

@@ -1,0 +1,61 @@
+{
+  "kind": "engineering_model_route_switch",
+  "date": "2026-11-03",
+  "source_commit_before_config_change": "3afb8207593dd59a01e6c6ba6e8c468531117307",
+  "provider": "commandcode",
+  "model": "deepseek/deepseek-v4.1-flash",
+  "interactive_equivalent": "/model commandcode/deepseek/deepseek-v4.1-flash",
+  "framework": "DSH headless",
+  "dsh_version": "0.2.1-rc.3",
+  "immutable_revision": null,
+  "profile_patch_sha256": "6578286875b624a974fcda0fe89a9a711372df8ffd238d0910f98178940b2851",
+  "manifest_sha256": "eb560834f5c73e29bd35cbad92da4f234f3810378a0f47baaaa929662cd51552",
+  "source_input_sha256": "f61a34637998ffd2ee67b495620f3fe6791a446e221e14d78d72ee75da9823ec",
+  "live_smoke": {
+    "outcome": "completed",
+    "exit_code": 0,
+    "elapsed_ms": 5822,
+    "stdout_bytes": 624,
+    "stderr_bytes": 0,
+    "streams_closed": true,
+    "prompt_delivered": true
+  },
+  "usage": {
+    "input_tokens": 5690,
+    "output_tokens": 39,
+    "total_tokens": 5729,
+    "uncached_input_tokens": 5690,
+    "cache_read_tokens": null,
+    "cache_write_tokens": null,
+    "reasoning_tokens": null
+  },
+  "usage_source": "dsh_cli_self_reported",
+  "billing_verified": false,
+  "task_smoke": {
+    "outcome": "protocol_error",
+    "exit_code": null,
+    "elapsed_ms": 5408,
+    "stdout_bytes": 1610,
+    "stderr_bytes": 0,
+    "note": "invalid_dsh_stream"
+  },
+  "task_receipt_offline_verification_exit": 0,
+  "separate_tool_probe": {
+    "worker_exit": 1,
+    "turn_end_reason": "error",
+    "redacted_error_category": "Cannot read properties of undefined (reading 'prepare')"
+  },
+  "tests_passed": 85,
+  "readiness_exit": 1,
+  "formal_pilot": "NOT_RUN",
+  "hidden_test_result": null,
+  "empirical_task_success": null,
+  "network": "explicit shared networking in private bwrap namespace; no endpoint allowlist",
+  "credential_handling": "one selected existing COMMAND_CODE_API_KEY ref passed in environment; no credential values on argv or in publication",
+  "limits": [
+    "configuration route and successful single-turn smoke do not prove immutable model revision",
+    "tool-bearing task failed; no task success claim",
+    "session/model output and deployment state remain private"
+  ],
+  "source_input_scope": "btae-eval Cargo manifests plus src/tests/datasets/baselines/repositories/config, sorted relative path to SHA256 map"
+}

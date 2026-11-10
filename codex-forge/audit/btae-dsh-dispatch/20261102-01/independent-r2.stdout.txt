@@ -1,0 +1,26 @@
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 16 tests
+test failed_limits_poison_the_parser ... ok
+test empty_session_identity_is_invalid ... ok
+test errors_do_not_leak_offending_event_names ... ok
+test absent_optional_buckets_without_total_cannot_prove_all_input ... ok
+test duplicate_counter_keys_cannot_silently_replace_the_original_value ... ok
+test disjoint_cache_buckets_and_reasoning_are_counted_exactly_once ... ok
+test duplicate_nested_opaque_keys_rejected_without_revealing_payloads ... ok
+test absent_cache_is_unknown_even_if_other_usage_fields_are_complete ... ok
+test explicit_cache_buckets_allow_derivation_without_total ... ok
+test interrupted_next_step_must_make_prior_total_incomplete ... ok
+test parser_error_is_terminal_even_if_a_caller_attempts_to_resume ... ok
+test missing_later_usage_must_not_be_promoted_to_complete_field_totals ... ok
+test partial_usage_cannot_report_total_below_already_known_buckets ... ok
+test totals_that_hide_known_cache_or_excess_reasoning_are_rejected ... ok
+test real_full_development_transcript_also_parses_without_retaining_contents ... ok
+test timed_out_real_revision_trace_must_not_be_accepted_as_completed ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

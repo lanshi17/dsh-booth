@@ -1,0 +1,56 @@
+{
+  "schema_note": "DSH inputTokens is uncached; cacheReadTokens/cacheWriteTokens are disjoint additional prompt buckets. Optional buckets may be unknown; exact total minus output gives canonical all-input when total exists. CLI self-report is not billing.",
+  "raw_sums": {
+    "inputTokens": 92414,
+    "outputTokens": 45968,
+    "totalTokens": 1917454,
+    "cacheReadTokens": 1779072,
+    "cacheWriteTokens": 0
+  },
+  "canonical_input": 1871486,
+  "steps": 23,
+  "fixtures_sha256": {
+    "dsh-live-development-sanitized.jsonl": "680119fb7e6ab5c4700ca3da5d25fa05fce56af0f886fc60de2460aa251c0c04"
+  },
+  "sources": [
+    {
+      "path": "/home/yangzs/.local/share/dsh-headless-runtime/0.2.1-rc.5/node_modules/@deepseek-ai/dsh-token-meter/lib/types/usage-projection.js",
+      "sha256": "30a766b7b43553dc0dce46a38bdb2c87ca06bad46af86b39fa42eaa2cfe8871b",
+      "first_line": 8,
+      "last_line": 21,
+      "excerpt": "const zeroBuckets = () => ({\n    uncachedInputTokens: 0,\n    outputTokens: 0,\n    cacheReadTokens: 0,\n    cacheWriteTokens: 0,\n});\nconst bucketsFrom = (usage) => ({\n    uncachedInputTokens: usage.inputTokens,\n    outputTokens: usage.outputTokens,\n    cacheReadTokens: usage.cacheReadTokens ?? 0,\n    cacheWriteTokens: usage.cacheWriteTokens ?? 0,\n});\nconst bucketsEqual = (left, right) => left.uncachedInputTokens === right.uncachedInputTokens\n    && left.outputTokens === right.outputTokens"
+    },
+    {
+      "path": "/home/yangzs/.local/share/dsh-headless-runtime/0.2.1-rc.5/node_modules/@deepseek-ai/dsh-token-meter/lib/types/turn-usage.js",
+      "sha256": "6cee2c03747d47abdc191568a445efe128a85a1b06f86c8be7a9d55b94d3d9b8",
+      "first_line": 21,
+      "last_line": 65,
+      "excerpt": "function normalizeUsage(usage, route) {\n    const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, totalTokens, } = usage;\n    if (!isCount(inputTokens) || !isCount(outputTokens))\n        return undefined;\n    if (cacheReadTokens !== undefined && !isCount(cacheReadTokens))\n        return undefined;\n    if (cacheWriteTokens !== undefined && !isCount(cacheWriteTokens))\n        return undefined;\n    if (reasoningTokens !== undefined && (!isCount(reasoningTokens) || reasoningTokens > outputTokens)) {\n        return undefined;\n    }\n    const knownPrompt = safeSum([\n        inputTokens,\n        ...cacheReadTokens === undefined ? [] : [cacheReadTokens],\n        ...cacheWriteTokens === undefined ? [] : [cacheWriteTokens],\n    ]);\n    if (knownPrompt === undefined)\n        return undefined;\n    let exactTotal;\n    if (totalTokens !== undefined) {\n        if (!isCount(totalTokens))\n            return undefined;\n        const exactPrompt = totalTokens - outputTokens;\n        if (!isCount(exactPrompt) || exactPrompt < knownPrompt)\n            return undefined;\n        if (cacheReadTokens !== undefined && cacheWriteTokens !== undefined && exactPrompt !== knownPrompt) {\n            return undefined;\n        }\n        exactTotal = totalTokens;\n    }\n    else {\n        if (cacheReadTokens === undefined || cacheWriteTokens === undefined)\n            return undefined;\n        const derivedTotal = safeSum([knownPrompt, outputTokens]);\n        if (derivedTotal === undefined)\n            return undefined;\n        exactTotal = derivedTotal;\n    }\n    return {\n        inputTokens,\n        outputTokens,\n        totalTokens: exactTotal,\n        ...cacheReadTokens === undefined ? {} : { cacheReadTokens },\n        ...cacheWriteTokens === undefined ? {} : { cacheWriteTokens },\n        ...reasoningTokens === undefined ? {} : { reasoningTokens },"
+    },
+    {
+      "path": "/home/yangzs/.bun/install/global/node_modules/@deepseek-ai/dsh-headless/lib/json-stream-BA-F3lfb.js",
+      "sha256": "b6ede8da01119f5caf4baa8051ce8bcd8b956b5b163cf58af91d583b80028c0c",
+      "first_line": 120,
+      "last_line": 157,
+      "excerpt": "/**\n* Accumulate one step's usage across its attempts. A retried attempt keeps its\n* usage only in its `assistant/attempt` stream, so the committed message alone\n* would under-report billed tokens. An attempt that reports no sample makes the\n* step total unknowable, so the step omits usage entirely rather than publish a\n* partial sum as if it were complete; an optional bucket is summed only when\n* every contribution reports it.\n* @param state - usage accumulated so far and whether it is still complete.\n* @param next - usage reported by the next attempt.\n* @returns the updated state.\n*/\nfunction addUsage(state, next) {\n\tif (next === void 0) return {\n\t\tusage: state.usage,\n\t\tcomplete: false\n\t};\n\tif (state.usage === void 0) return {\n\t\tusage: next,\n\t\tcomplete: state.complete\n\t};\n\tconst total = state.usage;\n\tconst sum = (a, b) => a === void 0 || b === void 0 ? void 0 : a + b;\n\tconst totalTokens = sum(total.totalTokens, next.totalTokens);\n\tconst cacheReadTokens = sum(total.cacheReadTokens, next.cacheReadTokens);\n\tconst cacheWriteTokens = sum(total.cacheWriteTokens, next.cacheWriteTokens);\n\tconst reasoningTokens = sum(total.reasoningTokens, next.reasoningTokens);\n\treturn {\n\t\tusage: {\n\t\t\tinputTokens: total.inputTokens + next.inputTokens,\n\t\t\toutputTokens: total.outputTokens + next.outputTokens,\n\t\t\t...totalTokens === void 0 ? {} : { totalTokens },\n\t\t\t...cacheReadTokens === void 0 ? {} : { cacheReadTokens },\n\t\t\t...cacheWriteTokens === void 0 ? {} : { cacheWriteTokens },\n\t\t\t...reasoningTokens === void 0 ? {} : { reasoningTokens }\n\t\t},\n\t\tcomplete: state.complete\n\t};\n}"
+    },
+    {
+      "path": "/home/yangzs/.bun/install/global/node_modules/@deepseek-ai/dsh-token-meter/lib/types/usage-projection.js",
+      "sha256": "30a766b7b43553dc0dce46a38bdb2c87ca06bad46af86b39fa42eaa2cfe8871b",
+      "first_line": 8,
+      "last_line": 21,
+      "excerpt": "const zeroBuckets = () => ({\n    uncachedInputTokens: 0,\n    outputTokens: 0,\n    cacheReadTokens: 0,\n    cacheWriteTokens: 0,\n});\nconst bucketsFrom = (usage) => ({\n    uncachedInputTokens: usage.inputTokens,\n    outputTokens: usage.outputTokens,\n    cacheReadTokens: usage.cacheReadTokens ?? 0,\n    cacheWriteTokens: usage.cacheWriteTokens ?? 0,\n});\nconst bucketsEqual = (left, right) => left.uncachedInputTokens === right.uncachedInputTokens\n    && left.outputTokens === right.outputTokens"
+    },
+    {
+      "path": "/home/yangzs/.bun/install/global/node_modules/@deepseek-ai/dsh-token-meter/lib/types/turn-usage.js",
+      "sha256": "6cee2c03747d47abdc191568a445efe128a85a1b06f86c8be7a9d55b94d3d9b8",
+      "first_line": 21,
+      "last_line": 65,
+      "excerpt": "function normalizeUsage(usage, route) {\n    const { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens, totalTokens, } = usage;\n    if (!isCount(inputTokens) || !isCount(outputTokens))\n        return undefined;\n    if (cacheReadTokens !== undefined && !isCount(cacheReadTokens))\n        return undefined;\n    if (cacheWriteTokens !== undefined && !isCount(cacheWriteTokens))\n        return undefined;\n    if (reasoningTokens !== undefined && (!isCount(reasoningTokens) || reasoningTokens > outputTokens)) {\n        return undefined;\n    }\n    const knownPrompt = safeSum([\n        inputTokens,\n        ...cacheReadTokens === undefined ? [] : [cacheReadTokens],\n        ...cacheWriteTokens === undefined ? [] : [cacheWriteTokens],\n    ]);\n    if (knownPrompt === undefined)\n        return undefined;\n    let exactTotal;\n    if (totalTokens !== undefined) {\n        if (!isCount(totalTokens))\n            return undefined;\n        const exactPrompt = totalTokens - outputTokens;\n        if (!isCount(exactPrompt) || exactPrompt < knownPrompt)\n            return undefined;\n        if (cacheReadTokens !== undefined && cacheWriteTokens !== undefined && exactPrompt !== knownPrompt) {\n            return undefined;\n        }\n        exactTotal = totalTokens;\n    }\n    else {\n        if (cacheReadTokens === undefined || cacheWriteTokens === undefined)\n            return undefined;\n        const derivedTotal = safeSum([knownPrompt, outputTokens]);\n        if (derivedTotal === undefined)\n            return undefined;\n        exactTotal = derivedTotal;\n    }\n    return {\n        inputTokens,\n        outputTokens,\n        totalTokens: exactTotal,\n        ...cacheReadTokens === undefined ? {} : { cacheReadTokens },\n        ...cacheWriteTokens === undefined ? {} : { cacheWriteTokens },\n        ...reasoningTokens === undefined ? {} : { reasoningTokens },"
+    }
+  ],
+  "fixtures_sha256_before_envelope_correction": {
+    "dsh-live-development-sanitized.jsonl": "c2b1d2ada8a923c03d316de23682b8accf88883c8f8295ee55eae8fe40159fbe"
+  },
+  "sanitization": "Preserve event envelope keys, order, turn/step identifiers, usage numbers, truncation flags and tool status; replace session/cwd/text/tool names/call ids/tool payloads. Payload internals are intentionally removed."
+}

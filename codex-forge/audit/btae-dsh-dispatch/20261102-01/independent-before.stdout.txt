@@ -1,0 +1,59 @@
+
+running 6 tests
+test missing_later_usage_must_not_be_promoted_to_complete_field_totals ... FAILED
+test duplicate_counter_keys_cannot_silently_replace_the_original_value ... FAILED
+test absent_cache_is_unknown_even_if_other_usage_fields_are_complete ... FAILED
+test interrupted_next_step_must_make_prior_total_incomplete ... FAILED
+test parser_error_is_terminal_even_if_a_caller_attempts_to_resume ... FAILED
+test real_full_development_transcript_also_parses_without_retaining_contents ... FAILED
+
+failures:
+
+---- missing_later_usage_must_not_be_promoted_to_complete_field_totals stdout ----
+
+thread 'missing_later_usage_must_not_be_promoted_to_complete_field_totals' (2813382) panicked at tests/independent.rs:7:306:
+assertion `left == right` failed
+  left: Some(3)
+ right: None
+
+---- duplicate_counter_keys_cannot_silently_replace_the_original_value stdout ----
+
+thread 'duplicate_counter_keys_cannot_silently_replace_the_original_value' (2813380) panicked at tests/independent.rs:13:244:
+assertion failed: read_dsh(data.as_bytes(), DshLimits::default(), Some(0)).is_err()
+
+---- absent_cache_is_unknown_even_if_other_usage_fields_are_complete stdout ----
+
+thread 'absent_cache_is_unknown_even_if_other_usage_fields_are_complete' (2813379) panicked at tests/independent.rs:15:394:
+assertion `left == right` failed
+  left: Some(1)
+ right: None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- interrupted_next_step_must_make_prior_total_incomplete stdout ----
+
+thread 'interrupted_next_step_must_make_prior_total_incomplete' (2813381) panicked at tests/independent.rs:9:181:
+assertion `left != right` failed
+  left: Complete
+ right: Complete
+
+---- parser_error_is_terminal_even_if_a_caller_attempts_to_resume stdout ----
+
+thread 'parser_error_is_terminal_even_if_a_caller_attempts_to_resume' (2813383) panicked at tests/independent.rs:11:351:
+assertion failed: adapter.feed(suffix.as_bytes()).is_err()
+
+---- real_full_development_transcript_also_parses_without_retaining_contents stdout ----
+
+thread 'real_full_development_transcript_also_parses_without_retaining_contents' (2813384) panicked at tests/independent.rs:17:258:
+called `Result::unwrap()` on an `Err` value: Protocol { event: 13, message: "invalid status event fields" }
+
+
+failures:
+    absent_cache_is_unknown_even_if_other_usage_fields_are_complete
+    duplicate_counter_keys_cannot_silently_replace_the_original_value
+    interrupted_next_step_must_make_prior_total_incomplete
+    missing_later_usage_must_not_be_promoted_to_complete_field_totals
+    parser_error_is_terminal_even_if_a_caller_attempts_to_resume
+    real_full_development_transcript_also_parses_without_retaining_contents
+
+test result: FAILED. 0 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

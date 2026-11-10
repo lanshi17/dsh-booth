@@ -1,0 +1,3 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `target/debug/btae-eval check-ready datasets/pilot.json`
+btae-eval: study is not ready for empirical execution
