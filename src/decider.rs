@@ -48,7 +48,15 @@ impl From {
 }
 
 /// Read one judge call and print the route.
-pub fn decide(cfg: &Config, input: &mut dyn Read) -> Result<(), String> {
+///
+/// `provider` and `model` override the saved decider route for this call. With neither, booth
+/// uses the profile's `decider-model` entry, and otherwise commandcode and `typesafe/jev`.
+pub fn decide(
+    cfg: &Config,
+    input: &mut dyn Read,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Result<(), String> {
     let mut text = String::new();
     input
         .read_to_string(&mut text)
@@ -58,8 +66,8 @@ pub fn decide(cfg: &Config, input: &mut dyn Read) -> Result<(), String> {
     }
     let call: Value = serde_json::from_str(&text)
         .map_err(|error| format!("the judge call is not JSON: {error}"))?;
-    let route = model_route(cfg)?;
-    let verdict = ask(&call, &mut |body| complete(&route, body))?;
+    let route = model_route(cfg, provider, model)?;
+    let verdict = ask(&call, &route.model, &mut |body| complete(&route, body))?;
     println!(
         "{}",
         serde_json::to_string_pretty(&verdict).unwrap_or_default()
@@ -132,13 +140,32 @@ pub fn with_contract(communication: &str) -> String {
     out
 }
 
+/// Remember which provider and model later decisions call.
+pub fn save_route(cfg: &Config, provider: &str, model: &str) -> Result<(), String> {
+    let provider = provider.trim();
+    let model = model.trim();
+    if provider.is_empty() || model.is_empty() {
+        return Err("--save needs --provider and --model".into());
+    }
+    model_route(cfg, Some(provider), Some(model))?;
+    let mut patch = crate::service::Patch::read(cfg)?;
+    patch.set_config(
+        "decider-model",
+        json!({ "provider": provider, "model": model }),
+    );
+    patch.write(cfg)?;
+    println!("decider route {provider}/{model}");
+    Ok(())
+}
+
 fn ask(
     call: &Value,
+    model_name: &str,
     model: &mut dyn FnMut(&str) -> Result<String, String>,
 ) -> Result<Value, String> {
     let from = From::parse(call.get("from").and_then(Value::as_str).unwrap_or(""))?;
     validate(call)?;
-    let answered = match model(&systemone_body(call)) {
+    let answered = match model(&systemone_body(call, model_name)) {
         Ok(text) => match json_object(&text) {
             Ok(value) => answers_of(value),
             Err(error) => return Ok(escalate(from, &error, None)),
@@ -218,9 +245,9 @@ fn validate(call: &Value) -> Result<(), String> {
 }
 
 /// The System One body. `from` stays with booth and is not part of the model request.
-fn systemone_body(call: &Value) -> String {
+fn systemone_body(call: &Value, model: &str) -> String {
     json!({
-        "model": MODEL,
+        "model": model,
         "state": call.get("state").cloned().unwrap_or(Value::Null),
         "questions": call.get("questions").cloned().unwrap_or(json!({})),
     })
@@ -364,19 +391,39 @@ fn json_object(text: &str) -> Result<Value, String> {
 
 struct ModelRoute {
     base: String,
+    path: String,
+    model: String,
     key: String,
 }
 
-fn model_route(cfg: &Config) -> Result<ModelRoute, String> {
+struct RouteChoice<'a> {
+    provider: Option<&'a str>,
+    model: Option<&'a str>,
+}
+
+fn model_route(
+    cfg: &Config,
+    provider: Option<&str>,
+    model: Option<&str>,
+) -> Result<ModelRoute, String> {
     let text = std::fs::read_to_string(cfg.patch())
         .map_err(|error| format!("cannot read {}: {error}", cfg.patch().display()))?;
     let patch: Value = serde_norway::from_str(&text)
         .map_err(|error| format!("cannot read the profile: {error}"))?;
-    route_from(&patch, provider::credential)
+    route_from(
+        &patch,
+        RouteChoice { provider, model },
+        provider::credential,
+    )
+}
+
+fn named(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|text| !text.is_empty())
 }
 
 fn route_from(
     patch: &Value,
+    choice: RouteChoice<'_>,
     secret: impl Fn(&str) -> Result<String, String>,
 ) -> Result<ModelRoute, String> {
     let entries = patch.as_array().ok_or("the profile patch is not a list")?;
@@ -385,27 +432,55 @@ fn route_from(
             .iter()
             .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
     };
+    let saved = entry("decider-model").and_then(|item| item.get("config"));
+    let saved_str = |key: &str| {
+        saved
+            .and_then(|config| config.get(key))
+            .and_then(Value::as_str)
+    };
+    let provider_id = named(choice.provider)
+        .or_else(|| named(saved_str("provider")))
+        .unwrap_or("commandcode")
+        .to_owned();
+    let model = named(choice.model)
+        .or_else(|| named(saved_str("model")))
+        .unwrap_or(MODEL)
+        .to_owned();
+    let path = endpoint_path(named(saved_str("path")).unwrap_or("/systemone"));
     let provider = entry("llm-pi-ai")
         .and_then(|item| item.get("config"))
         .and_then(|config| config.get("providers"))
-        .and_then(|providers| providers.get("commandcode"))
-        .ok_or("the decider calls typesafe/jev, and this profile has no commandcode provider")?;
+        .and_then(|providers| providers.get(&provider_id))
+        .ok_or_else(|| format!("the profile has no provider {provider_id}"))?;
     let base = provider
         .get("baseURL")
         .and_then(Value::as_str)
-        .ok_or("the commandcode provider has no base URL")?
+        .ok_or_else(|| format!("provider {provider_id} has no base URL"))?
         .trim_end_matches('/')
         .to_owned();
     let key_ref = provider
         .get("apiKeyEnv")
         .and_then(Value::as_str)
-        .ok_or("the commandcode provider has no credential ref")?;
+        .ok_or_else(|| format!("provider {provider_id} has no credential ref"))?;
     let key = std::env::var(key_ref)
         .ok()
         .filter(|value| !value.is_empty())
         .map(Ok)
         .unwrap_or_else(|| secret(key_ref))?;
-    Ok(ModelRoute { base, key })
+    Ok(ModelRoute {
+        base,
+        path,
+        model,
+        key,
+    })
+}
+
+fn endpoint_path(path: &str) -> String {
+    if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{path}")
+    }
 }
 
 fn complete(route: &ModelRoute, body: &str) -> Result<String, String> {
@@ -415,7 +490,7 @@ fn complete(route: &ModelRoute, body: &str) -> Result<String, String> {
         .timeout(Duration::from_secs(60))
         .build();
     let response = agent
-        .post(&format!("{}/systemone", route.base))
+        .post(&format!("{}{}", route.base, route.path))
         .set("Authorization", &format!("Bearer {}", route.key))
         .set("User-Agent", "dsh/0.2.1")
         .set("accept", "application/json")
@@ -485,27 +560,27 @@ mod tests {
 
     #[test]
     fn a_confident_choice_is_the_route() {
-        let verdict = ask(&call("subagent"), &mut |_| Ok(chosen("dsh", 0.91))).unwrap();
+        let verdict = ask(&call("subagent"), MODEL, &mut |_| Ok(chosen("dsh", 0.91))).unwrap();
         assert_eq!(verdict["route"], "chosen");
         assert_eq!(verdict["answers"]["route"]["choice"], "dsh");
     }
 
     #[test]
     fn an_uncertain_subagent_goes_to_the_portal() {
-        let verdict = ask(&call("worker"), &mut |_| Ok(chosen("dsh", 0.42))).unwrap();
+        let verdict = ask(&call("worker"), MODEL, &mut |_| Ok(chosen("dsh", 0.42))).unwrap();
         assert_eq!(verdict["route"], "escalate");
         assert_eq!(verdict["to"], "portal");
     }
 
     #[test]
     fn an_uncertain_portal_goes_to_the_user() {
-        let verdict = ask(&call("portal"), &mut |_| Ok(chosen("dsh", 0.42))).unwrap();
+        let verdict = ask(&call("portal"), MODEL, &mut |_| Ok(chosen("dsh", 0.42))).unwrap();
         assert_eq!(verdict["to"], "user");
     }
 
     #[test]
     fn a_model_failure_escalates_instead_of_guessing() {
-        let verdict = ask(&call("subagent"), &mut |_| Err("offline".into())).unwrap();
+        let verdict = ask(&call("subagent"), MODEL, &mut |_| Err("offline".into())).unwrap();
         assert_eq!(verdict["to"], "portal");
         assert!(verdict["reason"].as_str().unwrap().contains("offline"));
     }
@@ -517,13 +592,13 @@ mod tests {
             "state": "My payments have failed for three days and I am losing sales.",
             "questions": {"is_urgent": {"type": "noul", "instructions": "Does this request need urgent attention?"}}
         });
-        let clear = ask(&call, &mut |_| {
+        let clear = ask(&call, MODEL, &mut |_| {
             Ok(r#"{"answers":{"is_urgent":{"type":"noul","noul":0.96}}}"#.into())
         })
         .unwrap();
         assert_eq!(clear["route"], "chosen");
         assert_eq!(clear["answers"]["is_urgent"]["noul"], 0.96);
-        let unclear = ask(&call, &mut |_| {
+        let unclear = ask(&call, MODEL, &mut |_| {
             Ok(r#"{"answers":{"is_urgent":{"type":"noul","noul":0.5}}}"#.into())
         })
         .unwrap();
@@ -537,7 +612,7 @@ mod tests {
             "state": "Please help now.",
             "questions": {"frustration": {"type": "score", "instructions": "How frustrated is the customer?", "criteria": ["Calm", "Frustrated", "Very angry"]}}
         });
-        let verdict = ask(&call, &mut |_| {
+        let verdict = ask(&call, MODEL, &mut |_| {
             Ok(r#"{"answers":{"frustration":{"type":"score","score":1.41,"confidence":0.5,"legend":{"0":"Calm","1":"Frustrated","2":"Very angry"},"probabilities":{"0":0.02,"1":0.55,"2":0.43}}}}"#.into())
         })
         .unwrap();
@@ -547,13 +622,13 @@ mod tests {
     #[test]
     fn the_model_receives_a_systemone_request() {
         let mut seen = String::new();
-        let _ = ask(&call("portal"), &mut |body| {
+        let _ = ask(&call("portal"), "typesafe/jev-1.14.0", &mut |body| {
             seen = body.to_owned();
             Ok(chosen("dsh", 0.91))
         })
         .unwrap();
         let value: Value = serde_json::from_str(&seen).unwrap();
-        assert_eq!(value["model"], "typesafe/jev");
+        assert_eq!(value["model"], "typesafe/jev-1.14.0");
         assert!(value.get("from").is_none());
         assert!(value.get("questions").is_some());
     }
@@ -585,8 +660,74 @@ mod tests {
 ",
         )
         .unwrap();
-        let route = route_from(&patch, |_| Ok("secret".into())).unwrap();
+        let route = route_from(
+            &patch,
+            RouteChoice {
+                provider: None,
+                model: None,
+            },
+            |_| Ok("secret".into()),
+        )
+        .unwrap();
         assert_eq!(route.base, "https://example.test/v1");
+        assert_eq!(route.model, "typesafe/jev");
+        assert_eq!(route.path, "/systemone");
         assert_eq!(route.key, "secret");
+    }
+
+    #[test]
+    fn a_saved_route_picks_the_provider_and_a_flag_overrides_it() {
+        let patch = serde_norway::from_str::<Value>(
+            "
+- id: llm-pi-ai
+  config:
+    providers:
+      commandcode:
+        apiKeyEnv: COMMANDCODE_API_KEY
+        baseURL: https://example.test/v1
+      other:
+        apiKeyEnv: OTHER_KEY
+        baseURL: https://other.test/v1/
+- id: decider-model
+  config:
+    provider: other
+    model: typesafe/jev-1.14.0
+    path: systemone
+",
+        )
+        .unwrap();
+        let saved = route_from(
+            &patch,
+            RouteChoice {
+                provider: None,
+                model: None,
+            },
+            |name| Ok(name.into()),
+        )
+        .unwrap();
+        assert_eq!(saved.base, "https://other.test/v1");
+        assert_eq!(saved.model, "typesafe/jev-1.14.0");
+        assert_eq!(saved.path, "/systemone");
+        assert_eq!(saved.key, "OTHER_KEY");
+        let once = route_from(
+            &patch,
+            RouteChoice {
+                provider: Some("commandcode"),
+                model: Some("typesafe/jev"),
+            },
+            |name| Ok(name.into()),
+        )
+        .unwrap();
+        assert_eq!(once.base, "https://example.test/v1");
+        assert_eq!(once.model, "typesafe/jev");
+        assert!(route_from(
+            &patch,
+            RouteChoice {
+                provider: Some("missing"),
+                model: None,
+            },
+            |_| Ok("secret".into()),
+        )
+        .is_err());
     }
 }
