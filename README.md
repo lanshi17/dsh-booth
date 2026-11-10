@@ -333,9 +333,10 @@ booth send "fix the readme"            # dsh
 booth send --agent omp "fix the readme"
 booth send --agent claude "fix the readme"
 booth send --agent codex "fix the readme"
+booth send --agent cursor-agent "fix the readme"
 ```
 
-In the console, start the line with `@omp`, `@claude`, or `@codex`. A line with no prefix goes to dsh. The named agent runs the instruction itself. Booth does not keep a second control plane.
+In the console, start the line with `@omp`, `@claude`, `@codex`, or `@cursor-agent`. A line with no prefix goes to dsh. The named agent runs the instruction itself. Booth does not keep a second control plane.
 
 ## License
 
