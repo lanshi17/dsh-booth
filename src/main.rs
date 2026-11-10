@@ -7,7 +7,6 @@
 mod api;
 mod app;
 mod commands;
-mod forge;
 mod format;
 mod gh;
 mod intake;
@@ -17,6 +16,7 @@ mod provider;
 mod service;
 #[cfg(test)]
 mod testkit;
+mod worker;
 
 use api::Api;
 use clap::{Parser, Subcommand};
@@ -50,17 +50,6 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum ForgeCommand {
-    /// Create one Forge task from the instruction.
-    Send {
-        #[arg(required = true, trailing_var_arg = true)]
-        text: Vec<String>,
-    },
-    /// Read one Forge task.
-    Status { task_id: String },
-}
-
-#[derive(Subcommand)]
 enum Command {
     /// Prepare the DSH profile and build the bundled superagent.
     Init,
@@ -83,15 +72,13 @@ enum Command {
     },
     /// Move the DSH sessions aside so the next turn uses the configured model.
     ResetSessions,
-    /// Hand one instruction to the agent, as typing it in the console does.
+    /// Hand one instruction to a worker. The default worker is dsh.
     Send {
+        /// Who does the work: dsh, omp, claude, or codex.
+        #[arg(long, default_value = "dsh")]
+        agent: String,
         #[arg(required = true, trailing_var_arg = true)]
         text: Vec<String>,
-    },
-    /// Hand work to Superagent Forge. Forge runs the DSH or OMP worker.
-    Forge {
-        #[command(subcommand)]
-        action: ForgeCommand,
     },
     /// Report the GitHub CLI the GitHub Source would use, or install a newer one.
     Gh {
@@ -283,25 +270,9 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             }
             Ok(())
         }
-        Command::Send { text } => send_instruction(&service::Config::from_env()?, text),
-        Command::Forge { action } => match action {
-            ForgeCommand::Send { text } => {
-                let result = forge::send(&text.join(" "))?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).unwrap_or(result.to_string())
-                );
-                Ok(())
-            }
-            ForgeCommand::Status { task_id } => {
-                let result = forge::status(&task_id)?;
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&result).unwrap_or(result.to_string())
-                );
-                Ok(())
-            }
-        },
+        Command::Send { agent, text } => {
+            send_instruction(&service::Config::from_env()?, &agent, text)
+        }
         Command::Gh { install } => {
             let cfg = service::Config::from_env()?;
             let system = gh::version(std::path::Path::new("gh")).unwrap_or_else(|| "?".into());
@@ -483,16 +454,22 @@ fn run(api: Api, command: Command) -> Result<(), String> {
 /// that choice in `booth-follow.json` across restarts. The one-shot command used to pass no
 /// thread, so the same text started a fresh ticket here while typing it in the console continued
 /// the accepted one; the recorded follow is the console's, so both doors now agree.
-fn send_instruction(cfg: &service::Config, text: Vec<String>) -> Result<(), String> {
+fn send_instruction(cfg: &service::Config, agent: &str, text: Vec<String>) -> Result<(), String> {
+    let who = worker::Who::parse(agent)?;
+    let text = text.join(" ");
+    if who != worker::Who::Dsh {
+        emit_line(&worker::run(who, &text)?);
+        return Ok(());
+    }
     let follow = intake::follow(cfg);
     let thread = follow.as_ref().map(|(_, thread)| thread.as_str());
-    let id = intake::send(cfg, &text.join(" "), thread)?;
+    let id = intake::send(cfg, &text, thread)?;
     match follow {
         Some((ticket, _)) => emit_line(&format!(
-            "sent {id} — follow-up to {ticket}; the agent picks it up within a second"
+            "sent {id} to dsh — follow-up to {ticket}; the agent picks it up within a second"
         )),
         None => emit_line(&format!(
-            "sent {id} — the agent picks it up within a second"
+            "sent {id} to dsh — the agent picks it up within a second"
         )),
     }
     Ok(())
@@ -850,6 +827,7 @@ mod tests {
         run(
             api.clone(),
             Command::Send {
+                agent: "dsh".into(),
                 text: vec!["revise".into(), "it".into()],
             },
         )
@@ -864,6 +842,7 @@ mod tests {
         run(
             api,
             Command::Send {
+                agent: "dsh".into(),
                 text: vec!["start".into(), "over".into()],
             },
         )
