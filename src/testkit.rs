@@ -255,21 +255,7 @@ fn serve(
                     .and_then(|mut queue| (!queue.is_empty()).then(|| queue.remove(0)));
                 match forced {
                     Some((status, message)) => (status, json!({ "error": message })),
-                    None => {
-                        let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-                        let mut settings = settings.lock().unwrap();
-                        if let Some(entry) = block_mut(&mut settings, name) {
-                            if let Some(value) = parsed.get("value") {
-                                entry["value"] = value.clone();
-                            }
-                            let revision = entry["revision"].as_u64().unwrap_or(0) + 1;
-                            entry["revision"] = json!(revision);
-                            puts.lock().unwrap().push((name.to_owned(), parsed));
-                            (200, json!({ "saved": true, "revision": revision }))
-                        } else {
-                            (404, json!({ "error": "Source not found" }))
-                        }
-                    }
+                    None => save(&settings, &puts, name, &body),
                 }
             } else if method == "GET" && path.ends_with("/state") {
                 let mut left = state_failures.lock().unwrap();
@@ -330,6 +316,38 @@ fn serve(
 fn save_block(path: &str) -> Option<&str> {
     let (_, rest) = path.split_once("/settings/")?;
     (!rest.is_empty() && !rest.contains('/')).then_some(rest)
+}
+
+/// Answers one save the way the service does: a body that is not JSON, or that carries no
+/// value or revision, is refused before it reaches the store; and a revision other than the
+/// block's current one is a conflict. Accepting any body and any revision recorded saves the
+/// service refuses, so a console that sent a stale or mangled save still passed here.
+fn save(settings: &Mutex<Value>, puts: &Puts, name: &str, body: &str) -> (u16, Value) {
+    let mut settings = settings.lock().unwrap();
+    let Some(entry) = block_mut(&mut settings, name) else {
+        return (404, json!({ "error": "Source not found" }));
+    };
+    let parsed: Value = match serde_json::from_str(body) {
+        Ok(parsed) => parsed,
+        Err(_) => return (400, json!({ "error": "The request body is not JSON" })),
+    };
+    let Some(value) = parsed.get("value").filter(|value| !value.is_null()) else {
+        return (400, json!({ "error": "Invalid settings: value" }));
+    };
+    let Some(revision) = parsed.get("revision").and_then(Value::as_u64) else {
+        return (400, json!({ "error": "Invalid settings: revision" }));
+    };
+    if revision != entry["revision"].as_u64().unwrap_or(0) {
+        return (
+            409,
+            json!({ "error": "Settings changed. Reload before saving." }),
+        );
+    }
+    entry["value"] = value.clone();
+    let revision = entry["revision"].as_u64().unwrap_or(0) + 1;
+    entry["revision"] = json!(revision);
+    puts.lock().unwrap().push((name.to_owned(), parsed));
+    (200, json!({ "saved": true, "revision": revision }))
 }
 
 /// `PUT /settings/<block>` addresses a block by name; a Source is `source:<id>`.
@@ -470,6 +488,45 @@ mod tests {
             &method_request("GET", "/orchestrator/api/overview"),
         );
         assert_eq!(status(&response), 200, "{response}");
+    }
+
+    #[test]
+    fn a_save_against_a_revision_that_moved_on_is_a_conflict() {
+        let api = FakeApi::start();
+        let first = r#"{"value":{"note":"first"},"revision":0}"#;
+        assert_eq!(status(&raw(&api.base, &save_policy(Some("1"), first))), 200);
+
+        // The service compares the revision the client read. A console that kept a stale copy,
+        // or never reread it after another writer saved, must fail here instead of overwriting.
+        let stale = r#"{"value":{"note":"second"},"revision":0}"#;
+        let response = raw(&api.base, &save_policy(Some("1"), stale));
+        assert_eq!(status(&response), 409, "{response}");
+        assert_eq!(api.put_count(), 1, "a conflict must not record a save");
+        let settings = api.settings.lock().unwrap();
+        assert_eq!(settings["blocks"]["policy"]["revision"], 1);
+        assert_eq!(settings["blocks"]["policy"]["value"]["note"], "first");
+    }
+
+    #[test]
+    fn a_save_needs_a_json_body_with_a_value_and_its_revision() {
+        let api = FakeApi::start();
+        // The service parses its save request before touching the store, so a body it cannot
+        // read is a 400. Accepting one recorded a save the service would have refused.
+        for body in [
+            "not json",
+            r#"{"value":{"note":"a save"}}"#,
+            r#"{"revision":0}"#,
+            r#"{"value":null,"revision":0}"#,
+        ] {
+            let response = raw(&api.base, &save_policy(Some("1"), body));
+            assert_eq!(status(&response), 400, "{body}: {response}");
+        }
+        assert_eq!(api.put_count(), 0, "a refused body must not save");
+        assert_eq!(
+            api.settings.lock().unwrap()["blocks"]["policy"]["revision"],
+            0,
+            "a refused body must not advance the revision"
+        );
     }
 
     #[test]
