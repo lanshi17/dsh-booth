@@ -265,12 +265,7 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             }
             Ok(())
         }
-        Command::Send { text } => {
-            let cfg = service::Config::from_env()?;
-            let id = intake::send(&cfg, &text.join(" "), None)?;
-            println!("sent {id} — the agent picks it up within a second");
-            Ok(())
-        }
+        Command::Send { text } => send_instruction(&service::Config::from_env()?, text),
         Command::Gh { install } => {
             let cfg = service::Config::from_env()?;
             let system = gh::version(std::path::Path::new("gh")).unwrap_or_else(|| "?".into());
@@ -446,6 +441,25 @@ fn run(api: Api, command: Command) -> Result<(), String> {
     }
 }
 
+/// One instruction from the shell, on the thread the console was already following.
+///
+/// A follow-up is how a person answers a ticket that is waiting on them, and the console keeps
+/// that choice in `booth-follow.json` across restarts. The one-shot command used to pass no
+/// thread, so the same text started a fresh ticket here while typing it in the console continued
+/// the accepted one; the recorded follow is the console's, so both doors now agree.
+fn send_instruction(cfg: &service::Config, text: Vec<String>) -> Result<(), String> {
+    let follow = intake::follow(cfg);
+    let thread = follow.as_ref().map(|(_, thread)| thread.as_str());
+    let id = intake::send(cfg, &text.join(" "), thread)?;
+    match follow {
+        Some((ticket, _)) => {
+            println!("sent {id} — follow-up to {ticket}; the agent picks it up within a second")
+        }
+        None => println!("sent {id} — the agent picks it up within a second"),
+    }
+    Ok(())
+}
+
 fn show<T, F>(api: &Api, json: bool, view: T, render: F) -> Result<(), String>
 where
     T: Serialize,
@@ -606,5 +620,72 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("unknown thread filter"), "{error}");
+    }
+
+    /// Sets an environment variable for one test and restores it when the test ends, so the
+    /// `Send` command's real `Config::from_env` path can be exercised without leaking state.
+    struct EnvVar(&'static str, Option<std::ffi::OsString>);
+
+    impl EnvVar {
+        fn set(name: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(name);
+            std::env::set_var(name, value);
+            Self(name, previous)
+        }
+    }
+
+    impl Drop for EnvVar {
+        fn drop(&mut self) {
+            match &self.1 {
+                Some(value) => std::env::set_var(self.0, value),
+                None => std::env::remove_var(self.0),
+            }
+        }
+    }
+
+    #[test]
+    fn a_shell_instruction_continues_the_ticket_the_console_follows() {
+        // The console records the accepted ticket it follows in booth-follow.json. Typing the
+        // same text there sends it on that thread; the shell command used to ignore the record
+        // and start a new ticket, so a person answering a blocked ticket got no answer.
+        let _env = crate::testkit::env_lock();
+        let dir = std::env::temp_dir().join(format!("booth-send-{}", crate::oauth::uuid_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let _state = EnvVar::set("BOOTH_STATE_DIR", &dir);
+        let _home = EnvVar::set("DSH_HOME", &dir);
+        let _bundle = EnvVar::set("BOOTH_SUPERAGENT_DIR", &dir);
+        std::fs::write(
+            dir.join("booth-follow.json"),
+            serde_json::json!({ "ticket": "abcdef1234567890", "thread": "t-followed" }).to_string(),
+        )
+        .unwrap();
+
+        let api = Api::new("http://127.0.0.1:9");
+        run(
+            api.clone(),
+            Command::Send {
+                text: vec!["revise".into(), "it".into()],
+            },
+        )
+        .unwrap();
+        let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(inbox.trim()).unwrap();
+        assert_eq!(line["text"], "revise it");
+        assert_eq!(line["thread"], "t-followed", "{line}");
+
+        // Without a recorded follow the instruction still starts a new ticket, as before.
+        std::fs::remove_file(dir.join("booth-follow.json")).unwrap();
+        run(
+            api,
+            Command::Send {
+                text: vec!["start".into(), "over".into()],
+            },
+        )
+        .unwrap();
+        let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
+        let line: serde_json::Value = serde_json::from_str(inbox.lines().last().unwrap()).unwrap();
+        assert_eq!(line["text"], "start over");
+        assert!(line.get("thread").is_none(), "{line}");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
