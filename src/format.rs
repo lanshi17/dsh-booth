@@ -299,6 +299,36 @@ fn problem_line(problem: &Value) -> L {
                 (true, true) => String::new(),
             }
         }
+        // A failed outgoing reply says nothing about whose reply it was. The bundle carries the
+        // channel it was for and the attempts already spent; the panel titles the row with the
+        // Source and the count. Printing only the error left two Sources' failures, or a first
+        // failure and a long retry, looking identical.
+        ("outgoing", _) => {
+            let outgoing = problem.get("outgoing");
+            let source = outgoing
+                .and_then(|outgoing| outgoing.get("channel"))
+                .and_then(|channel| channel.get("source"))
+                .and_then(Value::as_str)
+                .filter(|source| !source.is_empty());
+            let attempts = outgoing
+                .and_then(|outgoing| outgoing.get("attempts"))
+                .and_then(Value::as_u64)
+                .filter(|attempts| *attempts > 0);
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(source) = source {
+                parts.push(source.to_string());
+            }
+            if let Some(attempts) = attempts {
+                parts.push(match attempts {
+                    1 => "1 attempt".to_string(),
+                    count => format!("{count} attempts"),
+                });
+            }
+            if !detail.is_empty() {
+                parts.push(detail.to_string());
+            }
+            parts.join(" · ")
+        }
         _ => detail.to_string(),
     };
     let label = match kind {
@@ -1323,6 +1353,69 @@ mod tests {
                 .iter()
                 .any(|line| line == "  · Eval unavailable: Issue #14"),
             "a reasonless problem keeps the old line: {shown:?}"
+        );
+    }
+
+    #[test]
+    fn an_outgoing_failure_names_the_channel_and_its_attempts() {
+        // The bundle's `outgoing` problem carries the channel the reply was for and the attempts
+        // already spent (`src/app/views/overview.ts`), and the panel titles the row with both.
+        // Printing the error alone made two Sources' failures, or a first failure and a long
+        // retry, read as the same row.
+        let view: Overview = serde_json::from_value(json!({
+            "problems": [{
+                "kind": "outgoing",
+                "outgoing": {
+                    "id": "o-1",
+                    "channel": { "source": "github", "thread": "github:o/r#12" },
+                    "text": "done",
+                    "attempts": 1,
+                    "error": "request failed"
+                }
+            }, {
+                "kind": "outgoing",
+                "outgoing": {
+                    "id": "o-2",
+                    "channel": { "source": "feishu", "thread": "feishu:oc_demo#om_1" },
+                    "text": "收到，正在处理",
+                    "attempts": 3,
+                    "error": "request failed"
+                }
+            }, {
+                // An older problem without the channel or the count keeps its error and gains
+                // no empty fields.
+                "kind": "outgoing",
+                "outgoing": { "id": "o-3", "error": "request failed" }
+            }],
+            "person": [],
+            "executor": {},
+            "flow": {},
+            "policyVersion": null
+        }))
+        .expect("the bundle's overview decodes");
+        let shown: Vec<String> = overview(&view, "http://127.0.0.1:3899")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert!(
+            shown
+                .iter()
+                .any(|line| line
+                    == "  · outgoing message failed: github · 1 attempt · request failed"),
+            "a failed reply names its channel and a single attempt: {shown:?}"
+        );
+        assert!(
+            shown
+                .iter()
+                .any(|line| line
+                    == "  · outgoing message failed: feishu · 3 attempts · request failed"),
+            "a failed reply distinguishes the channel and the retry count: {shown:?}"
+        );
+        assert!(
+            shown
+                .iter()
+                .any(|line| line == "  · outgoing message failed: request failed"),
+            "a problem without a channel keeps its error and gains no separators: {shown:?}"
         );
     }
 }
