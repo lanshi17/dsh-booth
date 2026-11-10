@@ -52,8 +52,18 @@ cargo clippy --all-targets -- -D warnings
 record lint $?
 
 status "tests"
-cargo test
-record tests $?
+# `cargo test` exits 0 after running nothing: a target can carry no tests, and a suite whose
+# tests are all `#[ignore]`d reports "0 passed" too. A branch that deletes its tests would then
+# turn the layer green. Read the counts from this run and fail when none of them ran.
+test_out=$(cargo test 2>&1)
+test_code=$?
+printf '%s\n' "$test_out"
+if [ "$test_code" -eq 0 ] &&
+  ! grep -q '^test result: .* [1-9][0-9]* passed' <<<"$test_out"; then
+  echo "cargo test ran no tests"
+  test_code=1
+fi
+record tests "$test_code"
 
 if [ "${1:-}" = "quick" ]; then
   status "result"
