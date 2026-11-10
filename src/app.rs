@@ -1938,14 +1938,11 @@ impl App {
         } else {
             None
         };
-        frame.render_widget(
-            Paragraph::new(compose_bottom(&self.input, self.cursor, bottom.width, hint)),
-            bottom,
-        );
+        let (composer, caret) = compose_bottom(&self.input, self.cursor, bottom.width, hint);
+        frame.render_widget(Paragraph::new(composer), bottom);
 
         if self.modal.is_none() {
-            let before: String = self.input.chars().take(self.cursor).collect();
-            let x = bottom.x + 5 + UnicodeWidthStr::width(before.as_str()) as u16;
+            let x = bottom.x + 5 + caret;
             let max = bottom.x + bottom.width.saturating_sub(2);
             frame.set_cursor_position(Position::new(x.min(max), bottom.y));
         }
@@ -2687,32 +2684,28 @@ fn compose_top(segments: Vec<Span<'static>>, right: Option<Span<'static>>, width
     Line::from(spans)
 }
 
-fn compose_bottom(input: &str, _cursor: usize, width: u16, hint: Option<Span<'static>>) -> L {
+/// The composer's bottom rail, and the caret's column inside the text area.
+///
+/// The caret is returned rather than recomputed from the whole line: the visible text is a
+/// window, so the caret's column is the window's prefix, not the whole input's.
+fn compose_bottom(input: &str, cursor: usize, width: u16, hint: Option<Span<'static>>) -> (L, u16) {
     let width = width as usize;
     let hint_w = hint.as_ref().map(|span| span.width()).unwrap_or(0);
     let tail = if hint.is_some() { hint_w + 2 } else { 0 };
     let room = width.saturating_sub(5 + tail + 1 + 1);
     let empty = input.is_empty();
-    let (text, style) = if empty {
+    let (text, style, caret) = if empty {
         (
             "type an instruction, or / for commands"
                 .chars()
                 .take(room)
                 .collect::<String>(),
             Style::default().fg(FAINT),
+            0,
         )
     } else {
-        let mut text = String::new();
-        let mut used = 0;
-        for ch in input.chars() {
-            let size = UnicodeWidthChar::width(ch).unwrap_or(0);
-            if used + size > room {
-                break;
-            }
-            text.push(ch);
-            used += size;
-        }
-        (text, Style::default().fg(TEXT))
+        let (text, caret) = composer_view(input, cursor, room);
+        (text, Style::default().fg(TEXT), caret)
     };
     let text_w = UnicodeWidthStr::width(text.as_str());
     let fill = width.saturating_sub(5 + text_w + 1 + tail + 1);
@@ -2729,7 +2722,63 @@ fn compose_bottom(input: &str, _cursor: usize, width: u16, hint: Option<Span<'st
         spans.push(Span::styled(" ", Style::default()));
     }
     spans.push(Span::styled("╯", Style::default().fg(CYAN)));
-    Line::from(spans)
+    (Line::from(spans), caret)
+}
+
+/// The slice of the composer line to draw and the caret's column inside it, in cells.
+///
+/// A line wider than the composer used to be cut at its start, so the caret was clamped to the
+/// frame's edge and the characters being typed sat off screen. Keep the caret on the visible
+/// text: show a window that contains it, with an ellipsis when the line's start is hidden.
+fn composer_view(input: &str, cursor: usize, room: usize) -> (String, u16) {
+    let chars: Vec<char> = input.chars().collect();
+    let cursor = cursor.min(chars.len());
+    let room = room.max(1);
+    let width_of = |slice: &[char]| -> usize {
+        slice
+            .iter()
+            .map(|ch| UnicodeWidthChar::width(*ch).unwrap_or(0))
+            .sum()
+    };
+    // A line that fits is shown whole; the caret sits after the characters before it.
+    if width_of(&chars) <= room {
+        return (input.to_owned(), width_of(&chars[..cursor]) as u16);
+    }
+    // The end of the line has no text after the caret, so the whole room may hold the prefix.
+    // Editing in the middle keeps half the room for the text after it, so both sides stay in
+    // view; one cell is reserved for the ellipsis that says the start is hidden.
+    let budget = if cursor == chars.len() {
+        room
+    } else {
+        room / 2
+    };
+    let mut start = cursor;
+    let mut prefix = 0usize;
+    while start > 0 {
+        let size = UnicodeWidthChar::width(chars[start - 1]).unwrap_or(0);
+        if prefix + size > budget.saturating_sub(1) {
+            break;
+        }
+        prefix += size;
+        start -= 1;
+    }
+    let ellipsis = usize::from(start > 0);
+    let mut used = ellipsis + prefix;
+    let mut end = cursor;
+    while end < chars.len() {
+        let size = UnicodeWidthChar::width(chars[end]).unwrap_or(0);
+        if used + size > room {
+            break;
+        }
+        used += size;
+        end += 1;
+    }
+    let mut text = String::new();
+    if ellipsis == 1 {
+        text.push('…');
+    }
+    text.extend(&chars[start..end]);
+    (text, (ellipsis + prefix) as u16)
 }
 
 fn draw_splash(
@@ -3141,13 +3190,18 @@ mod transcript_tests {
 
     #[test]
     fn a_long_input_is_truncated_to_the_composer_width() {
-        let line = compose_bottom(&"x".repeat(200), 0, 40, None);
+        let (line, caret) = compose_bottom(&"x".repeat(200), 0, 40, None);
         let width: usize = line
             .spans
             .iter()
             .map(|span| UnicodeWidthStr::width(span.content.as_ref()))
             .sum();
         assert!(width <= 40, "the composer stays inside its width: {width}");
+        // The caret is inside the text area, not on the rail.
+        assert!(
+            5 + caret as usize <= 38,
+            "the caret is in the composer: {caret}"
+        );
         // The rails and the prompt survive the truncation.
         let text = line.to_string();
         assert!(text.starts_with('╰') && text.ends_with('╯'), "{text}");
@@ -4058,6 +4112,81 @@ mod editor_tests {
         app.modal_key(key(KeyCode::Esc));
         assert!(app.modal.is_none(), "Esc closes the form");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_composer_keeps_the_caret_on_the_text_it_shows() {
+        use ratatui::backend::TestBackend;
+
+        let (mut app, dir, _env) = editor("composer-caret");
+        // The line is wider than the composer. The old composer always drew its beginning, so
+        // the caret was clamped to the frame's right edge — over the hint — and the characters
+        // being typed were off screen.
+        app.input = format!("{}TAIL", "x".repeat(120));
+        app.cursor = app.input.chars().count();
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        let caret = terminal.backend().cursor_position();
+        let row: String = (0..80)
+            .map(|x| {
+                terminal
+                    .backend()
+                    .buffer()
+                    .cell((x, caret.y))
+                    .map(|cell| cell.symbol().to_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert!(row.contains("TAIL"), "the typed tail is on screen: {row}");
+        assert_eq!(
+            terminal
+                .backend()
+                .buffer()
+                .cell((caret.x - 1, caret.y))
+                .map(|cell| cell.symbol().to_owned()),
+            Some("L".to_owned()),
+            "the caret follows the last visible character, not the frame edge: {row}"
+        );
+        assert!(
+            caret.x < 80 - 2,
+            "the caret stays inside the composer: {}",
+            caret.x
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_composer_window_keeps_the_caret_and_the_text_around_it() {
+        // A line that fits is shown whole, with the caret after the characters before it.
+        assert_eq!(composer_view("short", 5, 40), ("short".to_owned(), 5));
+        assert_eq!(composer_view("short", 0, 40), ("short".to_owned(), 0));
+
+        // At the end of a long line the window ends at the caret: the tail is visible and the
+        // ellipsis says the start is hidden.
+        let long = format!("{}TAIL", "x".repeat(100));
+        let end = long.chars().count();
+        let (text, caret) = composer_view(&long, end, 20);
+        assert!(text.starts_with('…'), "{text}");
+        assert!(text.ends_with("TAIL"), "{text}");
+        assert_eq!(UnicodeWidthStr::width(text.as_str()), caret as usize);
+        assert!(
+            caret as usize <= 20,
+            "the caret is inside the room: {caret}"
+        );
+
+        // In the middle, the window keeps text on both sides of the caret.
+        let (text, caret) = composer_view(&long, 50, 20);
+        assert!(text.starts_with('…'), "{text}");
+        assert!(caret as usize <= 20, "{caret}");
+        assert!(UnicodeWidthStr::width(text.as_str()) <= 20, "{text}");
+
+        // Wide characters count their cells, not their characters.
+        let wide = "工".repeat(30);
+        let (text, caret) = composer_view(&wide, 30, 10);
+        assert!(UnicodeWidthStr::width(text.as_str()) <= 10, "{text}");
+        assert_eq!(UnicodeWidthStr::width(text.as_str()), caret as usize);
+        assert!(text.ends_with('工'), "{text}");
     }
 }
 
