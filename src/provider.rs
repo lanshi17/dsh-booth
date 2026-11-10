@@ -130,11 +130,32 @@ impl Catalog {
 /// Points the profile's default model at `provider`/`model`.
 pub fn set_default(cfg: &Config, provider: &str, model: &str) -> Result<(), String> {
     let mut patch = Patch::read(cfg)?;
+    point_default(&mut patch, provider, model);
+    patch.write(cfg)
+}
+
+/// Selects the default model without discarding the rest of the entry.
+///
+/// `agent-default-model` is the profile's own config, and it carries an optional
+/// `reasoningEffort` beside the pair booth writes. Rewriting the whole `config` object would
+/// delete that field even when the selection does not change — which is exactly what choosing
+/// the current model again, or logging in for the provider already selected, does. Only a
+/// changed selection replaces the entry, so the new model's own default effort applies.
+fn point_default(patch: &mut Patch, provider: &str, model: &str) {
+    let unchanged = patch
+        .get("agent-default-model")
+        .and_then(|entry| entry.get("config"))
+        .is_some_and(|config| {
+            config.get("provider").and_then(Value::as_str) == Some(provider)
+                && config.get("model").and_then(Value::as_str) == Some(model)
+        });
+    if unchanged {
+        return;
+    }
     patch.set_config(
         "agent-default-model",
         json!({ "provider": provider, "model": model }),
     );
-    patch.write(cfg)
 }
 
 /// Drops booth's default-model override, so the profile's own default applies again.
@@ -194,10 +215,7 @@ pub fn add_endpoint(cfg: &Config, endpoint: &Endpoint) -> Result<(), String> {
         json!(models),
     );
     write_ref(&reference, &endpoint.key)?;
-    patch.set_config(
-        "agent-default-model",
-        json!({ "provider": endpoint.id, "model": endpoint.model }),
-    );
+    point_default(&mut patch, &endpoint.id, &endpoint.model);
     patch.write(cfg)
 }
 
@@ -374,6 +392,13 @@ pub fn migrate(cfg: &Config) -> Result<Vec<String>, String> {
         .get("current")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    // Registering the entries one by one moves the default; keep the profile's config for the
+    // pair it already selected, so restoring that pair also restores fields this module does
+    // not manage (the old file may name the same provider/model the panel already had).
+    let default_before = Patch::read(cfg)
+        .ok()
+        .and_then(|patch| patch.get("agent-default-model").cloned())
+        .and_then(|entry| entry.get("config").cloned());
     let mut chosen = None;
     for entry in value
         .get("providers")
@@ -424,7 +449,20 @@ pub fn migrate(cfg: &Config) -> Result<Vec<String>, String> {
     // `add_endpoint` makes each provider the default as it registers it, so the old file's
     // `current` has to be restored after the loop or the last entry silently wins.
     if let Some((id, model)) = chosen {
-        set_default(cfg, &id, &model)?;
+        let kept = default_before.filter(|config| {
+            config.get("provider").and_then(Value::as_str) == Some(id.as_str())
+                && config.get("model").and_then(Value::as_str) == Some(model.as_str())
+        });
+        match kept {
+            // The profile already selected this pair: write its config back whole, not just the
+            // pair, so its reasoning effort (and anything else the panel added) survives.
+            Some(config) => {
+                let mut patch = Patch::read(cfg)?;
+                patch.set_config("agent-default-model", config);
+                patch.write(cfg)?;
+            }
+            None => set_default(cfg, &id, &model)?,
+        }
     }
     // The overlay a `booth up` from an earlier version passed is no longer read.
     let _ = fs::remove_file(cfg.state_dir.join("provider.yml"));
@@ -776,6 +814,66 @@ mod tests {
     }
 
     #[test]
+    fn choosing_the_model_that_is_already_current_keeps_its_reasoning_effort() {
+        // `agent-default-model` carries an optional `reasoningEffort` beside the pair this
+        // module writes. Picking the current model again is not a reason to drop it: the
+        // console has no field for effort and must not edit what it does not show.
+        let cfg = config();
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(
+            cfg.patch(),
+            "- id: agent-default-model\n  config:\n    provider: a\n    model: m\n    reasoningEffort: high\n",
+        )
+        .unwrap();
+        set_default(&cfg, "a", "m").unwrap();
+        let patch = Patch::read(&cfg).unwrap();
+        let config = &patch.get("agent-default-model").unwrap()["config"];
+        assert_eq!(config["reasoningEffort"], "high", "{config}");
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn re_registering_the_current_provider_keeps_its_reasoning_effort() {
+        // A re-login for the provider/model already selected is also a no-op selection: the
+        // shared profile's effort field survives even though the form does not render it.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let entries = json!([
+            {
+                "id": "llm-pi-ai",
+                "config": { "providers": { "openrouter": {
+                    "apiKeyEnv": "PANEL_REF",
+                    "baseURL": "https://openrouter.ai/api/v1",
+                    "api": "openai-completions",
+                    "models": [{ "id": "x/y" }]
+                }}}
+            },
+            {
+                "id": "agent-default-model",
+                "config": { "provider": "openrouter", "model": "x/y", "reasoningEffort": "high" }
+            }
+        ]);
+        fs::write(cfg.patch(), serde_json::to_string(&entries).unwrap()).unwrap();
+        add_endpoint(
+            &cfg,
+            &Endpoint {
+                id: "openrouter".into(),
+                display: "OpenRouter".into(),
+                base: "https://openrouter.ai/api/v1".into(),
+                api: "openai-completions".into(),
+                model: "x/y".into(),
+                key: "sk-secret".into(),
+            },
+        )
+        .unwrap();
+        let patch = Patch::read(&cfg).unwrap();
+        let config = &patch.get("agent-default-model").unwrap()["config"];
+        assert_eq!(config["reasoningEffort"], "high", "{config}");
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
     fn forgetting_the_default_removes_only_that_entry() {
         let cfg = config();
         fs::write(
@@ -903,6 +1001,42 @@ mod migration_tests {
         let providers = &patch.get("llm-pi-ai").unwrap()["config"]["providers"];
         assert!(providers.get("first").is_some(), "{providers}");
         assert!(providers.get("second").is_some(), "{providers}");
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn migration_keeps_the_reasoning_effort_of_the_default_it_keeps() {
+        // Registering the entries one by one moves the default away from the old `current`
+        // and back. The move back must not rewrite the profile's own `reasoningEffort` for
+        // the pair it is keeping.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let panel = json!([{
+            "id": "agent-default-model",
+            "config": { "provider": "current", "model": "m-current", "reasoningEffort": "high" }
+        }]);
+        fs::write(cfg.patch(), serde_json::to_string(&panel).unwrap()).unwrap();
+        fs::write(
+            cfg.state_dir.join("provider.json"),
+            r#"{"current":"current","providers":[
+                {"id":"other","base":"https://other.example","api":"openai-completions","model":"m-other","key":"k1"},
+                {"id":"current","base":"https://current.example","api":"openai-completions","model":"m-current","key":"k2"}
+            ]}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            migrate(&cfg).unwrap(),
+            vec!["other".to_owned(), "current".to_owned()]
+        );
+
+        let patch = Patch::read(&cfg).unwrap();
+        let config = &patch.get("agent-default-model").unwrap()["config"];
+        assert_eq!(config["provider"], "current", "{config}");
+        assert_eq!(config["model"], "m-current", "{config}");
+        assert_eq!(config["reasoningEffort"], "high", "{config}");
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
     }
 
