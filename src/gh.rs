@@ -17,6 +17,9 @@ use std::time::Duration;
 /// Pinned because a release URL is stable and the checksum below is checked against the same tag.
 pub const VERSION: &str = "2.63.2";
 const DOWNLOAD: Duration = Duration::from_secs(120);
+/// The pause before the one retry of a program the kernel refused to execute: a just-written
+/// script can still be held open for writing by another thread.
+const RETRY_PAUSE: Duration = Duration::from_millis(50);
 
 fn target() -> Result<&'static str, String> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
@@ -30,21 +33,23 @@ fn target() -> Result<&'static str, String> {
     }
 }
 
-/// Runs `program` and returns its standard output, retrying once: a just-written script can
-/// fail with `ETXTBSY` while another thread still holds it open for writing.
-fn output_of(program: &Path, args: &[&str]) -> Option<String> {
-    for attempt in 0..2 {
-        match Command::new(program).args(args).output() {
-            Ok(output) => return Some(String::from_utf8_lossy(&output.stdout).into_owned()),
-            Err(error)
-                if attempt == 0 && error.kind() == std::io::ErrorKind::ExecutableFileBusy =>
-            {
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(_) => return None,
+/// Runs `program` and returns its full output, retrying once: a just-written script can fail
+/// with `ETXTBSY` while another thread still holds it open for writing.
+fn output(program: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
+    match Command::new(program).args(args).output() {
+        Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+            std::thread::sleep(RETRY_PAUSE);
+            Command::new(program).args(args).output()
         }
+        result => result,
     }
-    None
+}
+
+/// Runs `program` and returns its standard output, if it could be run.
+fn output_of(program: &Path, args: &[&str]) -> Option<String> {
+    output(program, args)
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Whether `program` has the flag the Source's reads pass.
@@ -90,14 +95,23 @@ pub fn ensure(cfg: &service::Config, download: bool) -> Result<Option<String>, S
     }
     install(cfg)?;
     let path = local.display().to_string();
-    // The installed CLI is checksum-verified to be the pinned release, which has the flag, so a
-    // failure here is about running it: report what actually happened instead of blaming the flag.
-    match Command::new(&local).args(["api", "--help"]).output() {
+    verify(&local)?;
+    Ok(Some(path))
+}
+
+/// Checks the CLI an install has just written and says why it cannot serve the reads.
+///
+/// The verification runs through [`output`], so the one transient `ETXTBSY` a just-written
+/// executable can produce is retried instead of reported as a CLI that cannot run. The checksum
+/// already ties the file to the pinned release, so a remaining failure is about running it.
+fn verify(program: &Path) -> Result<(), String> {
+    let path = program.display().to_string();
+    match output(program, &["api", "--help"]) {
         Ok(output)
             if output.status.success()
                 && String::from_utf8_lossy(&output.stdout).contains("--slurp") =>
         {
-            Ok(Some(path))
+            Ok(())
         }
         Ok(output) if output.status.success() => Err(format!(
             "{path} was installed but does not support `gh api --slurp`"
@@ -529,6 +543,71 @@ mod tests {
         assert!(
             error.contains("does not support `gh api --slurp`"),
             "{error}"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_just_installed_cli_that_is_still_busy_is_retried_before_it_is_blamed() {
+        // Linux refuses to execute a file a process holds open for writing (ETXTBSY), and the
+        // writer of a just-installed CLI can hold it for a moment after the rename. The check
+        // must wait for its one retry instead of reporting a CLI that presumably cannot run.
+        let root = scratch("verify-busy");
+        let gh = root.join("gh");
+        fs::write(
+            &gh,
+            "#!/bin/sh\necho '      --slurp  use with --paginate'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+        let writer = fs::OpenOptions::new().write(true).open(&gh).unwrap();
+        let started = std::time::Instant::now();
+        let error = verify(&gh).unwrap_err();
+        let waited = started.elapsed();
+        drop(writer);
+
+        // #99's sentence for a CLI that genuinely cannot run is kept ...
+        assert!(error.contains("was installed but cannot run"), "{error}");
+        // ... but only after the retry pause, which is what a just-written CLI needs.
+        assert!(
+            waited >= RETRY_PAUSE / 2,
+            "a busy CLI is retried after a pause, not failed at once ({waited:?})"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_cli_busy_only_for_a_moment_is_accepted_after_the_retry() {
+        let root = scratch("verify-busy-retry");
+        let gh = root.join("gh");
+        fs::write(
+            &gh,
+            "#!/bin/sh\necho '      --slurp  use with --paginate'\n",
+        )
+        .unwrap();
+        fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+        let writer = fs::OpenOptions::new().write(true).open(&gh).unwrap();
+        // The first attempt sees the busy file; the writer is gone before the retry runs.
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(RETRY_PAUSE / 5);
+            drop(writer);
+        });
+        let result = verify(&gh);
+        release.join().unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn only_a_busy_cli_waits_before_it_is_blamed() {
+        let root = scratch("verify-absent");
+        let started = std::time::Instant::now();
+        let error = verify(&root.join("absent")).unwrap_err();
+        let waited = started.elapsed();
+        assert!(error.contains("was installed but cannot run"), "{error}");
+        assert!(
+            waited < RETRY_PAUSE / 2,
+            "only a busy CLI waits ({waited:?})"
         );
         fs::remove_dir_all(&root).ok();
     }
