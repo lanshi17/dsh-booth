@@ -21,6 +21,7 @@ use api::Api;
 use clap::{Parser, Subcommand};
 use ratatui::text::Line as TuiLine;
 use serde::Serialize;
+use std::io::{self, Write};
 
 const DEFAULT_URL: &str = "http://127.0.0.1:3082";
 
@@ -205,7 +206,7 @@ fn provider_view(api: &Api) -> Result<serde_json::Value, String> {
 fn show_provider(api: &Api) -> Result<(), String> {
     let catalog = provider::Catalog::parse(&provider_view(api)?);
     for line in provider_lines(&catalog) {
-        println!("{line}");
+        emit_line(&line);
     }
     Ok(())
 }
@@ -452,10 +453,12 @@ fn send_instruction(cfg: &service::Config, text: Vec<String>) -> Result<(), Stri
     let thread = follow.as_ref().map(|(_, thread)| thread.as_str());
     let id = intake::send(cfg, &text.join(" "), thread)?;
     match follow {
-        Some((ticket, _)) => {
-            println!("sent {id} — follow-up to {ticket}; the agent picks it up within a second")
-        }
-        None => println!("sent {id} — the agent picks it up within a second"),
+        Some((ticket, _)) => emit_line(&format!(
+            "sent {id} — follow-up to {ticket}; the agent picks it up within a second"
+        )),
+        None => emit_line(&format!(
+            "sent {id} — the agent picks it up within a second"
+        )),
     }
     Ok(())
 }
@@ -475,7 +478,7 @@ where
 
 fn print_json<T: Serialize>(value: &T) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value).map_err(|error| error.to_string())?;
-    println!("{text}");
+    emit_line(&text);
     Ok(())
 }
 
@@ -486,8 +489,36 @@ fn print_lines(lines: Vec<TuiLine<'static>>) {
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
-        println!("{text}");
+        emit_line(&text);
     }
+}
+
+/// Writes one line to stdout without making a closed reader a failure.
+///
+/// The one-shot commands are meant for scripts, and a reader that stops early — `booth decisions
+/// | head -1` or `booth tickets --json | head -c 200` is common — closes the pipe while the
+/// command is still writing. `println!` panics on that `EPIPE`, so the command died with a Rust
+/// panic and exit 101 even though its work had succeeded. The reader went away, so there is
+/// nothing left to say; a write failure of another kind is reported on stderr instead.
+fn emit_line(text: &str) {
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let _ = write_line(&mut out, text).map_err(report_write);
+}
+
+fn write_line(out: &mut impl Write, text: &str) -> io::Result<()> {
+    writeln!(out, "{text}")
+}
+
+fn report_write(error: io::Error) {
+    let _ = report_write_to(&mut io::stderr(), error);
+}
+
+fn report_write_to(out: &mut impl Write, error: io::Error) -> io::Result<()> {
+    if error.kind() == io::ErrorKind::BrokenPipe {
+        return Ok(());
+    }
+    writeln!(out, "booth: cannot write to stdout: {error}")
 }
 
 #[cfg(test)]
@@ -547,6 +578,126 @@ mod tests {
             cli.command,
             Some(Command::Provider { json: true })
         ));
+    }
+
+    /// A writer that fails every write with the given kind, such as a closed pipe.
+    struct Failing(io::ErrorKind);
+
+    impl Write for Failing {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(self.0, "no reader"))
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_closed_reader_is_the_end_of_the_output_not_a_panic() {
+        // `booth status | head -1` closes stdout while the view is still being written. The line
+        // helper must hand back the write error instead of panicking, and the report must not
+        // turn that reader's choice into an error; another write failure is still reported.
+        let mut sink = Vec::new();
+        write_line(&mut sink, "one").unwrap();
+        assert_eq!(sink, b"one\n");
+        Failing(io::ErrorKind::BrokenPipe).flush().unwrap();
+
+        let error = write_line(&mut Failing(io::ErrorKind::BrokenPipe), "two").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        report_write(error);
+        let mut report = Vec::new();
+        report_write_to(
+            &mut report,
+            write_line(&mut Failing(io::ErrorKind::BrokenPipe), "three").unwrap_err(),
+        )
+        .unwrap();
+        assert!(report.is_empty(), "{report:?}");
+
+        let error = write_line(&mut Failing(io::ErrorKind::PermissionDenied), "four").unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        report_write_to(&mut report, error).unwrap();
+        let text = String::from_utf8(report).unwrap();
+        assert!(text.contains("no reader"), "{text}");
+    }
+
+    #[test]
+    fn the_rendered_views_write_through_the_pipe_safe_line() {
+        // The list and JSON views share the two helpers; exercising one of each proves they go
+        // through `emit_line` rather than `println!`.
+        let fake = crate::testkit::FakeApi::start();
+        let api = Api::new(&fake.base);
+        run(api.clone(), Command::Overview { json: false }).unwrap();
+        run(api, Command::Provider { json: true }).unwrap();
+    }
+
+    /// Runs one test in a child of this test binary, so the test can read what it wrote to
+    /// stdout: the harness captures `print!`, not direct `io::stdout()` writes.
+    fn output_of_test(name: &str, flag: &str) -> std::process::Output {
+        let exe = std::env::current_exe().expect("the test executable");
+        std::process::Command::new(exe)
+            .args(["--exact", name, "--nocapture"])
+            .env(flag, "1")
+            .output()
+            .expect("run the test in a child")
+    }
+
+    #[test]
+    fn a_rendered_view_writes_every_line() {
+        const FLAG: &str = "BOOTH_TEST_PRINT_LINES";
+        if std::env::var_os(FLAG).is_some() {
+            print_lines(vec![TuiLine::from("alpha"), TuiLine::from("beta")]);
+            return;
+        }
+        let out = output_of_test("tests::a_rendered_view_writes_every_line", FLAG);
+        assert!(out.status.success(), "{out:?}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("alpha\n"), "{text}");
+        assert!(text.contains("beta\n"), "{text}");
+    }
+
+    #[test]
+    fn the_provider_view_writes_the_catalog() {
+        const FLAG: &str = "BOOTH_TEST_SHOW_PROVIDER";
+        if std::env::var_os(FLAG).is_some() {
+            let fake = crate::testkit::FakeApi::start();
+            show_provider(&Api::new(&fake.base)).unwrap();
+            return;
+        }
+        let out = output_of_test("tests::the_provider_view_writes_the_catalog", FLAG);
+        assert!(out.status.success(), "{out:?}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("provider   deepseek-official"), "{text}");
+        assert!(
+            text.contains("model      deepseek-official · deepseek-flash"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_json_view_writes_the_value() {
+        const FLAG: &str = "BOOTH_TEST_PRINT_JSON";
+        if std::env::var_os(FLAG).is_some() {
+            print_json(&serde_json::json!({ "answer": 42 })).unwrap();
+            return;
+        }
+        let out = output_of_test("tests::a_json_view_writes_the_value", FLAG);
+        assert!(out.status.success(), "{out:?}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("\"answer\": 42"), "{text}");
+    }
+
+    #[test]
+    fn another_write_failure_reaches_stderr() {
+        const FLAG: &str = "BOOTH_TEST_REPORT_WRITE";
+        if std::env::var_os(FLAG).is_some() {
+            report_write(io::Error::new(io::ErrorKind::PermissionDenied, "denied"));
+            return;
+        }
+        let out = output_of_test("tests::another_write_failure_reaches_stderr", FLAG);
+        assert!(out.status.success(), "{out:?}");
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(text.contains("cannot write to stdout: denied"), "{text}");
     }
 
     #[test]
