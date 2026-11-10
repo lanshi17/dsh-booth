@@ -142,10 +142,28 @@ function readLines(inbox, cursor) {
   }
 }
 
+/** Whether the file ends inside a record, which the next append has to close before starting its own. */
+function endsMidRecord(path) {
+  if (!existsSync(path)) return false
+  const fd = openSync(path, 'r')
+  try {
+    const size = fstatSync(fd).size
+    if (size === 0) return false
+    const last = Buffer.alloc(1)
+    return readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== newline
+  } finally {
+    closeSync(fd)
+  }
+}
+
 /** Appends the agent's outbound message to the outbox; the console reads it back by id. */
 function reply(outbox, message) {
   mkdirSync(join(outbox, '..'), { recursive: true })
-  appendFileSync(outbox, `${JSON.stringify({
+  // A write cut short — a crash, a full disk, a hand edit — leaves the last record without its
+  // newline. Appending onto it would merge this reply into the damaged line, which the console
+  // skips, so close that record first and let this reply start on a line of its own.
+  const closed = endsMidRecord(outbox) ? '\n' : ''
+  appendFileSync(outbox, `${closed}${JSON.stringify({
     at: new Date().toISOString(),
     id: message.id,
     kind: message.kind,
