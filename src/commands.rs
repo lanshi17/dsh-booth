@@ -33,6 +33,7 @@ pub const PALETTE: &[(&str, &str)] = &[
         "/send <text>",
         "send an instruction; bare text does the same",
     ),
+    ("/new", "start a new ticket instead of continuing one"),
     ("/search <text>", "find tickets, threads and messages"),
     ("/stop <id>", "withdraw a ticket's mandate"),
     ("/retry <id>", "start a fresh assignment"),
@@ -334,6 +335,22 @@ mod tests {
                 "{command} not in the palette: {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn help_and_the_palette_list_the_new_command() {
+        // `/new` is the console command the README documents but the table never gained. Unlike
+        // the control commands above, it changes which ticket the next instruction continues, and
+        // the transcript points at it ("· /new starts a new ticket"), so a person who wants a new
+        // ticket needs it in `/help` and reachable by Tab.
+        let help: String = format::help()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(help.contains("/new"), "/new missing from /help:\n{help}");
+        let names: Vec<&str> = matches("/new").iter().map(|(name, _)| *name).collect();
+        assert_eq!(names, vec!["/new"], "/new is not the palette's answer");
     }
 
     #[test]
