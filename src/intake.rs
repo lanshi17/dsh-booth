@@ -453,15 +453,10 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
         None => (argument, ""),
     };
     let repository = match repository {
-        "" => infer_repository().ok_or(
+        "" => repository_name(&infer_repository().ok_or(
             "name the repository: /setup owner/repo — run it inside a checkout to infer it",
-        )?,
-        value if value.contains('/') => value.to_owned(),
-        other => {
-            return Err(format!(
-                "{other} is not owner/name; use /setup owner/repo [directory]"
-            ))
-        }
+        )?)?,
+        value => repository_name(value)?,
     };
     // The management API only accepts an absolute `executor.directory`; expand the one home
     // form a user can type here, and refuse the rest before anything is saved.
@@ -735,6 +730,35 @@ fn wait_ready(api: &Api) -> Result<(), String> {
         }
         sleep(Duration::from_millis(500));
     }
+}
+
+/// The `owner/name` the GitHub Source's schema accepts, or why the argument is not one.
+///
+/// The Source validates `repository` as `^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?$` and refuses the
+/// save otherwise. Only looking for a slash accepted a directory (`~/src/work`, or the second
+/// argument alone), a URL, and `owner/name/extra`; the console then chose or downloaded a CLI
+/// before the Source save answered `HTTP 400: Invalid settings: repository`. Refuse the same
+/// shapes here, before any of that work, and name the form the argument must take.
+fn repository_name(value: &str) -> Result<String, String> {
+    let mut parts = value.split('/');
+    let owner = parts.next().unwrap_or_default();
+    let name = parts.next().unwrap_or_default();
+    let valid = repository_part(owner) && repository_part(name) && parts.next().is_none();
+    if valid {
+        Ok(value.to_owned())
+    } else {
+        Err(format!(
+            "{value} is not owner/name; use /setup owner/repo [directory]"
+        ))
+    }
+}
+
+/// One side of `owner/name`, with the characters the Source's schema allows.
+fn repository_part(part: &str) -> bool {
+    !part.is_empty()
+        && part
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-'))
 }
 
 /// Reads `owner/name` from the checkout the console runs in.
@@ -1213,6 +1237,30 @@ mod tests {
         set_follow(&cfg, None);
         assert!(follow(&cfg).is_none());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_repository_is_exactly_owner_name() {
+        // The Source's schema accepts one slash and no other character, so the console checks
+        // the same shape before the CLI or any settings block is touched.
+        for good in ["o/r", "owner/repo", "Owner.Name/repo_name-1"] {
+            assert_eq!(repository_name(good).unwrap(), good);
+        }
+        for bad in [
+            "",
+            "owner",
+            "owner/",
+            "/repo",
+            "/",
+            "owner/repo/extra",
+            "owner//repo",
+            "owner/repo?x",
+            "https://github.com/owner/repo",
+            "~/src/work",
+        ] {
+            let error = repository_name(bad).unwrap_err();
+            assert!(error.contains("owner/name"), "{bad}: {error}");
+        }
     }
 
     #[test]
@@ -2197,6 +2245,33 @@ mod api_tests {
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
         std::env::remove_var("BOOTH_WAIT_SECONDS");
+    }
+
+    #[test]
+    fn setup_refuses_a_value_the_github_source_would_reject() {
+        // A directory, a URL or a third path segment used to reach the Source save, which
+        // refuses it with `HTTP 400: Invalid settings: repository` after the console had
+        // already chosen (or downloaded) a CLI. The shape is checked first, so nothing is
+        // written and no CLI work happens.
+        let dir = scratch("setup-bad-repository");
+        let api = FakeApi::start();
+        for argument in [
+            "owner/repo/extra",
+            "owner//repo",
+            "owner/",
+            "~/src/work",
+            "https://github.com/owner/repo",
+            "/",
+        ] {
+            let error = setup(&Api::new(&api.base), &cfg(&dir), argument).unwrap_err();
+            assert!(error.contains("owner/name"), "{argument}: {error}");
+        }
+        assert_eq!(
+            api.put_count(),
+            0,
+            "a refused repository writes no settings block"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
