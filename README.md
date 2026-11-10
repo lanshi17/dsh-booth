@@ -135,7 +135,7 @@ Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, 
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/pause`, `/resume`, `/send`, `/setup`, `/agents`, `/eval` and `/provider`.
 The console adds `/requeue`, `/dismiss`, `/unsubscribe`, `/new`, `/model`, `/login`, `/keys`,
-`/history`, `/clear` and `/quit`.
+`/history`, `/refresh`, `/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
 highlighted, and a selection past the eighth entry scrolls the window the way `omp`'s lists do.
