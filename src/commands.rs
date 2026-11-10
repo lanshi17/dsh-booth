@@ -201,7 +201,7 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
     Ok(lines)
 }
 
-/// Palette entries whose first word starts with what the user typed.
+/// Palette entries whose first word fuzzy-matches what the user typed, an exact command first.
 pub fn matches(input: &str) -> Vec<(&'static str, &'static str)> {
     let token = query(input);
     if token.is_empty() {
@@ -212,7 +212,18 @@ pub fn matches(input: &str) -> Vec<(&'static str, &'static str)> {
         .enumerate()
         .filter_map(|(index, (name, description))| {
             let word = name.split_whitespace().next().unwrap_or("");
-            fuzzy(word, &token).map(|(score, _)| (score, index, *name, *description))
+            fuzzy(word, &token).map(|(score, _)| {
+                // The completer takes the first row, so a command the person typed in full must
+                // beat a longer command that merely contains it: `/thread` completes to
+                // `/threads` otherwise, a different command with a different argument.
+                let exact = word.trim_start_matches('/').eq_ignore_ascii_case(&token);
+                (
+                    score + if exact { 100 } else { 0 },
+                    index,
+                    *name,
+                    *description,
+                )
+            })
         })
         .collect();
     // A higher score first; equal scores keep the palette's order.
@@ -305,6 +316,27 @@ mod tests {
         );
         assert_eq!(matches("/").len(), PALETTE.len());
         assert_eq!(matches("   ").len(), PALETTE.len());
+    }
+
+    #[test]
+    fn the_palette_puts_an_exact_command_before_a_longer_one() {
+        // `Tab` completes the first row, so a command typed in full must be that row: `/thread`
+        // and `/ticket` are prefixes of `/threads` and `/tickets`, and completing the longer one
+        // would run a different command (with a different argument) than the one on the line.
+        let first = |input: &str| {
+            matches(input)
+                .first()
+                .and_then(|(name, _)| name.split_whitespace().next())
+                .map(str::to_owned)
+                .unwrap_or_default()
+        };
+        assert_eq!(first("/thread"), "/thread");
+        assert_eq!(first("/ticket"), "/ticket");
+        assert_eq!(first("/threads"), "/threads");
+        assert_eq!(first("/tickets"), "/tickets");
+        // A partial query still lists both; the exact rule is about a word typed in full.
+        let names: Vec<&str> = matches("/tick").iter().map(|(name, _)| *name).collect();
+        assert_eq!(names, vec!["/tickets [state]", "/ticket <id>"], "{names:?}");
     }
 
     #[test]
