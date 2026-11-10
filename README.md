@@ -338,6 +338,12 @@ booth send --agent cursor-agent "fix the readme"
 
 In the console, start the line with `@omp`, `@claude`, `@codex`, or `@cursor-agent`. A line with no prefix goes to dsh. The named agent runs the instruction itself. Booth does not keep a second control plane.
 
+## Decision
+
+The portal does not pick among its own options, and a sub-agent does not bring an open choice to the portal first. Both hand the choice to `booth decide`. The call is one jev `judge`: a `state`, and `questions`. A choice question is `{ "type": "choice", "instructions", "criteria" }`. Each criterion is one sentence of observable evidence.
+
+A choice whose top probability is at least 0.7 is the route. Below that, or on an error, a sub-agent's call escalates to the portal. The portal calls `booth decide` again with `"from": "portal"`. If that call also cannot route, it escalates to the user. `booth up` installs this order into the team's prompt.
+
 ## License
 
 GPL-3.0-only. `dsh-superagent`, which this console talks to, is MIT and remains a research
