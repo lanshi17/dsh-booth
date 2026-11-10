@@ -7,6 +7,7 @@
 mod api;
 mod app;
 mod commands;
+mod decider;
 mod format;
 mod gh;
 mod intake;
@@ -72,6 +73,8 @@ enum Command {
     },
     /// Move the DSH sessions aside so the next turn uses the configured model.
     ResetSessions,
+    /// Choose among the options a portal or a sub-agent submits on stdin.
+    Decide,
     /// Hand one instruction to a worker. The default worker is dsh.
     Send {
         /// Who does the work: dsh, omp, claude, codex, or cursor-agent.
@@ -270,6 +273,7 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             }
             Ok(())
         }
+        Command::Decide => decider::decide(&service::Config::from_env()?, &mut io::stdin()),
         Command::Send { agent, text } => {
             send_instruction(&service::Config::from_env()?, &agent, text)
         }

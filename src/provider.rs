@@ -247,6 +247,20 @@ pub fn key_ref(id: &str) -> String {
     name
 }
 
+/// The secret stored at `refs.<name>`. The caller must not log it.
+pub fn credential(name: &str) -> Result<String, String> {
+    let text = fs::read_to_string(credentials_path()?)
+        .map_err(|error| format!("cannot read the DSH credential store: {error}"))?;
+    let root: Value = serde_norway::from_str(&text)
+        .map_err(|error| format!("cannot read the DSH credential store: {error}"))?;
+    root.get("refs")
+        .and_then(|refs| refs.get(name))
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|secret| !secret.is_empty())
+        .ok_or_else(|| format!("the DSH credential store has no ref {name}"))
+}
+
 /// Whether the credential file already holds `name`.
 pub fn has_ref(name: &str) -> bool {
     credentials_path()
