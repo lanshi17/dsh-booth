@@ -112,7 +112,12 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
     let mut split = raw.splitn(2, char::is_whitespace);
     let command = split.next().unwrap_or_default();
     let argument = split.next().unwrap_or_default().trim();
-    let lines = match command {
+    // The palette treats the command word without regard to case (`query` lowercases what it
+    // filters and `matches` marks an exact spelling that way), so the grammar must accept the
+    // same spelling. Otherwise the palette selects `/tickets` for `/TICKETS` and `Tab` fixes
+    // the line, but `Enter` rejects the command the selection just showed as exact.
+    let dispatch = command.to_ascii_lowercase();
+    let lines = match dispatch.as_str() {
         "/help" | "/?" => format::help(),
         "/overview" => format::overview(&api.overview()?, api.base()),
         "/status" => format::status(&api.state()?, api.base()),
@@ -194,8 +199,8 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
             api.pause(false)?;
             vec![done("executor resumed")]
         }
-        other => {
-            return Err(format!("unknown command {other}; /help lists them"));
+        _ => {
+            return Err(format!("unknown command {command}; /help lists them"));
         }
     };
     Ok(lines)
@@ -415,5 +420,24 @@ mod tests {
         assert!(error.contains("persno"), "{error}");
         let error = execute(&api, "/threads lately").unwrap_err();
         assert!(error.contains("lately"), "{error}");
+    }
+
+    #[test]
+    fn a_command_word_is_case_insensitive() {
+        // The palette marks `/TICKETS` as the exact `/tickets` and Tab rewrites it, so Enter
+        // must run the same command instead of rejecting the spelling the selection showed.
+        let api = Api::new("http://127.0.0.1:9");
+        let error = execute(&api, "/TICKETS persno").unwrap_err();
+        assert!(error.contains("persno"), "{error}");
+        assert!(!error.contains("unknown command"), "{error}");
+        assert!(execute(&api, "/HELP").is_ok());
+
+        // Only the command word is folded; an unknown command keeps the spelling typed.
+        let error = execute(&api, "/NOPE").unwrap_err();
+        assert!(error.contains("/NOPE"), "{error}");
+
+        // The palette and the grammar agree on what counts as the exact command.
+        let first = matches("/TICKETS").first().map(|(name, _)| *name);
+        assert_eq!(first, Some("/tickets [state]"));
     }
 }
