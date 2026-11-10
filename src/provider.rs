@@ -297,6 +297,15 @@ pub struct Endpoint {
 /// The provider entry names the ref (`apiKeyEnv`), never the secret, so the profile layer stays
 /// safe to read and the key lives where DSH's other keys live.
 pub fn add_endpoint(cfg: &Config, endpoint: &Endpoint) -> Result<(), String> {
+    add_endpoint_for(cfg, endpoint, true)
+}
+
+/// Registers an API-key provider. `make_default` also points the language model at it.
+pub fn add_endpoint_for(
+    cfg: &Config,
+    endpoint: &Endpoint,
+    make_default: bool,
+) -> Result<(), String> {
     if endpoint.id.trim().is_empty() || endpoint.model.trim().is_empty() {
         return Err("a provider needs an id and a model".into());
     }
@@ -326,7 +335,9 @@ pub fn add_endpoint(cfg: &Config, endpoint: &Endpoint) -> Result<(), String> {
         json!(models),
     );
     write_ref(&reference, &endpoint.key)?;
-    point_default(&mut patch, &endpoint.id, &endpoint.model);
+    if make_default {
+        point_default(&mut patch, &endpoint.id, &endpoint.model);
+    }
     patch.write(cfg)
 }
 
@@ -692,15 +703,34 @@ pub struct Preset {
     pub base: &'static str,
     pub api: &'static str,
     pub model: &'static str,
+    /// Which `/provider` row offers this preset: language, typesafe, search, or documents.
+    pub duty: &'static str,
 }
 
 pub const PRESETS: &[Preset] = &[
     Preset {
         id: "deepseek",
-        label: "DeepSeek API key",
+        label: "DeepSeek",
         base: "https://api.deepseek.com",
-        api: "openai-completions",
+        api: "openai-responses",
         model: "deepseek-chat",
+        duty: "language",
+    },
+    Preset {
+        id: "commandcode",
+        label: "Command Code",
+        base: "https://api.commandcode.ai/provider/v1",
+        api: "openai-responses",
+        model: "deepseek/deepseek-v4.1-flash",
+        duty: "language",
+    },
+    Preset {
+        id: "opencode-go",
+        label: "OpenCode Go",
+        base: "https://opencode.ai/zen/go/v1",
+        api: "openai-responses",
+        model: "deepseek-v4.1-flash",
+        duty: "language",
     },
     Preset {
         id: "openai",
@@ -708,6 +738,7 @@ pub const PRESETS: &[Preset] = &[
         base: "https://api.openai.com/v1",
         api: "openai-responses",
         model: "gpt-5",
+        duty: "language",
     },
     Preset {
         id: "openrouter",
@@ -715,6 +746,119 @@ pub const PRESETS: &[Preset] = &[
         base: "https://openrouter.ai/api/v1",
         api: "openai-completions",
         model: "deepseek/deepseek-chat",
+        duty: "language",
+    },
+    Preset {
+        id: "groq",
+        label: "Groq",
+        base: "https://api.groq.com/openai/v1",
+        api: "openai-completions",
+        model: "llama-3.3-70b-versatile",
+        duty: "language",
+    },
+    Preset {
+        id: "google",
+        label: "Google Gemini",
+        base: "https://generativelanguage.googleapis.com/v1beta/openai",
+        api: "openai-completions",
+        model: "gemini-2.5-flash",
+        duty: "language",
+    },
+    Preset {
+        id: "xai",
+        label: "xAI",
+        base: "https://api.x.ai/v1",
+        api: "openai-completions",
+        model: "grok-3",
+        duty: "language",
+    },
+    Preset {
+        id: "moonshot",
+        label: "Moonshot",
+        base: "https://api.moonshot.ai/v1",
+        api: "openai-completions",
+        model: "moonshot-v1-8k",
+        duty: "language",
+    },
+    Preset {
+        id: "together",
+        label: "Together",
+        base: "https://api.together.xyz/v1",
+        api: "openai-completions",
+        model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+        duty: "language",
+    },
+    Preset {
+        id: "mistral",
+        label: "Mistral",
+        base: "https://api.mistral.ai/v1",
+        api: "openai-completions",
+        model: "mistral-large-latest",
+        duty: "language",
+    },
+    Preset {
+        id: "fireworks",
+        label: "Fireworks",
+        base: "https://api.fireworks.ai/inference/v1",
+        api: "openai-completions",
+        model: "accounts/fireworks/models/llama-v3p1-8b-instruct",
+        duty: "language",
+    },
+    Preset {
+        id: "cerebras",
+        label: "Cerebras",
+        base: "https://api.cerebras.ai/v1",
+        api: "openai-completions",
+        model: "llama-3.3-70b",
+        duty: "language",
+    },
+    Preset {
+        id: "nvidia",
+        label: "NVIDIA",
+        base: "https://integrate.api.nvidia.com/v1",
+        api: "openai-completions",
+        model: "meta/llama-3.1-70b-instruct",
+        duty: "language",
+    },
+    Preset {
+        id: "typesafe",
+        label: "TypeSafe",
+        base: "https://api.typesafe.ai/v1",
+        api: "openai-responses",
+        model: "typesafe/jev",
+        duty: "typesafe",
+    },
+    Preset {
+        id: "tavily",
+        label: "Tavily",
+        base: "https://api.tavily.com",
+        api: "openai-completions",
+        model: "search",
+        duty: "search",
+    },
+    Preset {
+        id: "exa",
+        label: "Exa",
+        base: "https://api.exa.ai",
+        api: "openai-completions",
+        model: "search",
+        duty: "search",
+    },
+    Preset {
+        id: "parallel",
+        label: "Parallel",
+        base: "https://api.parallel.ai",
+        api: "openai-completions",
+        model: "extract",
+        duty: "documents",
+    },
+    Preset {
+        id: "jina",
+        label: "Jina",
+        base: "https://r.jina.ai",
+        api: "openai-completions",
+        model: "reader",
+        duty: "documents",
     },
     Preset {
         id: "custom",
@@ -722,8 +866,38 @@ pub const PRESETS: &[Preset] = &[
         base: "",
         api: "openai-completions",
         model: "",
+        duty: "",
     },
 ];
+
+/// A row on one duty's provider list: one already configured, a preset that still needs a key, or add.
+pub enum Offer {
+    Ready { id: String, name: String },
+    Preset(usize),
+    Add,
+}
+
+/// Configured providers first, then the presets for this duty that are not configured yet.
+pub fn offers(duty_id: &str, configured: &[(String, String)]) -> Vec<Offer> {
+    let mut rows = Vec::new();
+    for (id, name) in configured {
+        rows.push(Offer::Ready {
+            id: id.clone(),
+            name: name.clone(),
+        });
+    }
+    for (index, preset) in PRESETS.iter().enumerate() {
+        if preset.duty != duty_id || preset.id == "custom" {
+            continue;
+        }
+        if configured.iter().any(|(id, _)| id == preset.id) {
+            continue;
+        }
+        rows.push(Offer::Preset(index));
+    }
+    rows.push(Offer::Add);
+    rows
+}
 
 /// The protocols `llm-pi-ai` accepts, in the order the form cycles them.
 pub const APIS: &[&str] = &["openai-completions", "openai-responses"];
@@ -1744,5 +1918,28 @@ mod migration_tests {
         assert_eq!(ids, vec!["a/b", "c/d", "e/f"], "{models:?}");
         assert_eq!(models[0]["contextWindow"], 1_000_000);
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod offer_tests {
+    use super::*;
+
+    #[test]
+    fn a_duty_lists_its_presets_until_they_are_configured() {
+        let open = offers("search", &[]);
+        assert!(open.iter().any(|row| matches!(
+            row,
+            Offer::Preset(index) if PRESETS[*index].id == "tavily"
+        )));
+        assert!(matches!(open.last(), Some(Offer::Add)));
+        let taken = offers("search", &[("tavily".into(), "Tavily".into())]);
+        assert!(!taken.iter().any(|row| matches!(
+            row,
+            Offer::Preset(index) if PRESETS[*index].id == "tavily"
+        )));
+        assert!(taken
+            .iter()
+            .any(|row| matches!(row, Offer::Ready { id, .. } if id == "tavily")));
     }
 }

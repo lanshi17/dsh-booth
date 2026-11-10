@@ -60,14 +60,22 @@ const TIPS: [&str; 4] = [
     "Ctrl+P opens the palette, Ctrl+R searches history; /keys lists them all.",
 ];
 
-/// `/login` starts here: the account sign-in first, then API-key providers.
-const LOGIN_METHODS: &[(&str, &str)] = &[
-    ("DeepSeek account", "browser sign-in, no API key"),
-    ("DeepSeek API key", "platform.deepseek.com key"),
-    ("OpenAI API key", "api.openai.com"),
-    ("OpenRouter API key", "openrouter.ai"),
-    ("Custom endpoint", "any OpenAI-compatible base URL"),
-];
+/// `/login` starts with the account, then every preset omp-style roster, custom last.
+fn login_rows() -> Vec<(String, String)> {
+    let mut rows = vec![(
+        "DeepSeek account".to_owned(),
+        "browser sign-in, no API key".to_owned(),
+    )];
+    for preset in provider::PRESETS {
+        let detail = if preset.base.is_empty() {
+            "any OpenAI-compatible base URL".to_owned()
+        } else {
+            preset.base.to_owned()
+        };
+        rows.push((preset.label.to_owned(), detail));
+    }
+    rows
+}
 
 /// One ticket poll: the open rows plus what a tracked ticket's detail said, the total behind the
 /// open page, and the person count when the page was too short to carry every open ticket.
@@ -150,6 +158,8 @@ struct LoginForm {
     field: usize,
     cursor: usize,
     error: Option<String>,
+    /// Profile entry to write when this key is not the language model.
+    role: Option<&'static str>,
 }
 
 struct ModelPick {
@@ -169,6 +179,7 @@ impl LoginForm {
             field: 1,
             cursor: 0,
             error: None,
+            role: None,
         }
     }
 
@@ -1501,7 +1512,7 @@ impl App {
     }
 
     fn provider_key(&mut self, key: KeyEvent, mut screen: ProviderScreen) {
-        let providers: Vec<(String, String)> = self.catalog.providers();
+        let offers = provider::offers(provider::DUTIES[screen.duty].id, &self.catalog.providers());
         let models = provider::models_for(
             &self.catalog,
             &screen.provider,
@@ -1509,7 +1520,7 @@ impl App {
         );
         let count = match screen.step {
             ProviderStep::Duties => provider::DUTIES.len(),
-            ProviderStep::Providers => providers.len() + 1,
+            ProviderStep::Providers => offers.len().max(1),
             ProviderStep::Models => models.len().max(1),
         };
         match key.code {
@@ -1528,7 +1539,7 @@ impl App {
             KeyCode::Up => screen.selected = screen.selected.saturating_sub(1),
             KeyCode::Down => screen.selected = (screen.selected + 1).min(count.saturating_sub(1)),
             KeyCode::Char('a') if key.modifiers.is_empty() => {
-                self.open_login("");
+                self.modal = Some(Modal::LoginList { selected: 0 });
                 return;
             }
             KeyCode::Enter => match screen.step {
@@ -1538,13 +1549,27 @@ impl App {
                     screen.selected = 0;
                 }
                 ProviderStep::Providers => {
-                    if screen.selected >= providers.len() {
-                        self.open_login("");
-                        return;
+                    let row = offers.get(screen.selected.min(offers.len().saturating_sub(1)));
+                    match row {
+                        Some(provider::Offer::Add) | None => {
+                            self.modal = Some(Modal::LoginList { selected: 0 });
+                            return;
+                        }
+                        Some(provider::Offer::Preset(index)) => {
+                            let mut form = LoginForm::new(*index);
+                            let profile = provider::DUTIES[screen.duty].profile;
+                            if profile != "agent-default-model" {
+                                form.role = Some(profile);
+                            }
+                            self.modal = Some(Modal::Login(form));
+                            return;
+                        }
+                        Some(provider::Offer::Ready { id, .. }) => {
+                            screen.provider = id.clone();
+                            screen.step = ProviderStep::Models;
+                            screen.selected = 0;
+                        }
                     }
-                    screen.provider = providers[screen.selected].0.clone();
-                    screen.step = ProviderStep::Models;
-                    screen.selected = 0;
                 }
                 ProviderStep::Models => {
                     if models.is_empty() {
@@ -1598,7 +1623,7 @@ impl App {
     }
 
     fn login_list_key(&mut self, key: KeyEvent, mut selected: usize) {
-        let count = LOGIN_METHODS.len();
+        let count = login_rows().len();
         match key.code {
             KeyCode::Esc => return,
             KeyCode::Up => selected = selected.saturating_sub(1),
@@ -1925,7 +1950,8 @@ impl App {
         };
         // The profile layer registers the provider and names its key's credential ref; the key
         // itself goes into the shared credential store, where DSH's other keys live.
-        match provider::add_endpoint(
+        let make_default = form.role.is_none();
+        match provider::add_endpoint_for(
             &cfg,
             &provider::Endpoint {
                 id: id.clone(),
@@ -1935,10 +1961,20 @@ impl App {
                 model: model.clone(),
                 key,
             },
+            make_default,
         ) {
             Ok(()) => {
+                if let Some(profile) = form.role {
+                    if let Err(error) = provider::save_assignment(&cfg, profile, &id, &model) {
+                        form.error = Some(error);
+                        self.modal = Some(Modal::Login(form));
+                        return;
+                    }
+                }
                 self.modal = None;
-                self.catalog.default = Some((id.clone(), model.clone()));
+                if make_default {
+                    self.catalog.default = Some((id.clone(), model.clone()));
+                }
                 self.push(Line::from(vec![
                     Span::styled("provider ", Style::default().fg(GREEN)),
                     Span::styled(format!("{id} · {model}"), Style::default()),
@@ -1947,7 +1983,9 @@ impl App {
                     format!("key stored as {}", provider::key_ref(&id)),
                     Style::default().fg(FAINT),
                 )));
-                self.restart_service();
+                if make_default {
+                    self.restart_service();
+                }
             }
             Err(error) => {
                 form.error = Some(error);
@@ -2300,12 +2338,12 @@ fn draw_providers(
     catalog: &Catalog,
     config: Option<&service::Config>,
 ) {
-    let providers = catalog.providers();
+    let offers = provider::offers(provider::DUTIES[screen.duty].id, &catalog.providers());
     let models = provider::models_for(catalog, &screen.provider, provider::DUTIES[screen.duty].id);
     let body = match screen.step {
         ProviderStep::Duties => provider::DUTIES.len() + provider::DUTIES.len(),
-        ProviderStep::Providers => providers.len() + 1,
-        ProviderStep::Models => models.len().max(1),
+        ProviderStep::Providers => offers.len().min(12),
+        ProviderStep::Models => models.len().max(1).min(12),
     };
     let width = area.width.saturating_sub(8).clamp(48, 78).min(area.width);
     let height = (body as u16 + 4).min(area.height);
@@ -2329,7 +2367,7 @@ fn draw_providers(
     let mut lines = vec![Line::from(Span::styled(
         match screen.step {
             ProviderStep::Duties => " Language, typesafe, search and documents.",
-            ProviderStep::Providers => " Which provider serves this.",
+            ProviderStep::Providers => " Configured providers, then the common presets.",
             ProviderStep::Models => " Which model it uses.",
         },
         Style::default().fg(DIM),
@@ -2364,33 +2402,32 @@ fn draw_providers(
             }
         }
         ProviderStep::Providers => {
-            for (index, (id, name)) in providers.iter().enumerate() {
+            let shown = offers.len().min(12);
+            let offset = screen.selected.saturating_sub(shown.saturating_sub(1));
+            for (index, offer) in offers.iter().enumerate().skip(offset).take(shown) {
                 let active = index == screen.selected;
+                let (mark, name, note) = match offer {
+                    provider::Offer::Ready { id, name } => ("", id.clone(), name.clone()),
+                    provider::Offer::Preset(index) => {
+                        let preset = &provider::PRESETS[*index];
+                        ("preset  ", preset.label.to_owned(), preset.model.to_owned())
+                    }
+                    provider::Offer::Add => ("", "＋ custom endpoint…".to_owned(), String::new()),
+                };
                 lines.push(Line::from(vec![
                     Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+                    Span::styled(mark, Style::default().fg(FAINT)),
                     Span::styled(
-                        id.clone(),
+                        name,
                         if active {
                             Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
                         } else {
                             Style::default().fg(MUTED)
                         },
                     ),
-                    Span::styled(format!("  {name}"), Style::default().fg(DIM)),
+                    Span::styled(format!("  {note}"), Style::default().fg(DIM)),
                 ]));
             }
-            let add = screen.selected >= providers.len();
-            lines.push(Line::from(vec![
-                Span::styled(if add { "▶ " } else { "  " }, Style::default().fg(CYAN)),
-                Span::styled(
-                    "＋ add a provider…",
-                    if add {
-                        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(DIM)
-                    },
-                ),
-            ]));
         }
         ProviderStep::Models => {
             if models.is_empty() {
@@ -2686,8 +2723,10 @@ fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, catalog: &Catalog
 }
 
 fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
-    let width = area.width.saturating_sub(8).clamp(44, 72).min(area.width);
-    let height = (LOGIN_METHODS.len() as u16 + 3).min(area.height);
+    let rows = login_rows();
+    let shown = rows.len().min(12);
+    let width = area.width.saturating_sub(8).clamp(44, 78).min(area.width);
+    let height = (shown as u16 + 3).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -2702,7 +2741,8 @@ fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
     frame.render_widget(block, rect);
 
     let mut lines: Vec<L> = Vec::new();
-    for (index, (label, description)) in LOGIN_METHODS.iter().enumerate() {
+    let offset = selected.saturating_sub(shown.saturating_sub(1));
+    for (index, (label, description)) in rows.iter().enumerate().skip(offset).take(shown) {
         let active = index == selected;
         lines.push(Line::from(vec![
             Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
@@ -2714,7 +2754,7 @@ fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
                     Style::default()
                 },
             ),
-            Span::styled(*description, Style::default().fg(DIM)),
+            Span::styled(description.clone(), Style::default().fg(DIM)),
         ]));
     }
     lines.push(Line::from(Span::styled(

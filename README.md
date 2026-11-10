@@ -340,7 +340,7 @@ In the console, start the line with `@omp`, `@claude`, `@codex`, or `@cursor-age
 
 ## Providers
 
-`/provider` opens one screen for every provider the team uses. The rows are grouped the way omp groups them: Language, Typesafe, Search, and Documents. Enter a row, pick a provider already in the profile, then pick the model. `a` adds a provider. The language row is the model the team runs with. Typesafe is the decision model. Search and documents remember their own provider and model in the same profile.
+`/provider` opens one screen for every provider the team uses. The rows are grouped the way omp groups them: Language, Typesafe, Search, and Documents. Each row lists providers already configured, then the common presets (DeepSeek, Command Code, OpenAI, Groq, TypeSafe, Tavily, and the rest). A preset asks for its key. `a` opens the full list. The language row is the model the team runs with. Typesafe is the decision model. Search and documents remember their own provider and model in the same profile.
 
 ## Decision
 
