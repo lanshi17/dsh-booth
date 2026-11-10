@@ -474,12 +474,44 @@ fn device_id() -> Result<String, String> {
 }
 
 fn credentials_path() -> Result<PathBuf, String> {
-    match std::env::var_os("DSH_HOME") {
-        Some(value) => Ok(PathBuf::from(value).join(".credentials.yaml")),
-        None => std::env::var_os("HOME")
-            .map(|home| PathBuf::from(home).join(".dsh/.credentials.yaml"))
-            .ok_or_else(|| "HOME is not set".to_owned()),
+    Ok(harness_home()?.join(".credentials.yaml"))
+}
+
+/// DSH's `$DSH_HOME` precedence and spelling: a blank override is unset, and a leading `~` names
+/// the OS home. Resolving the raw value instead points the account grant at a different store
+/// than the one DSH reads — for an empty override, `.credentials.yaml` in the working directory.
+fn harness_home() -> Result<PathBuf, String> {
+    if let Some(value) = std::env::var_os("DSH_HOME") {
+        if let Some(text) = value.to_str() {
+            if !text.trim().is_empty() {
+                return expand_home(text);
+            }
+        } else {
+            return Ok(PathBuf::from(value));
+        }
     }
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".dsh"))
+        .ok_or_else(|| "HOME is not set".to_owned())
+}
+
+/// Expand the `~` prefixes DSH's home resolver accepts. A `~` that cannot be expanded is an
+/// error, not a literal directory beside the working directory.
+fn expand_home(text: &str) -> Result<PathBuf, String> {
+    let rest = if text == "~" {
+        ""
+    } else if let Some(rest) = text.strip_prefix("~/") {
+        rest
+    } else if let Some(rest) = text.strip_prefix("~\\") {
+        rest
+    } else {
+        return Ok(PathBuf::from(text));
+    };
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "cannot expand `~` in DSH_HOME: HOME is not set".to_owned())?;
+    Ok(home.join(rest))
 }
 
 fn read_request(stream: &mut TcpStream) -> String {
@@ -596,14 +628,20 @@ fn os_version() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-/// Put `DSH_HOME` back the way a test found it: the tests below share one process, so a value
-/// one of them overwrites is another one's starting state.
+/// Put an environment variable back the way a test found it: the tests below share one process,
+/// so a value one of them overwrites is another one's starting state.
+#[cfg(test)]
+fn restore_env(name: &str, previous: Option<std::ffi::OsString>) {
+    match previous {
+        Some(value) => std::env::set_var(name, value),
+        None => std::env::remove_var(name),
+    }
+}
+
+/// Put `DSH_HOME` back the way a test found it.
 #[cfg(test)]
 fn restore_dsh_home(previous: Option<std::ffi::OsString>) {
-    match previous {
-        Some(value) => std::env::set_var("DSH_HOME", value),
-        None => std::env::remove_var("DSH_HOME"),
-    }
+    restore_env("DSH_HOME", previous);
 }
 
 #[cfg(test)]
@@ -881,6 +919,122 @@ mod more_tests {
         assert!(error.contains("state"), "{error}");
         let error = code_from_url("http://127.0.0.1/x?code=abc&state=other", "st-1").unwrap_err();
         assert!(error.contains("another login"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod home_tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    /// Put both variables the home resolution reads back the way this test found them, on the
+    /// panic path too: they are process-wide and the other modules set them under this lock.
+    struct Env {
+        dsh_home: Option<OsString>,
+        home: Option<OsString>,
+    }
+
+    impl Env {
+        fn capture() -> Self {
+            Self {
+                dsh_home: std::env::var_os("DSH_HOME"),
+                home: std::env::var_os("HOME"),
+            }
+        }
+    }
+
+    impl Drop for Env {
+        fn drop(&mut self) {
+            restore_dsh_home(self.dsh_home.take());
+            restore_env("HOME", self.home.take());
+        }
+    }
+
+    fn temp_home(name: &str) -> PathBuf {
+        let home = std::env::temp_dir().join(format!("booth-oauth-{name}-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        home
+    }
+
+    /// DSH documents an empty or whitespace-only `$DSH_HOME` as unset, so a blank override must
+    /// not resolve the store to `.credentials.yaml` in whatever directory booth was started from.
+    #[test]
+    fn a_blank_dsh_home_is_the_default_store() {
+        let _env = crate::testkit::env_lock();
+        let env = Env::capture();
+        let home = temp_home("blank-home");
+        std::env::set_var("HOME", &home);
+
+        for value in ["", " ", "\t\n"] {
+            std::env::set_var("DSH_HOME", value);
+            assert_eq!(
+                credentials_path().unwrap(),
+                home.join(".dsh/.credentials.yaml"),
+                "DSH_HOME={value:?}"
+            );
+        }
+
+        drop(env);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// DSH expands `~`, `~/…` and `~\…` against the OS home before joining the store; a literal
+    /// `~` directory beside the working directory is not the store DSH reads.
+    #[test]
+    fn a_tilde_dsh_home_is_expanded_like_dsh() {
+        let _env = crate::testkit::env_lock();
+        let env = Env::capture();
+        let home = temp_home("tilde-home");
+        std::env::set_var("HOME", &home);
+
+        for (value, expected) in [
+            ("~", home.join(".credentials.yaml")),
+            ("~/state", home.join("state/.credentials.yaml")),
+            ("~\\state", home.join("state/.credentials.yaml")),
+            ("/srv/booth", PathBuf::from("/srv/booth/.credentials.yaml")),
+        ] {
+            std::env::set_var("DSH_HOME", value);
+            assert_eq!(credentials_path().unwrap(), expected, "DSH_HOME={value:?}");
+        }
+
+        drop(env);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// No home resolver can invent a home: with `$HOME` gone, a tilde or a blank override is an
+    /// error, not a path under the working directory.
+    #[test]
+    fn a_missing_home_is_an_error() {
+        let _env = crate::testkit::env_lock();
+        let env = Env::capture();
+        std::env::remove_var("HOME");
+
+        std::env::set_var("DSH_HOME", "~");
+        let error = credentials_path().unwrap_err();
+        assert!(error.contains("HOME"), "{error}");
+
+        std::env::set_var("DSH_HOME", "");
+        let error = credentials_path().unwrap_err();
+        assert!(error.contains("HOME"), "{error}");
+
+        drop(env);
+    }
+
+    /// A `$DSH_HOME` that is not UTF-8 is still one path; decoding it lossily would rename it.
+    #[test]
+    fn a_non_utf8_dsh_home_keeps_its_bytes() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _env = crate::testkit::env_lock();
+        let env = Env::capture();
+        let raw = OsString::from_vec(b"/srv/booth-\xff".to_vec());
+        std::env::set_var("DSH_HOME", &raw);
+        assert_eq!(
+            credentials_path().unwrap(),
+            PathBuf::from(raw).join(".credentials.yaml")
+        );
+
+        drop(env);
     }
 }
 
