@@ -151,6 +151,18 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         );
         return report(cfg);
     }
+    // The management API is not the only sign that the port is taken. DSH's web server binds
+    // before dsh-superagent registers its routes, and another program can own the port, so a
+    // listener with no management API is still a port a second dsh cannot bind. Launching one
+    // anyway would fail after `booth up` wrote its pid, leaving the pid file pointing at a dead
+    // process while the service that does listen can no longer be stopped through booth.
+    if port_in_use(cfg.port) {
+        return Err(format!(
+            "{} is already in use — a service is still starting, or another program owns the \
+             port; booth did not start a second dsh",
+            cfg.url()
+        ));
+    }
     if !cfg.bundle.join("lib/index.js").is_file() {
         return Err("superagent is not built yet; run `booth init` first".into());
     }
@@ -934,6 +946,16 @@ fn which(program: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether something already listens on this deployment's loopback port.
+///
+/// A connect, not a bind: a bind probe would race the listener it describes, while a completed
+/// connect proves one owns the port (the connection is dropped without a request). The timeout is
+/// short because the check runs before a start and must not wait on a port that is not there.
+fn port_in_use(port: u16) -> bool {
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&address, Duration::from_millis(300)).is_ok()
+}
+
 fn read_pid(cfg: &Config) -> Option<u32> {
     fs::read_to_string(cfg.pid())
         .ok()
@@ -1118,6 +1140,119 @@ mod tests {
         // The stale pid file is cleared first, then the answering service is reported.
         assert!(!cfg.pid().exists(), "a stale pid file is removed");
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    /// A listener that answers every request the way DSH's web server does before
+    /// dsh-superagent registers its routes: an empty 404. It keeps accepting so a retry sees the
+    /// same "starting" state, and stops when the returned flag is set.
+    fn starting_service() -> (
+        u16,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+        std::thread::JoinHandle<()>,
+    ) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        let handle = std::thread::spawn(move || {
+            while !flag.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut request = [0u8; 4096];
+                        let _ = stream.read(&mut request);
+                        let _ = stream.write_all(
+                            b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                        );
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        sleep(Duration::from_millis(5))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        (port, stop, handle)
+    }
+
+    #[test]
+    fn a_port_is_in_use_only_while_a_listener_owns_it() {
+        let (port, stop, listener) = starting_service();
+        assert!(port_in_use(port), "a bound port reads as in use");
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        listener.join().unwrap();
+        assert!(
+            !port_in_use(port),
+            "the port is free once its listener is gone"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn start_does_not_launch_a_second_dsh_onto_a_starting_services_port() {
+        // DSH's web server binds before its management API registers. `start` asked only whether
+        // the API answered, so a service in that window looked absent: booth launched a second
+        // dsh (which cannot bind), wrote *its* pid over the live service's, and could then report
+        // the first service as up while the pid file pointed at a dead process.
+        use std::os::unix::fs::PermissionsExt;
+
+        let _env = crate::testkit::env_lock();
+        let mut cfg = config("start-starting");
+        fs::create_dir_all(cfg.bundle.join("lib")).unwrap();
+        fs::write(cfg.bundle.join("lib/index.js"), "").unwrap();
+        fs::write(
+            cfg.patch(),
+            "- id: webserver\n  config:\n    port: 3082\n- id: dsh-superagent\n  config:\n    stateDir: /tmp/s\n",
+        )
+        .unwrap();
+        let (port, stop, listener) = starting_service();
+        cfg.port = port;
+
+        // A fake `setsid` records an attempted launch; starting the real service from a test
+        // would bind a real port and outlive the suite.
+        let bin = cfg.state_dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let marker = bin.join("spawned");
+        let setsid = bin.join("setsid");
+        fs::write(
+            &setsid,
+            format!(
+                "#!/bin/sh\nprintf started > '{}'\nexit 0\n",
+                marker.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&setsid, fs::Permissions::from_mode(0o755)).unwrap();
+        let saved = std::env::var_os("PATH");
+        let mut paths = vec![bin];
+        if let Some(saved) = &saved {
+            paths.extend(std::env::split_paths(saved));
+        }
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+
+        let outcome = start(&cfg);
+
+        match saved {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        listener.join().unwrap();
+        let spawned = marker.exists();
+        let error = outcome.err().unwrap_or_default();
+        let _ = fs::remove_dir_all(&cfg.dsh_home);
+        assert!(
+            !spawned,
+            "a second dsh was launched onto a port a service is still starting on: {error}"
+        );
+        assert!(
+            error.contains("in use"),
+            "the refusal names the occupied port: {error}"
+        );
     }
 
     #[cfg(unix)]
