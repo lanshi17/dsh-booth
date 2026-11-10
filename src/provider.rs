@@ -12,7 +12,10 @@
 use crate::service::{Config, Patch};
 use serde_json::{json, Value};
 use std::fs;
-use std::path::PathBuf;
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+use std::path::{Path, PathBuf};
 
 /// A provider/model pair the profile offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,6 +248,9 @@ fn credentials_path() -> Result<PathBuf, String> {
 }
 
 /// Stores one secret as `refs.<name>`, keeping every other record and ref.
+///
+/// The store is shared with DSH, so the replacement is staged beside it and renamed into place
+/// rather than truncating the existing file: a failure must leave the previous store whole.
 fn write_ref(name: &str, secret: &str) -> Result<(), String> {
     let path = credentials_path()?;
     let mut root: Value = match fs::read_to_string(&path) {
@@ -272,10 +278,37 @@ fn write_ref(name: &str, secret: &str) -> Result<(), String> {
         fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-    use std::os::unix::fs::PermissionsExt;
-    let _ = fs::set_permissions(&path, fs::Permissions::from_mode(0o600));
-    Ok(())
+    replace_store(&path, &text)
+}
+
+/// Replace the shared store in one step, so a crash, a full disk or a concurrent reader never
+/// sees a half-written file. The whole text is staged as a sibling with exclusive create and
+/// the credential mode, then renamed over the store; a failed install leaves the old store as
+/// it was and removes the staged name.
+fn replace_store(path: &Path, text: &str) -> Result<(), String> {
+    let staged = path.with_file_name(format!(
+        "{}.{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        crate::oauth::uuid_v4()
+    ));
+    let installed = write_staged(&staged, text).and_then(|()| fs::rename(&staged, path));
+    // On success the rename consumed the staged name and this is the harmless ENOENT; otherwise
+    // it clears the half-written sibling so no partial store outlives the failure.
+    let _ = fs::remove_file(&staged);
+    installed.map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
+/// Write the complete replacement to a fresh inode. An exclusive create refuses a file already
+/// at the staged name, and the credential mode is set before the rename, so the replacement is
+/// never wider than the store it replaces.
+fn write_staged(staged: &Path, text: &str) -> std::io::Result<()> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(staged)?;
+    file.write_all(text.as_bytes())?;
+    fs::set_permissions(staged, fs::Permissions::from_mode(0o600))
 }
 
 /// The endpoint presets `/login` offers before "custom". Base URLs and model ids are starting
@@ -704,6 +737,41 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600, "a secret file stays private");
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn a_store_it_cannot_stage_is_left_intact() {
+        // The store is shared with DSH and the other booth commands, so a rewrite must not
+        // truncate it in place. A directory that cannot take the staged sibling still lets its
+        // existing file be rewritten, so the refusal has to happen before the old bytes change.
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let path = cfg.dsh_home.join(".credentials.yaml");
+        fs::write(
+            &path,
+            "version: 1\nrefs:\n  KEEP_ME: keep\nrecords:\n  deepseek/grant:\n    kind: grant\n    payload:\n      token: t\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        // The file stays writable by its owner; only its directory cannot take a sibling.
+        fs::set_permissions(&cfg.dsh_home, fs::Permissions::from_mode(0o500)).unwrap();
+        let error = write_ref("NEW_KEY", "n").unwrap_err();
+        assert!(error.contains("cannot write"), "{error}");
+
+        fs::set_permissions(&cfg.dsh_home, fs::Permissions::from_mode(0o700)).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["refs"]["KEEP_ME"], "keep", "the other refs survive");
+        assert_eq!(root["records"]["deepseek/grant"]["payload"]["token"], "t");
+        assert!(root["refs"].get("NEW_KEY").is_none(), "no key was written");
+        let staged: Vec<String> = fs::read_dir(&cfg.dsh_home)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".credentials.yaml.") && name.ends_with(".tmp"))
+            .collect();
+        assert!(staged.is_empty(), "a staged sibling survived: {staged:?}");
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
     }
 
