@@ -21,7 +21,19 @@ record() {
 }
 
 status "versions"
-cat tools/versions.txt 2>/dev/null || { echo "missing tools/versions.txt"; fail=1; }
+# Record this layer like every other one, and fail closed on a record that cannot report the
+# toolchain: `cat` succeeds on an empty file, which would print no versions and still pass the
+# whole run.
+if [ ! -e tools/versions.txt ]; then
+  echo "missing tools/versions.txt"
+  record versions 1
+elif [ ! -s tools/versions.txt ]; then
+  echo "tools/versions.txt is empty"
+  record versions 1
+else
+  cat tools/versions.txt
+  record versions $?
+fi
 
 status "tool tests"
 python3 -m unittest discover -s tools -p 'test_*.py'
