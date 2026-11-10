@@ -79,6 +79,29 @@ test('an enabled console Source delivers an instruction', async () => {
   }
 })
 
+test('a console instruction uses the admission row its policy describes', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const console = booth()
+  try {
+    writeFileSync(join(dir, 'booth-inbox.jsonl'), line('one', 'hi'))
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    assert.ok(await eventually(() => console.received.length === 1), 'the instruction is delivered')
+
+    const kind = console.ctx.get('orchestrator').sources.kind('local')
+    const rows = kind.policy.rows({})
+    assert.deepEqual(rows.map(row => row.id), ['console'], 'the policy declares the console admission row')
+    assert.equal(typeof kind.scope, 'function', 'the Source declares the receiving scope those rows describe')
+    assert.deepEqual(
+      kind.scope({ meta: console.received[0].meta }, {}),
+      { listened: true, observed: false, row: 'console' },
+      'the instruction is judged by the console admission cells, not by the default cells',
+    )
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('an instruction waits while the Source is off', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
   const enabled = { value: false }
