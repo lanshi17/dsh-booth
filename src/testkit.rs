@@ -231,6 +231,14 @@ fn serve(
                 })
             });
 
+            // The real service registers `PUT settings/:block`; a path that merely ends in a
+            // block name is an unknown operation, not a save.
+            let block = if method == "PUT" {
+                save_block(&path)
+            } else {
+                None
+            };
+
             // A queued failure answers the next accepted PUT instead of the normal handler. It
             // is taken only after the guard lets the request through, since a refused request
             // never reaches the service and must not swallow the failure meant for the save
@@ -240,7 +248,7 @@ fn serve(
                     403,
                     json!({ "error": "Same-origin management request required" }),
                 )
-            } else if method == "PUT" {
+            } else if let Some(name) = block {
                 let forced = failures
                     .lock()
                     .ok()
@@ -248,23 +256,22 @@ fn serve(
                 match forced {
                     Some((status, message)) => (status, json!({ "error": message })),
                     None => {
-                        let name = path.rsplit('/').next().unwrap_or_default().to_owned();
                         let parsed: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
                         let mut settings = settings.lock().unwrap();
-                        if let Some(entry) = block_mut(&mut settings, &name) {
+                        if let Some(entry) = block_mut(&mut settings, name) {
                             if let Some(value) = parsed.get("value") {
                                 entry["value"] = value.clone();
                             }
                             let revision = entry["revision"].as_u64().unwrap_or(0) + 1;
                             entry["revision"] = json!(revision);
-                            puts.lock().unwrap().push((name, parsed));
+                            puts.lock().unwrap().push((name.to_owned(), parsed));
                             (200, json!({ "saved": true, "revision": revision }))
                         } else {
                             (404, json!({ "error": "Source not found" }))
                         }
                     }
                 }
-            } else if path.ends_with("/state") {
+            } else if method == "GET" && path.ends_with("/state") {
                 let mut left = state_failures.lock().unwrap();
                 if *left > 0 {
                     *left -= 1;
@@ -280,7 +287,7 @@ fn serve(
                         .unwrap_or(Value::Null);
                     (200, body)
                 }
-            } else if path.ends_with("/settings") {
+            } else if method == "GET" && path.ends_with("/settings") {
                 let mut left = settings_failures.lock().unwrap();
                 if *left > 0 {
                     *left -= 1;
@@ -289,7 +296,7 @@ fn serve(
                     drop(left);
                     (200, settings.lock().unwrap().clone())
                 }
-            } else {
+            } else if method == "GET" {
                 let known = routes
                     .lock()
                     .unwrap()
@@ -300,6 +307,11 @@ fn serve(
                     Some(body) => (200, body),
                     None => (404, json!({ "error": "Unknown operation" })),
                 }
+            } else {
+                // The real service matches the method as well as the path, so any other
+                // method on a read route is an unknown operation. Dispatching every non-PUT
+                // request as a GET would let a console that used the wrong method pass.
+                (404, json!({ "error": "Unknown operation" }))
             };
 
             let payload = serde_json::to_string(&payload).unwrap_or_default();
@@ -311,6 +323,13 @@ fn serve(
             let _ = stream.flush();
         });
     }
+}
+
+/// The block a save addresses: the one path segment after `/settings/`, when the request has
+/// the route the service registers. A path that merely ends in a block name is not that route.
+fn save_block(path: &str) -> Option<&str> {
+    let (_, rest) = path.split_once("/settings/")?;
+    (!rest.is_empty() && !rest.contains('/')).then_some(rest)
 }
 
 /// `PUT /settings/<block>` addresses a block by name; a Source is `source:<id>`.
@@ -372,6 +391,18 @@ mod tests {
         )
     }
 
+    /// Sends one bodyless request with the guard header, so a test can choose the method.
+    fn method_request(method: &str, path: &str) -> String {
+        format!(
+            "{method} {path} HTTP/1.1\r\n\
+             host: 127.0.0.1\r\n\
+             x-orchestrator-request: 1\r\n\
+             content-length: 0\r\n\
+             connection: close\r\n\
+             \r\n"
+        )
+    }
+
     #[test]
     fn the_same_origin_header_must_be_a_header_not_body_text() {
         let api = FakeApi::start();
@@ -389,6 +420,56 @@ mod tests {
         let response = raw(&api.base, &save_policy(Some("1"), body));
         assert_eq!(status(&response), 200, "{response}");
         assert_eq!(api.put_count(), 1);
+    }
+
+    #[test]
+    fn a_save_needs_the_settings_route_not_just_a_block_name() {
+        let api = FakeApi::start();
+        let body = r#"{"value":{"note":"a save"},"revision":0}"#;
+        // The real service registers PUT settings/:block, so a path that merely ends in a
+        // block name is an unknown operation. Taking the last segment as the block let a
+        // console that dropped `/settings` from the route still save here.
+        let request = format!(
+            "PUT /orchestrator/api/policy HTTP/1.1\r\n\
+             host: 127.0.0.1\r\n\
+             x-orchestrator-request: 1\r\n\
+             content-type: application/json\r\n\
+             content-length: {}\r\n\
+             connection: close\r\n\
+             \r\n\
+             {body}",
+            body.len()
+        );
+        let response = raw(&api.base, &request);
+        assert_eq!(status(&response), 404, "{response}");
+        assert_eq!(api.put_count(), 0, "a renamed route must not save");
+        assert_eq!(
+            api.settings.lock().unwrap()["blocks"]["policy"]["revision"],
+            0,
+            "a renamed route must not advance the revision"
+        );
+    }
+
+    #[test]
+    fn a_read_route_answers_only_the_method_it_serves() {
+        let api = FakeApi::start();
+        // The real service matches the method as well as the path: a POST to a read route is
+        // an unknown operation, not that route's answer. Treating every non-PUT request as a
+        // read let a console that used the wrong method pass fixture-backed tests.
+        for path in [
+            "/orchestrator/api/state",
+            "/orchestrator/api/settings",
+            "/orchestrator/api/overview",
+        ] {
+            let response = raw(&api.base, &method_request("POST", path));
+            assert_eq!(status(&response), 404, "POST {path}: {response}");
+        }
+        // The read itself still answers, so refusing every request cannot satisfy the loop.
+        let response = raw(
+            &api.base,
+            &method_request("GET", "/orchestrator/api/overview"),
+        );
+        assert_eq!(status(&response), 200, "{response}");
     }
 
     #[test]
