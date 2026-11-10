@@ -211,6 +211,20 @@ fn provider_lines(catalog: &provider::Catalog) -> Vec<String> {
     lines
 }
 
+/// The four routes `/provider` configures, in the same order as the screen.
+fn duty_lines(cfg: Option<&service::Config>, catalog: &provider::Catalog) -> Vec<String> {
+    provider::DUTIES
+        .iter()
+        .map(|duty| {
+            format!(
+                "{:<10} {}",
+                duty.id,
+                provider::current_route(cfg, catalog, duty)
+            )
+        })
+        .collect()
+}
+
 /// The `/models` view `booth provider` reads, as the service served it.
 ///
 /// The human output is a summary; a script that needs the whole catalog (models, reasoning
@@ -223,6 +237,10 @@ fn provider_view(api: &Api) -> Result<serde_json::Value, String> {
 fn show_provider(api: &Api) -> Result<(), String> {
     let catalog = provider::Catalog::parse(&provider_view(api)?);
     for line in provider_lines(&catalog) {
+        emit_line(&line);
+    }
+    let cfg = service::Config::from_env().ok();
+    for line in duty_lines(cfg.as_ref(), &catalog) {
         emit_line(&line);
     }
     Ok(())
@@ -609,6 +627,19 @@ mod tests {
         );
         // No key value can reach this output: the catalog carries none.
         assert!(!lines.iter().any(|line| line.contains("sk-")), "{lines:?}");
+        let duties = duty_lines(None, &catalog);
+        assert!(
+            duties
+                .iter()
+                .any(|line| line.starts_with("typesafe") && line.contains("typesafe/jev")),
+            "{duties:?}"
+        );
+        assert!(
+            duties
+                .iter()
+                .any(|line| line.starts_with("search") && line.contains("not set")),
+            "{duties:?}"
+        );
 
         // An empty catalog says so instead of printing nothing.
         let empty = provider_lines(&crate::provider::Catalog::default());
