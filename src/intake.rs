@@ -650,9 +650,12 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
             Style::default().fg(RED),
         )));
     }
+    // Without a directory argument this run writes no executor block, so a directory an earlier
+    // setup (or the panel) chose stays in force. Report the root the executor actually uses, not
+    // the `<stateDir>/work` fallback this setup did not configure.
     let work = directory
         .clone()
-        .unwrap_or_else(|| cfg.state_dir.join("work").display().to_string());
+        .unwrap_or_else(|| service::execution_root(api, cfg).display().to_string());
     lines.push(muted(&format!(
         "ticket directories {work} · panel → Execution gives each one a checkout"
     )));
@@ -1539,6 +1542,52 @@ mod api_tests {
             .map(|(_, body)| body.clone())
             .unwrap();
         assert_eq!(executor["value"]["directory"], "/tmp/ticket work");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::env::remove_var("BOOTH_GH");
+    }
+
+    #[test]
+    fn setup_reports_the_directory_the_executor_already_uses() {
+        // `/setup owner/name` leaves the executor block alone, so a directory an earlier setup
+        // (or the panel) chose stays in force. The line the operator reads must name that
+        // directory, not the `<stateDir>/work` fallback this run did not configure.
+        let _env = env_lock();
+        let dir = scratch("setup-existing-dir");
+        let gh = dir.join("gh");
+        std::fs::write(
+            &gh,
+            "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp';;\n  *) echo tester;;\nesac\n",
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::env::set_var("BOOTH_GH", &gh);
+        let api = FakeApi::start();
+        api.settings.lock().unwrap()["blocks"]["executor"]["value"]["directory"] =
+            json!("/tmp/ticket work");
+
+        let lines = setup(&Api::new(&api.base), &cfg(&dir), "o/r").unwrap();
+        let text: String = lines
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("ticket directories /tmp/ticket work"),
+            "the configured directory is reported: {text}"
+        );
+        assert!(
+            !text.contains(&format!("ticket directories {}/work", dir.display())),
+            "the fallback is not reported as the configured directory: {text}"
+        );
+        assert!(
+            api.puts
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(name, _)| name != "executor"),
+            "leaving the directory alone is what makes the report matter"
+        );
         std::fs::remove_dir_all(dir).unwrap();
         std::env::remove_var("BOOTH_GH");
     }
