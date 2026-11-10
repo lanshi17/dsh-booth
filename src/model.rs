@@ -389,7 +389,10 @@ pub struct Decision {
 #[serde(rename_all = "camelCase", default)]
 pub struct DecisionList {
     pub items: Vec<Decision>,
-    pub total: u32,
+    /// `/decisions` pages like the other lists (`{ items, next_offset }`) and has no `total`;
+    /// this console used to print `total: 0` and drop the cursor from `--json`.
+    #[serde(rename = "next_offset")]
+    pub next_offset: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -533,8 +536,42 @@ pub struct SearchView {
 
 #[cfg(test)]
 mod tests {
-    use super::SearchView;
+    use super::{DecisionList, SearchView};
     use serde_json::json;
+
+    #[test]
+    fn a_decision_page_keeps_the_served_cursor_and_has_no_total() {
+        // The bundle's `decisionList()` answers `{ items, next_offset }`; the wire model used to
+        // read a `total` the route never sends, so `--json` printed `total: 0` and dropped the
+        // cursor a caller needs to ask for the next page.
+        let served = json!({
+            "items": [{
+                "id": "d1",
+                "kind": "accept",
+                "outcome": "accept",
+                "reason": [{ "code": "explicitRouted" }],
+                "at": "2026-11-09T11:09:38.753Z"
+            }],
+            "next_offset": 30
+        });
+        let view: DecisionList =
+            serde_json::from_value(served).expect("a served decision page decodes");
+        assert_eq!(view.next_offset, Some(30));
+        let printed = serde_json::to_value(&view).expect("the page serializes for --json");
+        assert_eq!(printed["next_offset"], 30);
+        assert!(
+            printed.get("total").is_none(),
+            "the route has no total; --json must not invent one"
+        );
+    }
+
+    #[test]
+    fn a_final_decision_page_keeps_a_null_cursor() {
+        let served = json!({ "items": [], "next_offset": null });
+        let view: DecisionList =
+            serde_json::from_value(served).expect("a final decision page decodes");
+        assert_eq!(view.next_offset, None);
+    }
 
     #[test]
     fn a_filtered_search_hit_decodes_the_reason_object_the_bundle_sends() {
