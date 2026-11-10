@@ -11,7 +11,10 @@ pub const PALETTE: &[(&str, &str)] = &[
     ("/status", "health entries, pause state, accounts"),
     ("/agents", "how work is routed, run in parallel, remembered"),
     ("/model", "switch the worker model, or add a provider"),
-    ("/provider", "which provider the agent runs with"),
+    (
+        "/provider",
+        "providers: language, typesafe, search, documents",
+    ),
     (
         "/setup [owner/repo]",
         "name the repository and who may ask for work",

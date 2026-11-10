@@ -338,6 +338,10 @@ booth send --agent cursor-agent "fix the readme"
 
 In the console, start the line with `@omp`, `@claude`, `@codex`, or `@cursor-agent`. A line with no prefix goes to dsh. The named agent runs the instruction itself. Booth does not keep a second control plane.
 
+## Providers
+
+`/provider` opens one screen for every provider the team uses. The rows are grouped the way omp groups them: Language, Typesafe, Search, and Documents. Enter a row, pick a provider already in the profile, then pick the model. `a` adds a provider. The language row is the model the team runs with. Typesafe is the decision model. Search and documents remember their own provider and model in the same profile.
+
 ## Decision
 
 The portal does not pick among its own options, and a sub-agent does not bring an open choice to the portal first. Both hand the choice to `booth decide`. The call is a [System One](https://commandcode.ai/docs/provider#decision-models-typesafe-jev) request: one `state`, and up to 100 `questions`. A question is `noul`, `choice`, or `score`. `from` is `subagent` or `portal` and stays with booth.
