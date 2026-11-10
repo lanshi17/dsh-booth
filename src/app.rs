@@ -1567,6 +1567,13 @@ impl App {
             self.modal = Some(Modal::OAuth(state));
             return;
         }
+        // The callback URL is text like the login form's fields: a control chord is a shortcut or
+        // a paste attempt, not the letter it carries. Ctrl+O and Ctrl+Y above are its shortcuts;
+        // any other chord (Ctrl+V where the operator pastes the URL, say) must not write into it.
+        if is_control_letter(&key) {
+            self.modal = Some(Modal::OAuth(state));
+            return;
+        }
         match key.code {
             KeyCode::Esc => {
                 if let Some(cancel) = &state.cancel {
@@ -3614,6 +3621,69 @@ mod editor_tests {
                 assert_eq!(*selected, 1, "a repeated Ctrl+R walks to the older match")
             }
             _ => panic!("the search stays open"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_control_chord_is_not_typed_into_the_oauth_callback_url() {
+        let (mut app, dir, _env) = editor("oauth-control");
+        // The callback URL is where the operator pastes the browser's answer; a chord there is a
+        // paste attempt or a shortcut, not the letter it carries. Before this guard Ctrl+V wrote
+        // a "v" into the URL, so the pasted callback no longer parsed.
+        app.modal = Some(Modal::OAuth(OAuthState {
+            url: String::new(),
+            status: String::new(),
+            paste: String::new(),
+            cursor: 0,
+            attempt: None,
+            cancel: None,
+        }));
+        for chord in ['v', 'u', 'a', 'w', 'o'] {
+            app.on_key(ctrl(chord));
+        }
+        match &app.modal {
+            Some(Modal::OAuth(state)) => {
+                assert!(
+                    state.paste.is_empty(),
+                    "no letter is written into the URL: {:?}",
+                    state.paste
+                );
+                assert_eq!(state.cursor, 0, "the cursor does not move");
+            }
+            _ => panic!("the sign-in stays open"),
+        }
+
+        // Plain characters still fill the field...
+        typed(&mut app, "abc");
+        match &app.modal {
+            Some(Modal::OAuth(state)) => assert_eq!(state.paste, "abc"),
+            _ => panic!("the sign-in stays open"),
+        }
+        // ...and Ctrl+Alt still composes a character where the layout reports AltGr that way.
+        app.on_key(KeyEvent::new(
+            KeyCode::Char('@'),
+            KeyModifiers::CONTROL | KeyModifiers::ALT,
+        ));
+        match &app.modal {
+            Some(Modal::OAuth(state)) => {
+                assert_eq!(state.paste, "abc@", "AltGr text still reaches the field")
+            }
+            _ => panic!("the sign-in stays open"),
+        }
+
+        // Ctrl+Y is the field's own shortcut and still answers rather than writing a "y".
+        if let Some(Modal::OAuth(state)) = &mut app.modal {
+            state.url = "https://example/authorize".into();
+        }
+        app.on_key(ctrl('y'));
+        match &app.modal {
+            Some(Modal::OAuth(state)) => assert!(
+                state.status.contains("clipboard") || state.status.contains("oauth-url.txt"),
+                "Ctrl+Y still reports the copy: {:?}",
+                state.status
+            ),
+            _ => panic!("the sign-in stays open"),
         }
         std::fs::remove_dir_all(dir).unwrap();
     }
