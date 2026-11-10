@@ -5,10 +5,12 @@
 //! ends it. No tmux, no shell script: the pid and the log live under the state directory.
 
 use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::api::Api;
 
@@ -561,10 +563,6 @@ impl Patch {
 
     pub fn write(&self, cfg: &Config) -> Result<(), String> {
         let path = cfg.patch();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-        }
         let body = serde_norway::to_string(&self.entries)
             .map_err(|error| format!("cannot render {}: {error}", path.display()))?;
         let text = if self.header.is_empty() {
@@ -572,7 +570,7 @@ impl Patch {
         } else {
             format!("{}{body}", self.header)
         };
-        fs::write(&path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+        write_staged(&path, &text)
     }
 
     pub fn get(&self, id: &str) -> Option<&serde_json::Value> {
@@ -640,6 +638,55 @@ impl Patch {
     }
 }
 
+/// Names two staged writes in this process differently even within the same nanosecond.
+static STAGED_NONCE: AtomicU64 = AtomicU64::new(0);
+
+/// Replaces `path` with `text` in one step.
+///
+/// `fs::write` truncates the target before the new bytes are written, so a crash, a full disk or a
+/// reader that looks at the wrong moment sees a half-written or empty file. The profile layer is
+/// not regenerable by hand: it carries the webserver port, both state directories and every
+/// provider and model, so losing it leaves the service booting with defaults and the console
+/// pointing at a service that is not there. The whole text is written to a sibling and renamed
+/// over `path`, which commits in one step on one filesystem; a write that cannot complete leaves
+/// the old file exactly as it was and removes the staged name.
+fn write_staged(path: &Path, text: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
+    }
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|span| span.as_nanos())
+        .unwrap_or_default();
+    let staged = path.with_file_name(format!(
+        "{}.{}.{stamp}.{}.tmp",
+        path.file_name().unwrap_or_default().to_string_lossy(),
+        std::process::id(),
+        STAGED_NONCE.fetch_add(1, Ordering::Relaxed)
+    ));
+    let written = (|| -> std::io::Result<()> {
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&staged)?;
+        // The staged name is a sibling and briefly visible: keep the layer's own mode so an
+        // exclusive create does not widen a file the operator narrowed.
+        #[cfg(unix)]
+        {
+            if let Ok(metadata) = fs::metadata(path) {
+                file.set_permissions(metadata.permissions())?;
+            }
+        }
+        file.write_all(text.as_bytes())
+    })();
+    let installed = written.and_then(|()| fs::rename(&staged, path));
+    // On success the rename consumed the staged name and this is the harmless ENOENT; otherwise
+    // it clears the half-written sibling so no partial layer outlives the failure.
+    let _ = fs::remove_file(&staged);
+    installed.map_err(|error| format!("cannot write {}: {error}", path.display()))
+}
+
 /// Splits leading comment lines from the YAML document that follows them.
 fn split_header(text: &str) -> (String, String) {
     let mut header = String::new();
@@ -702,10 +749,6 @@ fn migration_note(result: Result<Vec<String>, String>) -> Option<String> {
 
 fn write_patch(cfg: &Config) -> Result<(), String> {
     let path = cfg.patch();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
-    }
     let console = format!(
         "- id: dsh-booth-local\n  config:\n    stateDir: {}\n",
         cfg.state_dir.display()
@@ -721,8 +764,7 @@ fn write_patch(cfg: &Config) -> Result<(), String> {
                 if !next.ends_with('\n') {
                     next.push('\n');
                 }
-                fs::write(&path, next)
-                    .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+                write_staged(&path, &next)?;
             }
             return Ok(());
         }
@@ -748,15 +790,14 @@ fn write_patch(cfg: &Config) -> Result<(), String> {
             cfg.port,
             cfg.state_dir.display()
         );
-        return fs::write(&path, yaml)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()));
+        return write_staged(&path, &yaml);
     }
     let yaml = format!(
         "- id: webserver\n  config:\n    host: 127.0.0.1\n    port: {}\n- id: dsh-superagent\n  config:\n    stateDir: {}\n{console}",
         cfg.port,
         cfg.state_dir.display()
     );
-    fs::write(&path, yaml).map_err(|error| format!("cannot write {}: {error}", path.display()))
+    write_staged(&path, &yaml)
 }
 
 fn build(cfg: &Config) -> Result<(), String> {
@@ -1833,6 +1874,102 @@ mod patch_tests {
             ),
             Err(error) => assert!(error.contains("cannot read"), "{error}"),
         }
+    }
+
+    fn names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The layer is the one file where the webserver port, both state directories and every
+    /// provider meet. Truncating it before the new bytes are written means a crash, a full disk
+    /// or a reader that looks at the wrong moment can lose all of it. A write that cannot be
+    /// staged must refuse while the old bytes are still there.
+    #[cfg(unix)]
+    #[test]
+    fn a_layer_it_cannot_stage_is_left_intact() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cfg = config("staged");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        let original = "# kept by hand\n- id: webserver\n  config:\n    port: 3082\n";
+        fs::write(cfg.patch(), original).unwrap();
+        let mut patch = Patch::read(&cfg).unwrap();
+        patch.set_value("agent-default-model", &["provider"], serde_json::json!("x"));
+
+        // The existing file stays writable by its owner; only the directory cannot take the
+        // sibling the replacement is staged in. An in-place write would truncate and succeed.
+        fs::set_permissions(cfg.profile_dir(), fs::Permissions::from_mode(0o500)).unwrap();
+        let refused = patch.write(&cfg);
+        fs::set_permissions(cfg.profile_dir(), fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(
+            refused.is_err(),
+            "a write that cannot stage must refuse: {refused:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(cfg.patch()).unwrap(),
+            original,
+            "the old layer is still there"
+        );
+        assert_eq!(
+            names(&cfg.profile_dir()),
+            ["cordis.patch.yml"],
+            "a staged sibling survived"
+        );
+
+        // Once the directory takes a sibling again the same patch replaces the layer in one
+        // step, and a mode the operator narrowed stays narrow.
+        fs::set_permissions(cfg.patch(), fs::Permissions::from_mode(0o600)).unwrap();
+        patch.write(&cfg).unwrap();
+        let text = fs::read_to_string(cfg.patch()).unwrap();
+        assert!(text.contains("agent-default-model"), "{text}");
+        let mode = fs::metadata(cfg.patch()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "the replacement keeps the layer's mode");
+        assert_eq!(
+            names(&cfg.profile_dir()),
+            ["cordis.patch.yml"],
+            "a staged sibling survived"
+        );
+        fs::remove_dir_all(&cfg.dsh_home).ok();
+    }
+
+    /// `booth init` appends the console entry to an older layer; an interrupted or impossible
+    /// write must not leave that layer truncated, because it is the only copy of the profile's
+    /// configuration.
+    #[cfg(unix)]
+    #[test]
+    fn an_init_that_cannot_stage_leaves_the_old_patch_alone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let cfg = config("staged-init");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        let original = "- id: webserver\n  config:\n    port: 3082\n- id: dsh-superagent\n  config:\n    stateDir: /tmp/s\n";
+        fs::write(cfg.patch(), original).unwrap();
+
+        fs::set_permissions(cfg.profile_dir(), fs::Permissions::from_mode(0o500)).unwrap();
+        let refused = write_patch(&cfg);
+        fs::set_permissions(cfg.profile_dir(), fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(
+            refused.is_err(),
+            "a write that cannot stage must refuse: {refused:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(cfg.patch()).unwrap(),
+            original,
+            "the old layer is still there"
+        );
+        assert_eq!(
+            names(&cfg.profile_dir()),
+            ["cordis.patch.yml"],
+            "a staged sibling survived"
+        );
+        fs::remove_dir_all(&cfg.dsh_home).ok();
     }
 
     #[test]
