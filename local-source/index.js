@@ -24,6 +24,8 @@ const CURSOR = 'booth:cursor'
 
 /** Entries end with a newline, so a partial tail is left for the next read. */
 const newline = 0x0a
+/** How many bytes before the cursor are kept to recognize a rewritten inbox. */
+const WITNESS = 32
 
 function schema(parse) {
   return {
@@ -71,19 +73,57 @@ function triggerOf(line) {
   }
 }
 
-/** Reads the complete lines appended since `offset`; returns them and the offset after the last newline. */
-function readLines(inbox, offset) {
-  if (!existsSync(inbox)) return { lines: [], offset: 0 }
+/** The persisted read position: `{offset, witness}`, or a bare offset written by an older version. */
+function cursorOf(value) {
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0) return { offset: value }
+  if (value && typeof value.offset === 'number' && Number.isInteger(value.offset) && value.offset >= 0) {
+    return { offset: value.offset, ...typeof value.witness === 'string' ? { witness: value.witness } : {} }
+  }
+  return { offset: 0 }
+}
+
+/** The bytes ending at `offset`, encoded for storage; `undefined` when they cannot be read whole. */
+function witnessAt(fd, offset) {
+  const length = Math.min(offset, WITNESS)
+  const buffer = Buffer.alloc(length)
+  let read = 0
+  while (read < length) {
+    const count = readSync(fd, buffer, read, length - read, offset - length + read)
+    if (count === 0) return undefined
+    read += count
+  }
+  return buffer.toString('base64')
+}
+
+function sameCursor(a, b) {
+  return a.offset === b.offset && a.witness === b.witness
+}
+
+/** Reads the complete lines appended since `cursor`; returns them and the position after the last newline. */
+function readLines(inbox, cursor) {
+  if (!existsSync(inbox)) return { lines: [], cursor: { offset: 0 } }
   const fd = openSync(inbox, 'r')
   try {
     const size = fstatSync(fd).size
-    // A rewritten or truncated inbox has nothing to replay.
-    if (size < offset) offset = 0
-    if (size === offset) return { lines: [], offset }
+    let { offset, witness } = cursor
+    // A rewritten or truncated inbox has nothing to replay. Length alone cannot tell an append
+    // from a replacement that kept or grew the size, so the bytes just before the cursor are the
+    // witness: an append leaves them in place, a rewrite does not.
+    if (size < offset) {
+      offset = 0
+      witness = undefined
+    } else if (offset > 0 && witness !== undefined) {
+      if (witnessAt(fd, offset) !== witness) {
+        offset = 0
+        witness = undefined
+      }
+    }
+    const position = next => ({ cursor: { offset: next, ...witness !== undefined ? { witness } : {} } })
+    if (size === offset) return { lines: [], ...position(offset) }
     const buffer = Buffer.alloc(size - offset)
     const read = readSync(fd, buffer, 0, buffer.length, offset)
     const end = buffer.subarray(0, read).lastIndexOf(newline)
-    if (end < 0) return { lines: [], offset }
+    if (end < 0) return { lines: [], ...position(offset) }
     const text = buffer.subarray(0, end + 1).toString('utf8')
     const lines = []
     for (const raw of text.split('\n')) {
@@ -94,7 +134,9 @@ function readLines(inbox, offset) {
         // A malformed line is not an instruction; skip it without stopping the stream.
       }
     }
-    return { lines, offset: offset + end + 1 }
+    const next = offset + end + 1
+    const nextWitness = witnessAt(fd, next)
+    return { lines, cursor: { offset: next, ...nextWitness !== undefined ? { witness: nextWitness } : {} } }
   } finally {
     closeSync(fd)
   }
@@ -123,7 +165,7 @@ function report(source, state, detail) {
 }
 
 async function watch(source, signal, files) {
-  let cursor = source.state.get(CURSOR) ?? 0
+  let cursor = cursorOf(source.state.get(CURSOR) ?? 0)
   report(source, 'starting', 'Waiting for the deployment check')
   while (!signal.aborted) {
     if (!source.configured()) {
@@ -139,10 +181,10 @@ async function watch(source, signal, files) {
       await delay(1000, undefined, { signal }).catch(() => {})
       continue
     }
-    const { lines, offset } = readLines(files.inbox, cursor)
+    const { lines, cursor: next } = readLines(files.inbox, cursor)
     if (!lines.length) {
-      if (offset !== cursor) {
-        cursor = offset
+      if (!sameCursor(next, cursor)) {
+        cursor = next
         source.state.set(CURSOR, cursor)
       }
       report(source, 'ready', 'Waiting for an instruction')
@@ -165,7 +207,7 @@ async function watch(source, signal, files) {
       await delay(files.pollMs, undefined, { signal }).catch(() => {})
       continue
     }
-    cursor = offset
+    cursor = next
     source.state.set(CURSOR, cursor)
   }
 }
@@ -243,9 +285,16 @@ export function apply(ctx, config = {}) {
     // Registering and watching are separate steps: the watcher is restarted when its own
     // registration survived but the loop ended.
     const source = orchestrator.context(kind)
-    controller = new AbortController()
-    watch(source, controller.signal, files)
+    const running = new AbortController()
+    controller = running
+    watch(source, running.signal, files)
       .catch(error => { report(source, 'error', String(error)) })
+      .finally(() => {
+        // A read or storage error ends the loop without aborting its controller. Clearing the
+        // controller marks the Source as stopped, so the next tick starts a new watcher; a newer
+        // controller installed after a teardown or a registry change is left alone.
+        if (controller === running) controller = undefined
+      })
   }
   const timer = setInterval(() => {
     try {

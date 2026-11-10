@@ -1,17 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
 
 import { apply } from '../index.js'
 
-/** A booth Source whose enabled switch and inbox the test controls. */
-function booth({ enabled = { value: true } } = {}) {
+/** A booth Source whose enabled switch, inbox and stored state the test controls. */
+function booth({ enabled = { value: true }, cursor } = {}) {
   const received = []
   const reports = []
   const values = new Map()
+  if (cursor !== undefined) values.set('booth:cursor', cursor)
   const source = {
     configured: () => true,
     config: () => (enabled.value ? {} : undefined),
@@ -96,6 +97,115 @@ test('an instruction waits while the Source is off', async () => {
     assert.ok(
       await eventually(() => console.received.length === 1),
       'the instruction typed while off arrives once the Source is on',
+    )
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('an appended instruction is read without replaying the earlier one', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const inbox = join(dir, 'booth-inbox.jsonl')
+  const console = booth()
+  try {
+    writeFileSync(inbox, line('one', 'first'))
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    assert.ok(await eventually(() => console.received.length === 1), 'the first instruction is delivered')
+
+    appendFileSync(inbox, line('two', 'second'))
+    assert.ok(await eventually(() => console.received.length === 2), 'the appended instruction is delivered')
+    assert.deepEqual(console.received.map(trigger => trigger.id), ['local-one', 'local-two'])
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a numeric cursor from an older version still continues the inbox', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const inbox = join(dir, 'booth-inbox.jsonl')
+  const first = line('one', 'first')
+  const console = booth({ cursor: Buffer.byteLength(first) })
+  try {
+    writeFileSync(inbox, first + line('two', 'second'))
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    assert.ok(await eventually(() => console.received.length === 1), 'the instruction after the old cursor is delivered')
+    assert.deepEqual(console.received.map(trigger => trigger.id), ['local-two'])
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a rewritten inbox of the same size is read again', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const inbox = join(dir, 'booth-inbox.jsonl')
+  const console = booth()
+  try {
+    const before = line('old', 'x')
+    const after = line('new', 'y')
+    assert.equal(Buffer.byteLength(before), Buffer.byteLength(after), 'the test rewrites without changing the size')
+    writeFileSync(inbox, before)
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    assert.ok(await eventually(() => console.received.length === 1), 'the first instruction is delivered')
+
+    writeFileSync(inbox, after)
+    assert.ok(
+      await eventually(() => console.received.length === 2),
+      'a replacement that kept the size is read from the beginning',
+    )
+    assert.deepEqual(console.received.map(trigger => trigger.id), ['local-old', 'local-new'])
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a rewritten inbox that grew keeps every new instruction', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const inbox = join(dir, 'booth-inbox.jsonl')
+  const console = booth()
+  try {
+    writeFileSync(inbox, line('old', 'x'))
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    assert.ok(await eventually(() => console.received.length === 1), 'the first instruction is delivered')
+
+    // The old cursor now lands inside the first new record; both new records must still arrive.
+    writeFileSync(inbox, line('new-1', 'first') + line('new-2', 'second'))
+    assert.ok(
+      await eventually(() => console.received.length === 3),
+      'a replacement that grew is read from the beginning',
+    )
+    assert.deepEqual(
+      console.received.map(trigger => trigger.id),
+      ['local-old', 'local-new-1', 'local-new-2'],
+    )
+  } finally {
+    console.stop()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('a transient read error does not leave the Source stopped', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'booth-local-'))
+  const inbox = join(dir, 'booth-inbox.jsonl')
+  const console = booth()
+  try {
+    // A directory at the inbox path makes the read fail without losing the file the test writes
+    // afterwards; any error that ends the watcher has to recover the same way.
+    mkdirSync(inbox)
+    apply(console.ctx, { stateDir: dir, pollMs: 5 })
+    assert.ok(
+      await eventually(() => console.reports.some(report => report.state === 'error')),
+      'the read error is reported',
+    )
+
+    rmSync(inbox, { recursive: true, force: true })
+    writeFileSync(inbox, line('one', 'hi'))
+    assert.ok(
+      await eventually(() => console.received.length === 1, 3000),
+      'the watcher starts again and reads the instruction after the error',
     )
   } finally {
     console.stop()
