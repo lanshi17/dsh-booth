@@ -1,9 +1,0 @@
-   Compiling forge-orchestrator v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/orchestrator)
-   Compiling forge-cli v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/cli)
-   Compiling forge-agent-runtime v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-runtime)
-   Compiling forge-agent-dsh v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-dsh)
-   Compiling forge-agent-omp v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-omp)
-   Compiling forge-task-scheduler v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/task-scheduler)
-   Compiling forge-worktree v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/worktree)
-   Compiling forge-persistence v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/persistence)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.34s
