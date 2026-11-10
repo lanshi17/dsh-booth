@@ -1,0 +1,22 @@
+[package]
+name = "forge-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-config = { path = "../config" }
+forge-domain = { path = "../domain" }
+forge-identity = { path = "../identity" }
+forge-mcp-server = { path = "../mcp-server" }
+forge-persistence = { path = "../persistence" }
+clap.workspace = true
+serde_json.workspace = true
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"

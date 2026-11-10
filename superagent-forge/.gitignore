@@ -1,0 +1,4 @@
+/target/
+/.forge/
+.env
+.env.*

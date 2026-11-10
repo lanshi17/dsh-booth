@@ -1,0 +1,29 @@
+{
+  "milestone": "F5.2",
+  "forge_packages": [
+    "forge-agent-backend",
+    "forge-agent-dsh",
+    "forge-agent-omp",
+    "forge-agent-protocol",
+    "forge-agent-runtime",
+    "forge-application",
+    "forge-cli",
+    "forge-config",
+    "forge-domain",
+    "forge-identity",
+    "forge-mcp-server",
+    "forge-orchestrator",
+    "forge-persistence",
+    "forge-review",
+    "forge-task-scheduler",
+    "forge-worktree"
+  ],
+  "workspace_members": 16,
+  "resolve_nodes": 273,
+  "features": [
+    "ed25519 signed merge authorization",
+    "oidc-profile HS256 JWT identity",
+    "argv-only remote git push after merge",
+    "migration 004 merge_auth signature column"
+  ]
+}

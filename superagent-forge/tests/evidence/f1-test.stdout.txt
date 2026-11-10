@@ -1,0 +1,118 @@
+   Compiling forge-persistence v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/persistence)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.51s
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_backend-18ba38872346ae0f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_dsh-d92c546e89760c13)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_omp-eafa393f6111719f)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_protocol-70e8a03742de2c75)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_agent_runtime-d797a1e06c63ff50)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_application-b1b13c34ece8de30)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/lifecycle.rs (target/debug/deps/lifecycle-e647838b1e92a225)
+
+running 9 tests
+test accepting_does_not_authorize_execution_or_worker_privilege_escalation ... ok
+test completion_requires_independent_review_then_explicit_merge_authority ... ok
+test independent_reviewer_can_reject_failing_checks ... ok
+test failed_assignment_can_retry_but_old_report_and_workspace_are_rejected ... ok
+test mandate_restricts_backend_and_expiration ... ok
+test late_completion_cannot_resurrect_cancelled_assignment ... ok
+test rejected_review_is_retained_and_does_not_authorize_merge ... ok
+test review_cannot_substitute_another_commit_or_failed_tests ... ok
+test wrong_worker_or_assignment_cannot_submit_a_result ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/forge-885fac9f5316596e)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_config-39fbbd19a044f181)
+
+running 1 test
+test tests::rejects_unknown_permissions_and_zero_limits ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_domain-f5276a5eef730886)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_mcp_server-1a85ea4ee43935ea)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_orchestrator-020c0284c11a79e9)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_persistence-daa45bad47f62c44)
+
+running 7 tests
+test tests::unique_and_check_constraints ... ok
+test tests::migration_is_idempotent_on_reopen ... ok
+test tests::insert_conflict_when_expected_none ... ok
+test tests::empty_database_migrates_and_roundtrips ... ok
+test tests::cas_conflict_rejects_stale_write ... ok
+test tests::rollback_leaves_prior_version ... ok
+test tests::crash_restart_recovers_committed_state ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_review-cda9d4be94205c89)
+
+running 1 test
+test tests::stale_commit_missing_checks_and_failed_tests_cannot_pass ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_task_scheduler-5b5eb77721d77514)
+
+running 2 tests
+test tests::dependencies_precede_dependents ... ok
+test tests::rejects_cycles_and_dangling_dependencies ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/forge_worktree-c39e04e373411cd8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
