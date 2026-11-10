@@ -8,6 +8,7 @@
 use crate::model::*;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
+use std::io::Read;
 use std::time::Duration;
 
 const HEADER: &str = "x-orchestrator-request";
@@ -244,9 +245,19 @@ impl Api {
 
 fn finish(response: Result<ureq::Response, ureq::Error>) -> Result<Value, ApiError> {
     match response {
-        Ok(response) => response
-            .into_json::<Value>()
-            .map_err(|error| ApiError::Protocol(error.to_string())),
+        Ok(response) => {
+            // Read the body before parsing it: `into_json` folds a body that stops arriving into
+            // a JSON error, so a response cut off by a restart (or by the 20-second deadline)
+            // printed "unexpected response (Failed to read JSON: …)" instead of the transport
+            // class. The read is the transport part and the parse the protocol part, and
+            // `intake::between_instances` retries the former but not the latter.
+            let mut body = Vec::new();
+            response
+                .into_reader()
+                .read_to_end(&mut body)
+                .map_err(|error| ApiError::Transport(error.to_string()))?;
+            serde_json::from_slice(&body).map_err(|error| ApiError::Protocol(error.to_string()))
+        }
         Err(ureq::Error::Status(code, response)) => {
             let body = response.into_string().unwrap_or_default();
             let message = serde_json::from_str::<Value>(&body).ok().and_then(|value| {
@@ -316,6 +327,54 @@ mod tests {
             let _ = stream.flush();
         });
         base
+    }
+
+    /// Answers one request with headers that promise 100 bytes and then closes after 10, the way
+    /// a service killed in the middle of its response looks to the client.
+    fn a_cut_off_body() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = [0u8; 4096];
+            let _ = stream.read(&mut request);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\nconnection: close\r\n\r\n{\"paused\":",
+            );
+            let _ = stream.flush();
+        });
+        base
+    }
+
+    #[test]
+    fn a_body_cut_off_mid_response_is_a_transport_failure() {
+        // The service going away while it writes its answer is "cannot reach", not a malformed
+        // answer: a restart in the middle of a poll used to print
+        // "unexpected response (Failed to read JSON: response body closed …)" and also skipped
+        // the restart retry that `intake::between_instances` gives the transport class.
+        let api = Api::new(&a_cut_off_body());
+        let error = api.state().expect_err("a cut-off body is not an answer");
+        assert!(
+            matches!(&error, ApiError::Transport(_)),
+            "a cut-off body is the transport class, got {error:?}"
+        );
+        assert!(
+            error.to_string().contains("cannot reach dsh-superagent"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_complete_body_that_is_not_json_is_still_a_protocol_error() {
+        // Reading the body first must not turn a malformed answer into an unreachable service.
+        let api = Api::new(&one_shot(200, "not json"));
+        let error = api.state().expect_err("a non-JSON body is not an answer");
+        assert!(
+            matches!(&error, ApiError::Protocol(_)),
+            "a complete non-JSON body is a protocol error, got {error:?}"
+        );
     }
 
     #[test]
