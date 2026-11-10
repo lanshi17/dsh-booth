@@ -354,6 +354,10 @@ pub fn history(cfg: &service::Config) -> Vec<String> {
 }
 
 /// Appends a submitted line, rewriting the file once it holds twice the cap.
+///
+/// A write cut short leaves the last line without its newline. Appending onto it would merge the
+/// next prompt into that damaged line, so close it first; `send` already does the same for the
+/// inbox.
 pub fn remember(cfg: &service::Config, line: &str) {
     let path = cfg.state_dir.join("booth-history.txt");
     let _ = std::fs::create_dir_all(&cfg.state_dir);
@@ -363,7 +367,15 @@ pub fn remember(cfg: &service::Config, line: &str) {
         let kept: Vec<&str> = existing.lines().skip(count - 500).collect();
         let _ = std::fs::write(&path, format!("{}\n", kept.join("\n")));
     }
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = OpenOptions::new()
+        .read(true)
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        if ends_mid_record(&mut file).unwrap_or(false) {
+            let _ = file.write_all(b"\n");
+        }
         let _ = writeln!(file, "{}", line.replace('\n', " "));
     }
 }
@@ -1202,6 +1214,27 @@ mod tests {
         assert_eq!(lines.len(), 500, "the cap is 500");
         assert_eq!(lines[0], "line 100");
         assert_eq!(lines[499], "line 599");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn history_starts_a_line_after_a_cut_short_one() {
+        // A write cut short leaves the last prompt without its newline. Appending onto it
+        // would merge the next prompt into one entry nobody typed, and the merge survives
+        // restarts; close the damaged line before the append instead.
+        let dir = scratch("history-cut");
+        let cfg = config(dir.clone());
+        std::fs::write(cfg.state_dir.join("booth-history.txt"), "half").unwrap();
+
+        remember(&cfg, "next");
+
+        let text = std::fs::read_to_string(cfg.state_dir.join("booth-history.txt")).unwrap();
+        assert_eq!(
+            text.lines().collect::<Vec<_>>(),
+            ["half", "next"],
+            "{text:?}"
+        );
+        assert_eq!(history(&cfg), ["half", "next"], "{text:?}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
