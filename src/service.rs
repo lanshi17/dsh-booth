@@ -34,13 +34,7 @@ impl Config {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(DEFAULT_PORT);
-        let dsh_home = match std::env::var_os("DSH_HOME") {
-            Some(value) => PathBuf::from(value),
-            None => PathBuf::from(
-                std::env::var_os("HOME").ok_or("HOME is not set; set DSH_HOME instead")?,
-            )
-            .join(".dsh"),
-        };
+        let dsh_home = dsh_home()?;
         let state_dir = match std::env::var_os("BOOTH_STATE_DIR") {
             Some(value) => PathBuf::from(value),
             None => dsh_home.join("state").join(&profile),
@@ -73,6 +67,53 @@ impl Config {
     fn url(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
+}
+
+/// DSH's `$DSH_HOME` precedence and spelling: a blank override is unset, and a leading `~` names
+/// the OS home.
+///
+/// Every path this module prepares — the profile layer, the service's state, the session trees —
+/// is derived from this directory and then handed to `dsh`, which resolves `DSH_HOME` by these
+/// rules. Reading the raw value instead splits the deployment: `DSH_HOME=~/dsh` would make booth
+/// write `./~/dsh/profiles/…` while dsh creates `$HOME/dsh/profiles/…`, and a blank override
+/// would point booth at `./profiles/…` while dsh keeps using `$HOME/.dsh`. The command line that
+/// starts the service inherits the same environment, so the two must agree here.
+///
+/// `provider` and `oauth` resolve the credentials store this way for the same reason; the
+/// duplication is deliberate because that resolver is private to those modules.
+fn dsh_home() -> Result<PathBuf, String> {
+    if let Some(value) = std::env::var_os("DSH_HOME") {
+        if let Some(text) = value.to_str() {
+            if !text.trim().is_empty() {
+                return expand_home(text);
+            }
+        } else {
+            // A non-UTF-8 override cannot carry a `~` prefix; use the bytes as they are.
+            return Ok(PathBuf::from(value));
+        }
+    }
+    std::env::var_os("HOME")
+        .map(|home| PathBuf::from(home).join(".dsh"))
+        .ok_or_else(|| "HOME is not set; set DSH_HOME instead".to_owned())
+}
+
+/// Expands the `~` prefixes DSH's home resolver accepts. A `~` that cannot be expanded is an
+/// error, not a literal directory beside the working directory.
+fn expand_home(text: &str) -> Result<PathBuf, String> {
+    let rest = if text == "~" {
+        ""
+    } else if let Some(rest) = text.strip_prefix("~/") {
+        rest
+    } else if let Some(rest) = text.strip_prefix("~\\") {
+        rest
+    } else {
+        return Ok(PathBuf::from(text));
+    };
+    let home = std::env::var_os("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| "cannot expand `~` in DSH_HOME: HOME is not set".to_owned())?;
+    Ok(home.join(rest))
 }
 
 fn bundle_dir() -> Result<PathBuf, String> {
@@ -1125,6 +1166,126 @@ mod tests {
             raw.push(0);
         }
         raw
+    }
+
+    /// Saves the variables these tests replace and puts them back, so a temp home cannot leak
+    /// into the tests that spawn programs by name.
+    struct HomeEnv {
+        dsh_home: Option<std::ffi::OsString>,
+        home: Option<std::ffi::OsString>,
+        state_dir: Option<std::ffi::OsString>,
+        bundle: Option<std::ffi::OsString>,
+    }
+
+    impl HomeEnv {
+        fn capture() -> Self {
+            Self {
+                dsh_home: std::env::var_os("DSH_HOME"),
+                home: std::env::var_os("HOME"),
+                state_dir: std::env::var_os("BOOTH_STATE_DIR"),
+                bundle: std::env::var_os("BOOTH_SUPERAGENT_DIR"),
+            }
+        }
+    }
+
+    impl Drop for HomeEnv {
+        fn drop(&mut self) {
+            for (name, value) in [
+                ("DSH_HOME", self.dsh_home.take()),
+                ("HOME", self.home.take()),
+                ("BOOTH_STATE_DIR", self.state_dir.take()),
+                ("BOOTH_SUPERAGENT_DIR", self.bundle.take()),
+            ] {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+
+    /// Every path `init` and `up` prepare comes from this directory and is then handed to `dsh`,
+    /// which resolves `DSH_HOME` by its own rules: a blank override is unset and a leading `~`
+    /// names the OS home. Reading the raw value splits the deployment instead.
+    #[test]
+    fn resolves_dsh_home_the_way_dsh_does() {
+        let _env = crate::testkit::env_lock();
+        let env = HomeEnv::capture();
+        let home = std::env::temp_dir().join(format!("booth-home-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("HOME", &home);
+
+        for (value, expected) in [
+            ("~", home.clone()),
+            ("~/dsh", home.join("dsh")),
+            ("~\\dsh", home.join("dsh")),
+        ] {
+            std::env::set_var("DSH_HOME", value);
+            assert_eq!(dsh_home().unwrap(), expected, "DSH_HOME={value:?}");
+        }
+
+        // A blank override is unset, the way DSH treats it.
+        for value in ["", "   "] {
+            std::env::set_var("DSH_HOME", value);
+            assert_eq!(dsh_home().unwrap(), home.join(".dsh"), "DSH_HOME={value:?}");
+        }
+
+        // A literal path is used as given; a word that merely begins with `~` is not a prefix.
+        std::env::set_var("DSH_HOME", "/srv/dsh");
+        assert_eq!(dsh_home().unwrap(), PathBuf::from("/srv/dsh"));
+        std::env::set_var("DSH_HOME", "~other/dsh");
+        assert_eq!(dsh_home().unwrap(), PathBuf::from("~other/dsh"));
+
+        // With no override at all, DSH's default is `$HOME/.dsh`.
+        std::env::remove_var("DSH_HOME");
+        assert_eq!(dsh_home().unwrap(), home.join(".dsh"));
+
+        let _ = fs::remove_dir_all(&home);
+        drop(env);
+    }
+
+    #[test]
+    fn the_service_paths_follow_the_home_dsh_will_use() {
+        let _env = crate::testkit::env_lock();
+        let env = HomeEnv::capture();
+        let home = std::env::temp_dir().join(format!("booth-env-home-{}", std::process::id()));
+        let bundle = std::env::temp_dir().join(format!("booth-env-bundle-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        std::env::set_var("HOME", &home);
+        std::env::set_var("BOOTH_SUPERAGENT_DIR", &bundle);
+        std::env::remove_var("BOOTH_STATE_DIR");
+
+        // The empty override is unset for DSH; booth must not turn every path relative.
+        std::env::set_var("DSH_HOME", "");
+        let cfg = Config::from_env().unwrap();
+        assert_eq!(cfg.dsh_home, home.join(".dsh"));
+        assert!(
+            cfg.state_dir.is_absolute(),
+            "the state directory is not relative to some working directory: {}",
+            cfg.state_dir.display()
+        );
+        assert_eq!(cfg.state_dir, cfg.dsh_home.join("state").join(&cfg.profile));
+        assert_eq!(
+            cfg.patch(),
+            cfg.dsh_home
+                .join("profiles")
+                .join(&cfg.profile)
+                .join("cordis.patch.yml")
+        );
+
+        // A `~` prefix names the same home DSH expands it to.
+        std::env::set_var("DSH_HOME", "~/dsh");
+        let cfg = Config::from_env().unwrap();
+        assert_eq!(cfg.dsh_home, home.join("dsh"));
+        assert_eq!(
+            cfg.state_dir,
+            home.join("dsh").join("state").join(&cfg.profile)
+        );
+
+        let _ = fs::remove_dir_all(&home);
+        drop(env);
     }
 
     #[test]
