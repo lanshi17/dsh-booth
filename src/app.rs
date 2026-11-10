@@ -991,7 +991,19 @@ impl App {
         if let Some(matches) = self.palette() {
             let index = self.selection.min(matches.len().saturating_sub(1));
             let name = matches[index].0.split_whitespace().next().unwrap_or("");
-            self.input = format!("{name} ");
+            // The palette filters on the command word, not on the argument after it. Replace the
+            // word being completed and keep the rest of the line: completing `/ticket <id>` used
+            // to drop the id the operator had already typed.
+            let rest = self
+                .input
+                .find(char::is_whitespace)
+                .map(|index| self.input[index..].to_owned())
+                .unwrap_or_default();
+            self.input = if rest.is_empty() {
+                format!("{name} ")
+            } else {
+                format!("{name}{rest}")
+            };
             self.cursor = self.input.chars().count();
             self.selection = 0;
             self.hist = None;
@@ -3387,6 +3399,35 @@ mod editor_tests {
         app.on_key(key(KeyCode::Esc));
         assert!(app.input.is_empty());
         assert!(app.palette().is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn tab_completion_keeps_the_arguments_already_typed() {
+        let (mut app, dir, _env) = editor("palette-args");
+        // The palette filters on the command word, but the line after it is the user's text:
+        // completing `/ticket <id>` used to replace the whole line and drop the typed id.
+        app.input = "/ticket 03b16192".into();
+        app.cursor = app.input.chars().count();
+        let matches = app.palette().expect("the slash line opens the palette");
+        app.selection = matches
+            .iter()
+            .position(|(name, _)| name.starts_with("/ticket <"))
+            .expect("the ticket detail command is listed");
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(
+            app.input, "/ticket 03b16192",
+            "completion keeps the argument"
+        );
+        assert_eq!(app.cursor, app.input.chars().count());
+
+        // A line with no argument still gains the space that starts one.
+        app.input = "/tick".into();
+        app.cursor = app.input.chars().count();
+        app.selection = 0;
+        app.on_key(key(KeyCode::Tab));
+        assert!(app.input.ends_with(' '), "{:?}", app.input);
+        assert_eq!(app.cursor, app.input.chars().count());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
