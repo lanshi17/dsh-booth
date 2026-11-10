@@ -702,9 +702,12 @@ impl App {
         }
         if decision.outcome == "unavailable" {
             if let Some(trigger) = decision.trigger_ids.first() {
-                let short = trigger.strip_prefix("local-").unwrap_or(trigger);
+                // `/requeue` posts the id it is given to `/triggers/<id>/requeue`, and a console
+                // instruction's trigger id is `local-<line id>`: the prefix is part of the id,
+                // not display decoration. Stripping it named a trigger the service does not
+                // have, so following the advice failed with a 404.
                 self.push(Line::from(Span::styled(
-                    format!("    /requeue {short} puts it back in the agent's queue"),
+                    format!("    /requeue {trigger} puts it back in the agent's queue"),
                     Style::default().fg(FAINT),
                 )));
             }
@@ -3084,10 +3087,13 @@ mod transcript_tests {
     #[test]
     fn an_unavailable_judgement_says_what_to_do_next() {
         let (mut app, dir, _env) = console("unavailable");
+        // The id a console instruction's decision carries is the Source's full trigger id; the
+        // `/requeue` route looks that id up as given.
+        let trigger = "local-3f6c1a9e-7b2d-4c8f-9e1a-5d0b7c2f4a68";
         app.push_decision(&Decision {
             outcome: "unavailable".into(),
             reason: json!([{ "code": "timeout" }]),
-            trigger_ids: vec!["local-abc".into()],
+            trigger_ids: vec![trigger.into()],
             ..Decision::default()
         });
         let shown = text(&app);
@@ -3095,7 +3101,11 @@ mod transcript_tests {
         assert!(shown.contains("timeout"), "{shown}");
         // The advice names both the cause and the way back.
         assert!(shown.contains("Eval timeout"), "{shown}");
-        assert!(shown.contains("/requeue abc"), "{shown}");
+        assert!(shown.contains(&format!("/requeue {trigger}")), "{shown}");
+        assert!(
+            !shown.contains("/requeue 3f6c"),
+            "the advice keeps the id the service uses: {shown}"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
