@@ -1212,11 +1212,15 @@ impl App {
                 self.input = self.history[index + 1].clone();
                 self.cursor = self.input.chars().count();
             }
-            _ => {
+            // Only a line recalled from the history is cleared when the walk passes the newest
+            // entry. With no entry recalled, Down is not an editing key: a fresh draft, even
+            // when the history is empty, stays exactly as typed.
+            Some(_) => {
                 self.hist = None;
                 self.input.clear();
                 self.cursor = 0;
             }
+            None => {}
         }
     }
 
@@ -3523,6 +3527,38 @@ mod editor_tests {
         assert_eq!(app.input, "second");
         app.on_key(key(KeyCode::Down));
         assert_eq!(app.input, "", "past the newest is an empty line");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn down_leaves_a_fresh_draft_alone() {
+        let (mut app, dir, _env) = editor("down-draft");
+        typed(&mut app, "keep this line");
+        app.on_key(key(KeyCode::Left));
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(
+            app.input, "keep this line",
+            "Down outside history navigation is not a delete"
+        );
+        assert_eq!(
+            app.cursor, 13,
+            "the cursor stays where the draft was edited"
+        );
+
+        // It is also not a delete when the history is empty: there is nothing to walk to.
+        app.history.clear();
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "keep this line");
+
+        // Past the newest entry, Down still clears the recalled line.
+        app.history = vec!["first".into(), "second".into()];
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "second");
+        app.on_key(key(KeyCode::Down));
+        assert!(
+            app.input.is_empty(),
+            "leaving the history at its newest end clears the recalled line"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
