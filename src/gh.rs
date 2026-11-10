@@ -168,27 +168,51 @@ impl Archive {
     /// interrupted `/setup` — therefore cannot leave a truncated CLI where the Source would run
     /// it, and a re-install cannot truncate the binary it is replacing.
     fn unpack(self, archive: &Path, member: &str, state_dir: &Path) -> Result<(), String> {
+        self.unpack_with(self.program(), archive, member, state_dir)
+    }
+
+    /// [`unpack`] with the extraction tool named explicitly, so a test can drive a tool that
+    /// fails without changing the process-wide `PATH`.
+    fn unpack_with(
+        self,
+        program: &str,
+        archive: &Path,
+        member: &str,
+        state_dir: &Path,
+    ) -> Result<(), String> {
         let bin = state_dir.join("bin");
         fs::create_dir_all(&bin)
             .map_err(|error| format!("cannot create {}: {error}", bin.display()))?;
         let partial = bin.join(format!("gh-{}.partial", std::process::id()));
         let file = fs::File::create(&partial)
             .map_err(|error| format!("cannot write {}: {error}", partial.display()))?;
-        let mut command = Command::new(self.program());
+        let mut command = Command::new(program);
         match self {
             // `tar -O` and `unzip -p` stream the named member instead of the whole archive.
             Self::TarGz => command.args(["-xOzf"]),
             Self::Zip => command.args(["-p"]),
         };
-        let status = command
+        let output = command
             .arg(archive)
             .arg(member)
             .stdout(Stdio::from(file))
-            .stderr(Stdio::null())
-            .status();
-        if !matches!(status, Ok(ref status) if status.success()) {
+            .output();
+        if !matches!(output, Ok(ref output) if output.status.success()) {
             let _ = fs::remove_file(&partial);
-            let why = status.map_or_else(|e| e.to_string(), |s| s.to_string());
+            let why = match output {
+                // The tool's stderr is where a full disk, a corrupt archive or a missing member
+                // is named; the exit status alone leaves `/setup` with nothing to report.
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let detail = stderr.trim();
+                    if detail.is_empty() {
+                        output.status.to_string()
+                    } else {
+                        format!("{}: {detail}", output.status)
+                    }
+                }
+                Err(error) => error.to_string(),
+            };
             return Err(format!(
                 "{} could not unpack {member}: {why}",
                 self.program()
@@ -660,6 +684,82 @@ mod tests {
             fs::read_dir(state.join("bin")).unwrap().next().is_none(),
             "a failed unpack leaves no partial binary"
         );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_failed_unpack_reports_the_tools_stderr() {
+        // The published checksum covers the download, but not the extraction: a full disk or a
+        // corrupt archive makes the tool stop after it started. Its stderr is the only place that
+        // says why, so it has to survive into the error.
+        let root = scratch("unpack-detail");
+        let state = root.join("state");
+        fs::create_dir_all(&state).unwrap();
+        let broken = root.join("broken");
+        fs::write(&broken, "not an archive").unwrap();
+        // `head` rejects the extraction flags, so its stderr is the explanation the error must
+        // carry. Ask it the same question here instead of guessing its wording.
+        let expected = Command::new("head")
+            .args(["-xOzf"])
+            .arg(&broken)
+            .arg("gh_x/bin/gh")
+            .output()
+            .expect("head is available");
+        assert!(
+            !expected.status.success(),
+            "head refuses the extraction flags"
+        );
+        let stderr = String::from_utf8_lossy(&expected.stderr);
+        let detail = stderr.trim();
+        assert!(!detail.is_empty(), "head explains why it refused");
+
+        let error = Archive::TarGz
+            .unpack_with("head", &broken, "gh_x/bin/gh", &state)
+            .unwrap_err();
+        assert!(error.contains("tar could not unpack"), "{error}");
+        assert!(error.contains(detail), "{error}");
+        assert!(!state.join("bin").join("gh").exists());
+        assert!(
+            fs::read_dir(state.join("bin")).unwrap().next().is_none(),
+            "a failed unpack leaves no partial binary"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_unpack_failure_without_stderr_keeps_the_status() {
+        let root = scratch("unpack-no-stderr");
+        let state = root.join("state");
+        fs::create_dir_all(&state).unwrap();
+        let broken = root.join("broken");
+        fs::write(&broken, "not an archive").unwrap();
+        let error = Archive::TarGz
+            .unpack_with("false", &broken, "gh_x/bin/gh", &state)
+            .unwrap_err();
+
+        assert!(error.contains("tar could not unpack"), "{error}");
+        assert!(error.contains("exit status: 1"), "{error}");
+        assert!(!state.join("bin").join("gh").exists());
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_extractor_that_cannot_start_is_named_with_the_os_error() {
+        let root = scratch("unpack-missing-tool");
+        let state = root.join("state");
+        fs::create_dir_all(&state).unwrap();
+        let broken = root.join("broken");
+        fs::write(&broken, "not an archive").unwrap();
+        let error = Archive::TarGz
+            .unpack_with("booth-missing-extractor", &broken, "gh_x/bin/gh", &state)
+            .unwrap_err();
+
+        assert!(error.contains("tar could not unpack"), "{error}");
+        assert!(
+            error.contains("No such file") || error.contains("os error 2"),
+            "{error}"
+        );
+        assert!(!state.join("bin").join("gh").exists());
         fs::remove_dir_all(&root).ok();
     }
 
