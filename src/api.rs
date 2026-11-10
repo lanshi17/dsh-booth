@@ -190,8 +190,43 @@ impl Api {
         })
     }
 
+    /// One Thread with its whole timeline, not just the newest page.
+    ///
+    /// `/threads/{key}` pages its `timeline` (50 by default) and serves the cursor for the next
+    /// older page in `earlier`; `format::thread_detail` prints that cursor, but no command can
+    /// pass it back, so `booth thread` showed the newest 50 messages of a long thread and left
+    /// the rest unreachable. Follow the cursor and prepend each older page, as the web panel's
+    /// "load more" does, so the view the console prints is the whole thread.
     pub fn thread(&self, key: &str) -> Result<ThreadDetail, ApiError> {
-        self.get_as(&format!("/threads/{}", enc(key)))
+        let path = format!("/threads/{}", enc(key));
+        let mut view: ThreadDetail = self.get_as(&path)?;
+        let mut older = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut earlier = view.earlier.clone();
+        while let Some(before) = earlier.clone() {
+            // A cursor that does not move would repeat the same page; keep the served cursor
+            // and stop instead of looping on it.
+            if !seen.insert(before.clone()) {
+                break;
+            }
+            let page: ThreadDetail = self.get_as(&format!("{}?before={}", path, enc(&before)))?;
+            if page.timeline.is_empty() {
+                earlier = page.earlier.clone();
+                break;
+            }
+            older.push(page.timeline);
+            earlier = page.earlier.clone();
+        }
+        // Each page holds the newest items older than the previous page's oldest, oldest-first,
+        // so the pages are prepended in reverse fetch order.
+        let mut timeline = Vec::new();
+        for page in older.into_iter().rev() {
+            timeline.extend(page);
+        }
+        timeline.append(&mut view.timeline);
+        view.timeline = timeline;
+        view.earlier = earlier;
+        Ok(view)
     }
 
     pub fn decisions(&self) -> Result<DecisionList, ApiError> {
@@ -442,6 +477,50 @@ mod tests {
         assert_eq!(page.items.len(), 2);
         assert_eq!(page.total, 2);
         assert_eq!(page.next_offset, None);
+    }
+
+    #[test]
+    fn a_thread_detail_reads_the_earlier_timeline_pages() {
+        // `/threads/{key}` serves the newest 50 timeline items and the cursor for the older page
+        // in `earlier`. `format::thread_detail` prints that cursor, but no command accepts it, so
+        // a long thread's older messages were unreachable from the console.
+        let service = FakeApi::start();
+        let cursor = "2026-11-10T00:00:00.000Z|t1";
+        let key = enc("github:1");
+        service.set_route(
+            &format!("/threads/{key}"),
+            json!({
+                "key": "github:1",
+                "source": "github",
+                "title": "one",
+                "stage": "subscribed",
+                "timeline": [
+                    { "id": "t2", "source": "github", "human": true,
+                      "at": "2026-11-10T00:01:00.000Z", "preview": "newer" }
+                ],
+                "earlier": cursor
+            }),
+        );
+        service.set_route(
+            &format!("/threads/{key}?before={}", enc(cursor)),
+            json!({
+                "key": "github:1",
+                "source": "github",
+                "title": "one",
+                "stage": "subscribed",
+                "timeline": [
+                    { "id": "t1", "source": "github", "human": true,
+                      "at": "2026-11-10T00:00:00.000Z", "preview": "older" }
+                ],
+                "earlier": null
+            }),
+        );
+        let view = Api::new(&service.base)
+            .thread("github:1")
+            .expect("both served pages decode");
+        let ids: Vec<&str> = view.timeline.iter().map(|item| item.id.as_str()).collect();
+        assert_eq!(ids, ["t1", "t2"], "older messages come before newer ones");
+        assert_eq!(view.earlier, None, "the whole timeline was read");
     }
 
     #[test]
