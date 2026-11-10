@@ -89,13 +89,38 @@ pub fn ensure(cfg: &service::Config, download: bool) -> Result<Option<String>, S
         return Err(installing_hint(&local));
     }
     install(cfg)?;
-    if !capable(&local) {
-        return Err(format!(
-            "{} was installed but does not support `gh api --slurp`",
-            local.display()
-        ));
+    let path = local.display().to_string();
+    // The installed CLI is checksum-verified to be the pinned release, which has the flag, so a
+    // failure here is about running it: report what actually happened instead of blaming the flag.
+    match Command::new(&local).args(["api", "--help"]).output() {
+        Ok(output)
+            if output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("--slurp") =>
+        {
+            Ok(Some(path))
+        }
+        Ok(output) if output.status.success() => Err(format!(
+            "{path} was installed but does not support `gh api --slurp`"
+        )),
+        Ok(output) => {
+            let status = output.status;
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim();
+            Err(if detail.is_empty() {
+                format!("{path} was installed but `gh api --help` failed ({status})")
+            } else {
+                format!("{path} was installed but `gh api --help` failed ({status}): {detail}")
+            })
+        }
+        Err(error) => Err(format!(
+            "{path} was installed but cannot run: {error}{}",
+            if error.kind() == std::io::ErrorKind::PermissionDenied {
+                "; the state directory must be on a filesystem that allows executables"
+            } else {
+                ""
+            }
+        )),
     }
-    Ok(Some(local.display().to_string()))
 }
 
 fn installing_hint(local: &Path) -> String {
@@ -376,6 +401,114 @@ mod tests {
         fs::remove_dir_all(&root).ok();
     }
 
+    /// Installs a loopback fixture release whose `bin/gh` is `body`, with an older `gh` first on
+    /// PATH so the system CLI cannot serve the reads. The environment is restored before the
+    /// result is returned, so a failing assertion cannot leak into the tests that follow.
+    fn ensure_a_fixture_install(root: &Path, body: &str) -> Result<Option<String>, String> {
+        let shadow = root.join("path");
+        fs::create_dir_all(&shadow).unwrap();
+        let older = shadow.join("gh");
+        fs::write(&older, "#!/bin/sh\necho '      --paginate'\n").unwrap();
+        fs::set_permissions(&older, fs::Permissions::from_mode(0o755)).unwrap();
+        let previous = std::env::var_os("PATH").unwrap_or_default();
+        let mut search = vec![shadow];
+        search.extend(std::env::split_paths(&previous));
+        std::env::set_var("PATH", std::env::join_paths(search).unwrap());
+
+        let target = target().unwrap();
+        let (asset, bytes) = fixture_with(root, target, Archive::for_target(target), body);
+        let published = format!("{}  {asset}\n", sha256(&bytes));
+        let (base, stop, server) = serve_release(asset, bytes, published);
+        let release = set_release_base(&base);
+        let result = ensure(&config(root), true);
+        restore_release_base(release);
+        stop.store(true, Ordering::Relaxed);
+        server.join().unwrap();
+        std::env::set_var("PATH", previous);
+        result
+    }
+
+    #[test]
+    fn ensure_selects_the_installed_pinned_cli() {
+        let _env = crate::testkit::env_lock();
+        let root = scratch("select");
+        let body = "#!/bin/sh\ncase \"$1 $2\" in\n  'api --help') echo '      --slurp  use with --paginate' ;;\n  *) echo fixture ;;\nesac\n";
+        let selected = ensure_a_fixture_install(&root, body).unwrap().unwrap();
+        assert!(Path::new(&selected).is_absolute(), "{selected}");
+        assert!(selected.ends_with("state/bin/gh"), "{selected}");
+        assert!(Path::new(&selected).exists(), "{selected}");
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_installed_cli_that_cannot_run_reports_the_exec_error() {
+        let _env = crate::testkit::env_lock();
+        // A stored file that is not a program: the kernel refuses it with ENOEXEC, and there is
+        // no permission advice to give.
+        let root = scratch("cannot-run");
+        let error = ensure_a_fixture_install(&root, "this is not an executable\n").unwrap_err();
+        assert!(error.contains("was installed but cannot run"), "{error}");
+        assert!(!error.contains("does not support"), "{error}");
+        assert!(
+            !error.contains("filesystem that allows executables"),
+            "{error}"
+        );
+        fs::remove_dir_all(&root).ok();
+
+        // A script whose interpreter cannot be executed: the kernel refuses it with EACCES, the
+        // shape a `noexec` state directory has, so the error names the filesystem to check.
+        let root = scratch("cannot-execute");
+        fs::create_dir_all(root.join("interp")).unwrap();
+        let body = format!("#!/{}\necho hi\n", root.join("interp").display());
+        let error = ensure_a_fixture_install(&root, &body).unwrap_err();
+        assert!(error.contains("was installed but cannot run"), "{error}");
+        assert!(
+            error.contains("filesystem that allows executables"),
+            "{error}"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn an_installed_cli_whose_help_fails_reports_the_helper_output() {
+        let _env = crate::testkit::env_lock();
+        // The CLI runs but its help fails: its stderr is the explanation to surface, and an empty
+        // stderr still reports the status instead of inventing a detail.
+        for (index, (body, detail)) in [
+            (
+                "#!/bin/sh\necho 'help is broken' >&2\nexit 3\n",
+                Some("help is broken"),
+            ),
+            ("#!/bin/sh\nexit 3\n", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let root = scratch(&format!("help-fails-{index}"));
+            let error = ensure_a_fixture_install(&root, body).unwrap_err();
+            assert!(error.contains("`gh api --help` failed"), "{error}");
+            match detail {
+                Some(detail) => assert!(error.contains(detail), "{error}"),
+                None => assert!(error.ends_with("(exit status: 3)"), "{error}"),
+            }
+            fs::remove_dir_all(&root).ok();
+        }
+    }
+
+    #[test]
+    fn an_installed_cli_without_the_flag_is_still_named() {
+        let _env = crate::testkit::env_lock();
+        let root = scratch("no-flag");
+        // The one case the old message was true for: help succeeds but has no `--slurp`.
+        let error = ensure_a_fixture_install(&root, "#!/bin/sh\necho 'no such flag'\nexit 0\n")
+            .unwrap_err();
+        assert!(
+            error.contains("does not support `gh api --slurp`"),
+            "{error}"
+        );
+        fs::remove_dir_all(&root).ok();
+    }
+
     fn sha256(bytes: &[u8]) -> String {
         Sha256::digest(bytes)
             .iter()
@@ -385,10 +518,15 @@ mod tests {
 
     /// Pack the release tree the way GitHub publishes it: the top directory holds `bin/gh`.
     fn fixture(root: &Path, target: &str, archive: Archive) -> (String, Vec<u8>) {
+        fixture_with(root, target, archive, FIXTURE_GH)
+    }
+
+    /// The same fixture with `body` as the published CLI, for a release that cannot do the job.
+    fn fixture_with(root: &Path, target: &str, archive: Archive, body: &str) -> (String, Vec<u8>) {
         let top = format!("gh_{VERSION}_{target}");
         let bin = root.join(&top).join("bin");
         fs::create_dir_all(&bin).unwrap();
-        fs::write(bin.join("gh"), FIXTURE_GH).unwrap();
+        fs::write(bin.join("gh"), body).unwrap();
         fs::set_permissions(bin.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
         let asset = format!("{top}{}", archive.suffix());
         let path = root.join(&asset);
