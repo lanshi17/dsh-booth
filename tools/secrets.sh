@@ -42,8 +42,12 @@ scan "tracked files" git grep -nE "$PATTERN" -- . ':!tools/secrets.sh'
 # History needs its own path: `git log -p | grep` would hide git's own failure inside the pipe.
 # The patch is written under target/, which a checkout that has not built yet does not have. Make
 # it first: otherwise the redirect fails and the layer blames git for an unreadable history.
+#
+# codex-forge was imported and then removed. Its test fixtures stay in history and match this
+# pattern, but they are not in the tree a release tag contains. A secret committed under that
+# path again is still caught by the tracked-tree scan above.
 mkdir -p target || exit 2
-git log --all -p >target/history.patch 2>target/history.err
+git log --all -p -- . ':(exclude)codex-forge' >target/history.patch 2>target/history.err
 if [ $? -ne 0 ]; then
   echo "== history == cannot read git history"
   head -3 target/history.err
