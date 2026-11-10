@@ -1,3 +1,0 @@
-    Checking forge-agent-dsh v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-dsh)
-    Checking forge-agent-omp v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-omp)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.14s
