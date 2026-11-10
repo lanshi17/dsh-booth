@@ -282,6 +282,23 @@ fn problem_line(problem: &Value) -> L {
     let detail = match (kind, source) {
         ("source-error", Some(source)) if detail.is_empty() => source.to_string(),
         ("source-error", Some(source)) => format!("{source} · {detail}"),
+        // An unavailable Eval carries the Decision's reason beside the Thread it concerns. The
+        // line printed the Thread alone, so `/overview` said an Eval was unavailable but not why
+        // (a timeout, a Policy change, an assessor error); the panel shows the reason for the
+        // same problem. Keep both fields, and no empty separator when either is missing.
+        ("eval-unavailable", _) => {
+            let why = problem
+                .get("reason")
+                .filter(|reason| !reason.is_null())
+                .map(reason)
+                .unwrap_or_default();
+            match (detail.is_empty(), why.is_empty()) {
+                (false, false) => format!("{detail} · {why}"),
+                (false, true) => detail.to_string(),
+                (true, false) => why,
+                (true, true) => String::new(),
+            }
+        }
         _ => detail.to_string(),
     };
     let label = match kind {
@@ -1254,5 +1271,58 @@ mod tests {
             .find(|line| line.contains("inbox unreadable"))
             .expect("the untitled Source error is shown");
         assert_eq!(untitled, "  · Source error: inbox unreadable");
+    }
+
+    #[test]
+    fn an_unavailable_eval_says_why() {
+        // The bundle's `eval-unavailable` problem carries the Thread it concerns and the
+        // Decision's `reason` (`src/app/views/overview.ts`). The line printed only the Thread,
+        // so `/overview` said an Eval was unavailable without saying why, and the panel shows
+        // the reason for the same problem.
+        let view: Overview = serde_json::from_value(json!({
+            "problems": [{
+                "kind": "eval-unavailable",
+                "decisionId": "d-3",
+                "thread": { "key": "github:o/r#12", "title": "Issue #12 flaky retry" },
+                "reason": [{ "code": "timeout" }],
+                "triggerId": "tr-1"
+            }, {
+                "kind": "eval-unavailable",
+                "thread": { "key": "github:o/r#13", "title": "Issue #13" },
+                "reason": { "code": "policyChanged" }
+            }, {
+                // An older problem without a reason must not gain a dangling separator.
+                "kind": "eval-unavailable",
+                "thread": { "key": "github:o/r#14", "title": "Issue #14" }
+            }],
+            "person": [],
+            "executor": {},
+            "flow": {},
+            "policyVersion": null
+        }))
+        .expect("the bundle's overview decodes");
+        let shown: Vec<String> = overview(&view, "http://127.0.0.1:3899")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        // A one-object reason array is still a reason, and the Thread stays in front of it.
+        assert!(
+            shown
+                .iter()
+                .any(|line| line == "  · Eval unavailable: Issue #12 flaky retry · timeout"),
+            "the unavailable Eval names its Thread and why: {shown:?}"
+        );
+        assert!(
+            shown
+                .iter()
+                .any(|line| line == "  · Eval unavailable: Issue #13 · policyChanged"),
+            "a single reason object is worded like the array: {shown:?}"
+        );
+        assert!(
+            shown
+                .iter()
+                .any(|line| line == "  · Eval unavailable: Issue #14"),
+            "a reasonless problem keeps the old line: {shown:?}"
+        );
     }
 }
