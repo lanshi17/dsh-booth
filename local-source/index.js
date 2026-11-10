@@ -249,6 +249,10 @@ export function apply(ctx, config = {}) {
     schema: Config,
     fields: [],
     health: [HEALTH],
+    // The console is one receiving scope. Naming its admission row is what makes the Policy's
+    // cells for "console" decide an instruction from a sender who is not on the allowed list;
+    // without a scope the registry reports no row and the saved cells are never consulted.
+    scope: () => ({ listened: true, observed: false, row: 'console' }),
     policy: {
       schema: Policy,
       fields: [{
