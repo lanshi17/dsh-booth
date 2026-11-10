@@ -56,7 +56,7 @@ const LOGO_COLORS: [Color; 6] = [
 const TIPS: [&str; 4] = [
     "Bare text is an instruction: the agent turns it into a ticket.",
     "/setup names the repository, once; then instructions just work.",
-    "/provider shows the model the agent runs with; /model switches it.",
+    "/provider opens the provider screen: language, typesafe, search, documents.",
     "Ctrl+P opens the palette, Ctrl+R searches history; /keys lists them all.",
 ];
 
@@ -109,6 +109,23 @@ enum Modal {
     },
     /// `/keys`: the shortcuts, one screen.
     Keys,
+    /// `/provider`: every provider the team can be pointed at, grouped the way omp groups them.
+    Providers(ProviderScreen),
+}
+
+/// Which list the provider screen is showing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ProviderStep {
+    Duties,
+    Providers,
+    Models,
+}
+
+struct ProviderScreen {
+    duty: usize,
+    provider: String,
+    step: ProviderStep,
+    selected: usize,
 }
 
 /// Browser sign-in state. `attempt` arrives once `auth_init` answers; `paste` accepts the
@@ -1310,8 +1327,7 @@ impl App {
                 Span::styled("  ❯ ", Style::default().fg(CYAN)),
                 Span::styled(line.clone(), Style::default().fg(TEXT)),
             ]));
-            self.push_lines(intake::summary(&self.catalog));
-            // Refresh the catalog from the service so the view is never a stale copy.
+            self.open_providers();
             self.refresh_status();
             return;
         }
@@ -1470,8 +1486,115 @@ impl App {
             Some(Modal::Model(pick)) => self.model_key(key, pick),
             Some(Modal::History { query, selected }) => self.history_key(key, query, selected),
             Some(Modal::Keys) => {}
+            Some(Modal::Providers(screen)) => self.provider_key(key, screen),
             None => {}
         }
+    }
+
+    fn open_providers(&mut self) {
+        self.modal = Some(Modal::Providers(ProviderScreen {
+            duty: 0,
+            provider: String::new(),
+            step: ProviderStep::Duties,
+            selected: 0,
+        }));
+    }
+
+    fn provider_key(&mut self, key: KeyEvent, mut screen: ProviderScreen) {
+        let providers: Vec<(String, String)> = self.catalog.providers();
+        let models = provider::models_for(
+            &self.catalog,
+            &screen.provider,
+            provider::DUTIES[screen.duty].id,
+        );
+        let count = match screen.step {
+            ProviderStep::Duties => provider::DUTIES.len(),
+            ProviderStep::Providers => providers.len() + 1,
+            ProviderStep::Models => models.len().max(1),
+        };
+        match key.code {
+            KeyCode::Esc => {
+                screen.step = match screen.step {
+                    ProviderStep::Models => ProviderStep::Providers,
+                    ProviderStep::Providers => ProviderStep::Duties,
+                    ProviderStep::Duties => return,
+                };
+                if screen.step == ProviderStep::Duties {
+                    screen.selected = screen.duty;
+                } else {
+                    screen.selected = 0;
+                }
+            }
+            KeyCode::Up => screen.selected = screen.selected.saturating_sub(1),
+            KeyCode::Down => screen.selected = (screen.selected + 1).min(count.saturating_sub(1)),
+            KeyCode::Char('a') if key.modifiers.is_empty() => {
+                self.open_login("");
+                return;
+            }
+            KeyCode::Enter => match screen.step {
+                ProviderStep::Duties => {
+                    screen.duty = screen.selected;
+                    screen.step = ProviderStep::Providers;
+                    screen.selected = 0;
+                }
+                ProviderStep::Providers => {
+                    if screen.selected >= providers.len() {
+                        self.open_login("");
+                        return;
+                    }
+                    screen.provider = providers[screen.selected].0.clone();
+                    screen.step = ProviderStep::Models;
+                    screen.selected = 0;
+                }
+                ProviderStep::Models => {
+                    if models.is_empty() {
+                        self.modal = Some(Modal::Providers(screen));
+                        return;
+                    }
+                    let model = models[screen.selected.min(models.len() - 1)].clone();
+                    let duty = &provider::DUTIES[screen.duty];
+                    let Some(cfg) = self.config.clone() else {
+                        self.push(Line::from(Span::styled(
+                            "! no profile to write",
+                            Style::default().fg(RED),
+                        )));
+                        return;
+                    };
+                    let saved = if duty.id == "language" {
+                        provider::set_default(&cfg, &screen.provider, &model)
+                    } else {
+                        provider::save_assignment(&cfg, duty.profile, &screen.provider, &model)
+                    };
+                    match saved {
+                        Ok(()) => {
+                            self.push(Line::from(vec![
+                                Span::styled(
+                                    format!("{} ", duty.label),
+                                    Style::default().fg(GREEN),
+                                ),
+                                Span::styled(
+                                    format!("{} · {model}", screen.provider),
+                                    Style::default(),
+                                ),
+                            ]));
+                            if duty.id == "language" {
+                                self.catalog.default = Some((screen.provider.clone(), model));
+                                self.restart_service();
+                                return;
+                            }
+                            screen.step = ProviderStep::Duties;
+                            screen.selected = screen.duty;
+                        }
+                        Err(error) => self.push(Line::from(Span::styled(
+                            format!("! {error}"),
+                            Style::default().fg(RED),
+                        ))),
+                    }
+                }
+            },
+            _ => {}
+        }
+        self.modal = Some(Modal::Providers(screen));
     }
 
     fn login_list_key(&mut self, key: KeyEvent, mut selected: usize) {
@@ -2139,12 +2262,26 @@ impl App {
         }
 
         if let Some(modal) = &self.modal {
-            draw_modal(frame, area, modal, &self.catalog, &self.history);
+            draw_modal(
+                frame,
+                area,
+                modal,
+                &self.catalog,
+                &self.history,
+                self.config.as_ref(),
+            );
         }
     }
 }
 
-fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, catalog: &Catalog, history: &[String]) {
+fn draw_modal(
+    frame: &mut Frame,
+    area: Rect,
+    modal: &Modal,
+    catalog: &Catalog,
+    history: &[String],
+    config: Option<&service::Config>,
+) {
     match modal {
         Modal::LoginList { selected } => draw_login_list(frame, area, *selected),
         Modal::Login(form) => draw_login(frame, area, form),
@@ -2152,7 +2289,137 @@ fn draw_modal(frame: &mut Frame, area: Rect, modal: &Modal, catalog: &Catalog, h
         Modal::Model(pick) => draw_model(frame, area, pick, catalog),
         Modal::History { query, selected } => draw_history(frame, area, query, *selected, history),
         Modal::Keys => draw_keys(frame, area),
+        Modal::Providers(screen) => draw_providers(frame, area, screen, catalog, config),
     }
+}
+
+fn draw_providers(
+    frame: &mut Frame,
+    area: Rect,
+    screen: &ProviderScreen,
+    catalog: &Catalog,
+    config: Option<&service::Config>,
+) {
+    let providers = catalog.providers();
+    let models = provider::models_for(catalog, &screen.provider, provider::DUTIES[screen.duty].id);
+    let body = match screen.step {
+        ProviderStep::Duties => provider::DUTIES.len() + provider::DUTIES.len(),
+        ProviderStep::Providers => providers.len() + 1,
+        ProviderStep::Models => models.len().max(1),
+    };
+    let width = area.width.saturating_sub(8).clamp(48, 78).min(area.width);
+    let height = (body as u16 + 4).min(area.height);
+    let rect = Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    };
+    frame.render_widget(Clear, rect);
+    let title = match screen.step {
+        ProviderStep::Duties => " providers ",
+        ProviderStep::Providers => " provider ",
+        ProviderStep::Models => " model ",
+    };
+    let block = Block::bordered()
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(title, Style::default().fg(MUTED)));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    let mut lines = vec![Line::from(Span::styled(
+        match screen.step {
+            ProviderStep::Duties => " Language, typesafe, search and documents.",
+            ProviderStep::Providers => " Which provider serves this.",
+            ProviderStep::Models => " Which model it uses.",
+        },
+        Style::default().fg(DIM),
+    ))];
+    match screen.step {
+        ProviderStep::Duties => {
+            let mut group = "";
+            for (index, duty) in provider::DUTIES.iter().enumerate() {
+                if duty.group != group {
+                    group = duty.group;
+                    lines.push(Line::from(Span::styled(
+                        format!(" {group}"),
+                        Style::default().fg(FAINT),
+                    )));
+                }
+                let active = index == screen.selected;
+                lines.push(Line::from(vec![
+                    Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+                    Span::styled(
+                        format!("{:<10}", duty.label),
+                        if active {
+                            Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(TEXT)
+                        },
+                    ),
+                    Span::styled(
+                        provider::current_route(config, catalog, duty),
+                        Style::default().fg(if active { TEXT } else { MUTED }),
+                    ),
+                ]));
+            }
+        }
+        ProviderStep::Providers => {
+            for (index, (id, name)) in providers.iter().enumerate() {
+                let active = index == screen.selected;
+                lines.push(Line::from(vec![
+                    Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+                    Span::styled(
+                        id.clone(),
+                        if active {
+                            Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(MUTED)
+                        },
+                    ),
+                    Span::styled(format!("  {name}"), Style::default().fg(DIM)),
+                ]));
+            }
+            let add = screen.selected >= providers.len();
+            lines.push(Line::from(vec![
+                Span::styled(if add { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+                Span::styled(
+                    "＋ add a provider…",
+                    if add {
+                        Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(DIM)
+                    },
+                ),
+            ]));
+        }
+        ProviderStep::Models => {
+            if models.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    " this provider lists no model",
+                    Style::default().fg(DIM),
+                )));
+            }
+            for (index, model) in models.iter().enumerate() {
+                let active = index == screen.selected;
+                lines.push(Line::from(vec![
+                    Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
+                    Span::styled(
+                        model.clone(),
+                        if active {
+                            Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+            }
+        }
+    }
+    lines.push(Line::from(Span::styled(
+        " ↑↓ move · Enter open · a add · Esc back",
+        Style::default().fg(DIM),
+    )));
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The shortcuts, as omp lists its hotkeys.
@@ -4566,7 +4833,7 @@ mod provider_view_tests {
     }
 
     #[test]
-    fn typing_provider_prints_the_shared_view() {
+    fn typing_provider_opens_the_screen() {
         let (mut app, root, _env) = console();
         app.catalog = Catalog::parse(&serde_json::json!({
             "default": { "provider": "deepseek-official", "model": "deepseek-flash" },
@@ -4575,12 +4842,23 @@ mod provider_view_tests {
         }));
         app.input = "/provider".into();
         app.submit();
-        let shown = text(&app);
-        assert!(
-            shown.contains("deepseek-official · deepseek-flash"),
-            "{shown}"
-        );
-        assert!(shown.contains("no booth-side file"), "{shown}");
+        match &app.modal {
+            Some(Modal::Providers(screen)) => {
+                assert_eq!(screen.step, ProviderStep::Duties);
+                assert_eq!(screen.selected, 0);
+            }
+            _ => panic!("/provider opens the provider screen"),
+        }
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        app.modal_key(key(KeyCode::Down));
+        app.modal_key(key(KeyCode::Down));
+        app.modal_key(key(KeyCode::Enter));
+        app.modal_key(key(KeyCode::Enter));
+        app.modal_key(key(KeyCode::Enter));
+        let patch = crate::service::Patch::read(&app.config.clone().unwrap()).unwrap();
+        let search = &patch.get("search-model").unwrap()["config"];
+        assert_eq!(search["provider"], "deepseek-official");
+        assert_eq!(search["model"], "deepseek-flash");
         std::fs::remove_dir_all(root).unwrap();
     }
 

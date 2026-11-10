@@ -128,6 +128,116 @@ impl Catalog {
     }
 }
 
+/// One job a provider can be asked to do. The console's `/provider` screen lists these, in order.
+pub struct Duty {
+    pub id: &'static str,
+    pub group: &'static str,
+    pub label: &'static str,
+    /// Profile entry that remembers the choice. The language duty is the agent's own default.
+    pub profile: &'static str,
+    /// Shown, and used, when the profile has no entry yet.
+    pub fallback: Option<(&'static str, &'static str)>,
+}
+
+pub const DUTIES: &[Duty] = &[
+    Duty {
+        id: "language",
+        group: "Language",
+        label: "model",
+        profile: "agent-default-model",
+        fallback: None,
+    },
+    Duty {
+        id: "typesafe",
+        group: "Typesafe",
+        label: "decision",
+        profile: "decider-model",
+        fallback: Some(("commandcode", "typesafe/jev")),
+    },
+    Duty {
+        id: "search",
+        group: "Search",
+        label: "web",
+        profile: "search-model",
+        fallback: None,
+    },
+    Duty {
+        id: "documents",
+        group: "Documents",
+        label: "reader",
+        profile: "document-model",
+        fallback: None,
+    },
+];
+
+/// The provider and model a duty currently uses, if the profile names one.
+pub fn assignment(cfg: &Config, profile: &str) -> Option<(String, String)> {
+    let patch = Patch::read(cfg).ok()?;
+    let config = patch.get(profile)?.get("config")?;
+    let provider = config.get("provider").and_then(Value::as_str)?;
+    let model = config.get("model").and_then(Value::as_str)?;
+    if provider.is_empty() || model.is_empty() {
+        None
+    } else {
+        Some((provider.to_owned(), model.to_owned()))
+    }
+}
+
+/// What the provider screen shows for one duty.
+pub fn current_route(cfg: Option<&Config>, catalog: &Catalog, duty: &Duty) -> String {
+    if let Some(cfg) = cfg {
+        if let Some((provider, model)) = assignment(cfg, duty.profile) {
+            return format!("{provider} · {model}");
+        }
+    }
+    if duty.id == "language" {
+        if let Some((provider, model)) = &catalog.default {
+            return format!("{provider} · {model}");
+        }
+    }
+    match duty.fallback {
+        Some((provider, model)) => format!("{provider} · {model}"),
+        None => "not set".into(),
+    }
+}
+
+/// Models of one provider. A typesafe duty also offers the decision models, which are not chat models.
+pub fn models_for(catalog: &Catalog, provider: &str, duty_id: &str) -> Vec<String> {
+    let mut models: Vec<String> = catalog
+        .choices
+        .iter()
+        .filter(|choice| choice.provider == provider)
+        .map(|choice| choice.model.clone())
+        .collect();
+    if duty_id == "typesafe" {
+        for extra in ["typesafe/jev-1.14.0", "typesafe/jev"] {
+            if !models.iter().any(|model| model == extra) {
+                models.insert(0, extra.to_owned());
+            }
+        }
+    }
+    models
+}
+
+/// Remember a duty's provider and model. The language duty keeps its own writer, which preserves
+/// a reasoning effort already stored beside the pair.
+pub fn save_assignment(
+    cfg: &Config,
+    profile: &str,
+    provider: &str,
+    model: &str,
+) -> Result<(), String> {
+    if provider.trim().is_empty() || model.trim().is_empty() {
+        return Err("a provider route needs a provider and a model".into());
+    }
+    if profile == "agent-default-model" {
+        return set_default(cfg, provider, model);
+    }
+    let mut patch = Patch::read(cfg)?;
+    patch.set_config(profile, json!({ "provider": provider, "model": model }));
+    patch.write(cfg)
+}
+
 /// Points the profile's default model at `provider`/`model`.
 pub fn set_default(cfg: &Config, provider: &str, model: &str) -> Result<(), String> {
     let mut patch = Patch::read(cfg)?;
