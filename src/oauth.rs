@@ -230,50 +230,197 @@ pub fn account_signed_in() -> bool {
 
 fn store_grant(token: &str, device: &str) -> Result<(), String> {
     let path = credentials_path()?;
-    let mut root: Value = match fs::read_to_string(&path) {
-        Ok(text) => serde_norway::from_str(&text)
-            .map_err(|error| format!("cannot parse {}: {error}", path.display()))?,
-        // Only an absent file is a fresh store. Any other read failure — an unreadable mode, a
-        // truncated write, an I/O error — must not read as "empty": the write below would then
-        // replace the shared file and take DSH's records, including the account grant, with it.
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            json!({ "version": 1, "refs": {}, "records": {} })
-        }
-        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
-    };
-    if !root.is_object() {
-        root = json!({ "version": 1, "records": {} });
-    }
-    let records = root
-        .as_object_mut()
-        .expect("checked above")
-        .entry("records")
-        .or_insert_with(|| json!({}));
-    let records = records
-        .as_object_mut()
-        .ok_or("credentials `records` is not a map")?;
-
-    // Keep the device the exchange just named. A different id here would mean the platform
-    // registered one device and the next sign-in presented another.
-    records.insert(
-        DEVICE_KEY.to_owned(),
-        json!({ "kind": "grant", "payload": { "id": device } }),
-    );
-    records.insert(
-        GRANT_KEY.to_owned(),
-        json!({
-            "kind": "grant",
-            "payload": { "version": 1, "token": token, "issuer": ORIGIN },
-        }),
-    );
-
-    let text = serde_norway::to_string(&root)
-        .map_err(|error| format!("cannot encode credentials: {error}"))?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("cannot create {}: {error}", parent.display()))?;
     }
-    replace_store(&path, &text)
+    // The rename below is atomic for readers, but this is a read-modify-write cycle: another
+    // writer (DSH itself, or another booth command) that commits between the read and the
+    // rename would have its record silently replaced by the bytes this cycle started from. DSH
+    // serializes its own cycles with the store's `<file>.lock` sibling, so take the same lock
+    // before reading and hold it until the replacement is committed.
+    with_store_lock(&path, || {
+        let mut root: Value = match fs::read_to_string(&path) {
+            Ok(text) => serde_norway::from_str(&text)
+                .map_err(|error| format!("cannot parse {}: {error}", path.display()))?,
+            // Only an absent file is a fresh store. Any other read failure — an unreadable mode,
+            // a truncated write, an I/O error — must not read as "empty": the write below would
+            // then replace the shared file and take DSH's records, including the account grant,
+            // with it.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                json!({ "version": 1, "refs": {}, "records": {} })
+            }
+            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+        };
+        if !root.is_object() {
+            root = json!({ "version": 1, "records": {} });
+        }
+        let records = root
+            .as_object_mut()
+            .expect("checked above")
+            .entry("records")
+            .or_insert_with(|| json!({}));
+        let records = records
+            .as_object_mut()
+            .ok_or("credentials `records` is not a map")?;
+
+        // Keep the device the exchange just named. A different id here would mean the platform
+        // registered one device and the next sign-in presented another.
+        records.insert(
+            DEVICE_KEY.to_owned(),
+            json!({ "kind": "grant", "payload": { "id": device } }),
+        );
+        records.insert(
+            GRANT_KEY.to_owned(),
+            json!({
+                "kind": "grant",
+                "payload": { "version": 1, "token": token, "issuer": ORIGIN },
+            }),
+        );
+
+        let text = serde_norway::to_string(&root)
+            .map_err(|error| format!("cannot encode credentials: {error}"))?;
+        replace_store(&path, &text)
+    })
+}
+
+/// Hold the store's cross-process writer lock around one read-modify-rename cycle. The lock is a
+/// `<store>.lock` sibling that records the writer's pid, the same file and format DSH's own
+/// credentials store uses, so the two writers serialize against each other. Readers stay
+/// lock-free: the rename commit is atomic.
+fn with_store_lock<T>(
+    store: &Path,
+    operation: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let lock = acquire_store_lock(store)?;
+    let result = operation();
+    drop(lock);
+    result
+}
+
+/// A held writer lock; dropping it releases the lock file, on the error path too.
+struct StoreLock {
+    path: PathBuf,
+}
+
+impl Drop for StoreLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// How long a contender waits for the writer lock before reporting it. DSH sizes the wait for its
+/// own credentials document at 30 s because a record mutation can hold the lock across a network
+/// round trip (an expired-token refresh); a shorter wait here would fail a sign-in that raced one.
+const STORE_LOCK_WAIT: Duration = Duration::from_secs(30);
+
+fn acquire_store_lock(store: &Path) -> Result<StoreLock, String> {
+    let path = lock_path(store);
+    let deadline = Instant::now() + STORE_LOCK_WAIT;
+    let mut delay = Duration::from_millis(20);
+    loop {
+        match create_lock(&path) {
+            Ok(()) => return Ok(StoreLock { path }),
+            // A writer that died while holding the lock must not block sign-in forever: take
+            // over a lock only when its recorded pid is proven gone, and wait for every other
+            // holder, including one whose record cannot be read.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if take_over_exited_lock(&path) {
+                    continue;
+                }
+            }
+            Err(error) => return Err(format!("cannot write {}: {error}", store.display())),
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "cannot write {}: timed out waiting for the writer lock at {}",
+                store.display(),
+                path.display()
+            ));
+        }
+        std::thread::sleep(delay);
+        delay = (delay * 2).min(Duration::from_millis(200));
+    }
+}
+
+fn lock_path(store: &Path) -> PathBuf {
+    let mut name = store.as_os_str().to_os_string();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+fn create_lock(path: &Path) -> std::io::Result<()> {
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    if let Err(error) = writeln!(file, "{}", std::process::id()) {
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Remove a lock whose recorded holder is gone. The claim file serializes contenders, and the
+/// lock is re-read and re-probed under it, so a removal never deletes a lock acquired after the
+/// dead holder's — including one whose holder reused the pid.
+fn take_over_exited_lock(lock: &Path) -> bool {
+    let Ok(record) = fs::read_to_string(lock) else {
+        return false;
+    };
+    if !holder_exited(&record) {
+        return false;
+    }
+    let mut claim_name = lock.as_os_str().to_os_string();
+    claim_name.push(format!(".takeover-{}", short_hash(&record)));
+    let claim = PathBuf::from(claim_name);
+    let Ok(mut file) = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(&claim)
+    else {
+        return false;
+    };
+    let _ = writeln!(file, "{}", std::process::id());
+    let removed = fs::read_to_string(lock)
+        .map(|current| current == record)
+        .unwrap_or(false)
+        && holder_exited(&record)
+        && fs::remove_file(lock).is_ok();
+    let _ = fs::remove_file(&claim);
+    removed
+}
+
+/// Whether a `<pid>\n` lock record names a process that is proven gone. A malformed record, this
+/// process, or a probe that cannot decide all count as "not gone": the lock is then waited for,
+/// never stolen.
+fn holder_exited(record: &str) -> bool {
+    let Some(pid) = record
+        .strip_suffix('\n')
+        .and_then(|text| text.parse::<i32>().ok())
+    else {
+        return false;
+    };
+    if pid <= 0 || pid as u32 == std::process::id() {
+        return false;
+    }
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| !status.success())
+        .unwrap_or(false)
+}
+
+fn short_hash(text: &str) -> String {
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Replace the shared store in one step. DSH and the other booth commands read this file too, so
@@ -615,6 +762,96 @@ mod tests {
             .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
             .collect();
         assert_eq!(siblings, [".credentials.yaml"], "a staged sibling survived");
+
+        restore_dsh_home(previous);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// The shared store is read-modify-written by DSH and the other booth commands. The atomic
+    /// rename keeps readers safe, but two writers that both read the old bytes still race: the
+    /// later rename drops the earlier writer's record. The store's writer lock is what serializes
+    /// that cycle, so a sign-in must wait for a writer that already holds it.
+    #[test]
+    fn a_store_write_waits_for_the_shared_writer_lock() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-lock-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let path = home.join(".credentials.yaml");
+        let lock = home.join(".credentials.yaml.lock");
+        let old = "version: 1\nrecords:\n  keep/me:\n    kind: grant\n    payload: {}\n";
+        std::fs::write(&path, old).unwrap();
+        // A live writer holds the lock. Its record names this process, so a contender that
+        // honours the lock waits instead of taking it over.
+        std::fs::write(&lock, format!("{}\n", std::process::id())).unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let sign_in = std::thread::spawn(move || {
+            let result = store_grant("tok-new", "device-new");
+            tx.send(result).unwrap();
+        });
+
+        // The lock holder is still writing; the sign-in must not have touched the store.
+        assert!(
+            rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "the sign-in wrote the store while another writer held its lock"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), old);
+
+        // The other writer finishes its read-modify-rename while still holding the lock.
+        std::fs::write(
+            &path,
+            format!("{old}  other/writer:\n    kind: grant\n    payload:\n      token: kept\n"),
+        )
+        .unwrap();
+        std::fs::remove_file(&lock).unwrap();
+
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("the sign-in never took the writer lock")
+            .unwrap();
+        sign_in.join().unwrap();
+
+        let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-new");
+        assert_eq!(
+            root["records"]["other/writer"]["payload"]["token"], "kept",
+            "the sign-in overwrote the record the other writer committed"
+        );
+        assert!(!lock.exists(), "the sign-in left its lock behind");
+
+        restore_dsh_home(previous);
+        std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// A writer killed while holding the lock leaves the lock file behind. Its record names a pid
+    /// that no longer exists, so the next sign-in takes it over instead of waiting out the
+    /// timeout, and leaves neither the stale lock nor a takeover claim behind.
+    #[test]
+    fn a_lock_from_a_dead_writer_is_taken_over() {
+        let _env = crate::testkit::env_lock();
+        let home = std::env::temp_dir().join(format!("booth-oauth-stale-lock-{}", uuid_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let lock = home.join(".credentials.yaml.lock");
+        // Above every host's pid_max, so no live process can carry it.
+        std::fs::write(&lock, "2147483646\n").unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", &home);
+
+        store_grant("tok-new", "device-new").unwrap();
+
+        let path = home.join(".credentials.yaml");
+        let root: Value = serde_norway::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(root["records"][GRANT_KEY]["payload"]["token"], "tok-new");
+        let siblings: Vec<_> = std::fs::read_dir(&home)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            siblings,
+            [".credentials.yaml"],
+            "a lock or takeover claim survived"
+        );
 
         restore_dsh_home(previous);
         std::fs::remove_dir_all(&home).ok();
