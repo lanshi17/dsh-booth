@@ -1,0 +1,26 @@
+{
+  "workspace_crates": [
+    "forge-agent-backend",
+    "forge-agent-dsh",
+    "forge-agent-omp",
+    "forge-agent-protocol",
+    "forge-agent-runtime",
+    "forge-application",
+    "forge-cli",
+    "forge-config",
+    "forge-domain",
+    "forge-mcp-server",
+    "forge-orchestrator",
+    "forge-persistence",
+    "forge-review",
+    "forge-task-scheduler",
+    "forge-worktree"
+  ],
+  "external_package_count": 235,
+  "sources": {
+    "registry+https://github.com/rust-lang/crates.io-index": 235
+  },
+  "forbidden_engine_hits": [],
+  "persistence_engine": "turso_core 0.9.0-pre.2 default-features=false + pure-rust-crypto, no simd",
+  "cc_false_build": true
+}

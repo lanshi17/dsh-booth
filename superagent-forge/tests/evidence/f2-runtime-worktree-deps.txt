@@ -1,0 +1,50 @@
+forge-agent-runtime v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-runtime)
+├── forge-agent-backend v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-backend)
+│   ├── forge-agent-protocol v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-protocol)
+│   │   ├── forge-domain v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/domain)
+│   │   │   ├── serde v1.0.229
+│   │   │   │   ├── serde_core v1.0.229
+│   │   │   │   └── serde_derive v1.0.229 (proc-macro)
+│   │   │   │       ├── proc-macro2 v1.0.107
+│   │   │   │       │   └── unicode-ident v1.0.27
+│   │   │   │       ├── quote v1.0.47
+│   │   │   │       │   └── proc-macro2 v1.0.107 (*)
+│   │   │   │       └── syn v3.0.9
+│   │   │   │           ├── proc-macro2 v1.0.107 (*)
+│   │   │   │           ├── quote v1.0.47 (*)
+│   │   │   │           └── unicode-ident v1.0.27
+│   │   │   ├── thiserror v2.0.21
+│   │   │   │   └── thiserror-impl v2.0.21 (proc-macro)
+│   │   │   │       ├── proc-macro2 v1.0.107 (*)
+│   │   │   │       ├── quote v1.0.47 (*)
+│   │   │   │       └── syn v3.0.9 (*)
+│   │   │   └── uuid v1.26.1
+│   │   │       ├── getrandom v0.4.3
+│   │   │       │   ├── cfg-if v1.0.5
+│   │   │       │   └── libc v0.2.191
+│   │   │       └── serde_core v1.0.229
+│   │   └── serde v1.0.229 (*)
+│   ├── forge-domain v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/domain) (*)
+│   └── thiserror v2.0.21 (*)
+├── forge-agent-protocol v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-protocol) (*)
+├── forge-domain v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/domain) (*)
+├── thiserror v2.0.21 (*)
+├── tokio v1.54.1
+│   ├── bytes v1.12.1
+│   ├── libc v0.2.191
+│   ├── mio v1.2.4
+│   │   └── libc v0.2.191
+│   ├── pin-project-lite v0.2.17
+│   ├── signal-hook-registry v1.4.8
+│   │   ├── errno v0.3.14
+│   │   │   └── libc v0.2.191
+│   │   └── libc v0.2.191
+│   └── tokio-macros v2.7.2 (proc-macro)
+│       ├── proc-macro2 v1.0.107 (*)
+│       ├── quote v1.0.47 (*)
+│       └── syn v3.0.9 (*)
+└── uuid v1.26.1 (*)
+
+forge-worktree v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/worktree)
+├── forge-domain v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/domain) (*)
+└── thiserror v2.0.21 (*)

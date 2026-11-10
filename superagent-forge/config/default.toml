@@ -1,0 +1,7 @@
+# Example absolute paths; forge check performs validation only.
+workspace_root = "/var/lib/superagent-forge/worktrees"
+database_path = "/var/lib/superagent-forge/forge.sqlite"
+max_concurrency = 2
+timeout_seconds = 900
+network_allowed = false
+environment_allowlist = ["LANG", "LC_ALL"]

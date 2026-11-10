@@ -1,0 +1,9 @@
+    Checking forge-agent-backend v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-backend)
+    Checking forge-application v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/application)
+    Checking forge-mcp-server v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/mcp-server)
+    Checking forge-agent-runtime v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-runtime)
+    Checking forge-orchestrator v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/orchestrator)
+    Checking forge-cli v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/cli)
+    Checking forge-agent-omp v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-omp)
+    Checking forge-agent-dsh v0.1.0 (/data/yangzs/Projects/02_Reproduction/08_codex_hermes/superagent-forge/crates/agent-dsh)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.78s

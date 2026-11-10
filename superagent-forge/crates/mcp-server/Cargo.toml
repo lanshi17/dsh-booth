@@ -1,0 +1,22 @@
+[package]
+name = "forge-mcp-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+forge-application = { path = "../application" }
+forge-domain = { path = "../domain" }
+forge-identity = { path = "../identity" }
+forge-persistence = { path = "../persistence" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
