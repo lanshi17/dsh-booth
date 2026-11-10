@@ -302,7 +302,9 @@ fn expand_home(text: &str) -> Result<PathBuf, String> {
 /// Stores one secret as `refs.<name>`, keeping every other record and ref.
 ///
 /// The store is shared with DSH, so the replacement is staged beside it and renamed into place
-/// rather than truncating the existing file: a failure must leave the previous store whole.
+/// rather than truncating the existing file: a failure must leave the previous store whole. The
+/// document is also normalized to the layout DSH reads before the ref is added; a layout this
+/// build cannot read is refused untouched rather than rewritten into one DSH cannot read.
 ///
 /// The atomic rename only protects readers. This is still a read-modify-write cycle, and DSH and
 /// the other booth commands write the same store: a record committed between the read and the
@@ -326,18 +328,75 @@ fn write_ref(name: &str, secret: &str) -> Result<(), String> {
             }
             Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
         };
-        if !root.is_object() {
-            root = json!({ "version": 1, "refs": {}, "records": {} });
-        }
-        root["version"] = json!(1);
-        if !root.get("refs").map(Value::is_object).unwrap_or(false) {
-            root["refs"] = json!({});
-        }
-        root["refs"][name] = json!(secret);
+        root = versioned_store(root, &path)?;
+        let refs = root
+            .as_object_mut()
+            .expect("versioned store is a mapping")
+            .entry("refs")
+            .or_insert_with(|| json!({}));
+        let refs = refs.as_object_mut().ok_or_else(|| {
+            format!(
+                "cannot write {}: credentials `refs` is not a map",
+                path.display()
+            )
+        })?;
+        refs.insert(name.to_owned(), json!(secret));
         let text = serde_norway::to_string(&root)
             .map_err(|error| format!("cannot encode credentials: {error}"))?;
         replace_store(&path, &text)
     })
+}
+
+/// The document layout DSH's credentials store reads before this writer adds a reference to it.
+///
+/// DSH reads only `version: 1`, with one compatibility case: the pre-release flat layout (a
+/// top-level mapping of reference names to non-empty strings), which DSH upgrades on boot by
+/// nesting it under `refs:`. A key written into that flat document without the upgrade leaves the
+/// existing references at the top level, where DSH reports them as ignored instead of resolving
+/// them, so they stop authenticating. Sign-in's record writer (`oauth.rs`) follows the same rule;
+/// both write the one shared document and must not disagree about its layout.
+///
+/// A document this build cannot read is refused untouched: rewriting it would add the ref to a
+/// file DSH still rejects, and could drop entries this code cannot represent.
+fn versioned_store(root: Value, path: &Path) -> Result<Value, String> {
+    if !root.is_object() {
+        // An empty or comment-only document parses as no document at all: DSH reads that as an
+        // empty store, which needs no version.
+        return Ok(json!({ "version": 1, "refs": {}, "records": {} }));
+    }
+    match root.get("version").cloned() {
+        Some(version) if version.as_i64() == Some(1) => Ok(root),
+        Some(version) => Err(format!(
+            "cannot write {}: credentials document declares version {version}; DSH reads version 1",
+            path.display()
+        )),
+        None => {
+            let fields = root.as_object().expect("checked above");
+            if fields.is_empty() {
+                return Ok(json!({ "version": 1, "refs": {}, "records": {} }));
+            }
+            if is_flat_credentials_layout(fields) {
+                let refs = Value::Object(fields.clone());
+                return Ok(json!({ "version": 1, "refs": refs }));
+            }
+            Err(format!(
+                "cannot write {}: credentials document has no version, so DSH cannot read it",
+                path.display()
+            ))
+        }
+    }
+}
+
+/// Whether a document is the pre-release flat layout DSH migrates: every entry names a credential
+/// reference (`[A-Za-z_][A-Za-z0-9_]*`) and holds a non-empty string.
+fn is_flat_credentials_layout(fields: &serde_json::Map<String, Value>) -> bool {
+    !fields.is_empty()
+        && fields.iter().all(|(name, value)| {
+            let mut chars = name.chars();
+            let valid_name = matches!(chars.next(), Some(first) if first.is_ascii_alphabetic() || first == '_')
+                && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+            valid_name && value.as_str().is_some_and(|text| !text.is_empty())
+        })
 }
 
 /// Replace the shared store in one step, so a crash, a full disk or a concurrent reader never
@@ -928,6 +987,83 @@ mod tests {
         let root: Value = serde_norway::from_str(&text).unwrap();
         assert_eq!(root["refs"]["A_KEY"], "secret");
         assert_eq!(root["version"], 1);
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    /// DSH reads only the version-1 layout, with one compatibility case: the pre-release flat
+    /// layout is upgraded on boot by nesting its references under `refs:`. A provider key written
+    /// into such a store has to perform the same upgrade first. Stamping `version: 1` beside the
+    /// still-flat entries would make DSH list every existing reference as an ignored top-level
+    /// key instead of resolving it, so the credentials the store held would stop working.
+    #[test]
+    fn a_pre_release_flat_store_is_upgraded_before_a_key_is_added() {
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let path = cfg.dsh_home.join(".credentials.yaml");
+        fs::write(&path, "DEEPSEEK_API_KEY: sk-old\nBOOTH_KEPT_KEY: sk-two\n").unwrap();
+
+        write_ref("BOOTH_NEW_KEY", "sk-new").unwrap();
+
+        let text = fs::read_to_string(&path).unwrap();
+        let root: Value = serde_norway::from_str(&text).unwrap();
+        assert_eq!(root["version"], 1, "{text}");
+        assert!(
+            root.get("DEEPSEEK_API_KEY").is_none(),
+            "a flat reference stayed at the top level: {text}"
+        );
+        assert_eq!(root["refs"]["DEEPSEEK_API_KEY"], "sk-old");
+        assert_eq!(root["refs"]["BOOTH_KEPT_KEY"], "sk-two");
+        assert_eq!(root["refs"]["BOOTH_NEW_KEY"], "sk-new");
+        assert!(has_ref("DEEPSEEK_API_KEY"), "{text}");
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    /// A document this build cannot read as version 1 — an unknown version, a layout it does not
+    /// recognize, or a `refs` section that is not a map — must not be rewritten: the new ref would
+    /// be added to a file DSH still refuses, and entries this code cannot represent would be lost.
+    #[test]
+    fn a_store_with_an_unreadable_layout_is_not_rewritten() {
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let path = cfg.dsh_home.join(".credentials.yaml");
+
+        for document in [
+            "refs:\n  KEEP_ME: sk-kept\n",
+            "version: 2\nrefs:\n  KEEP_ME: sk-kept\n",
+            "version: 1\nrefs: not-a-map\n",
+        ] {
+            fs::write(&path, document).unwrap();
+            let error = write_ref("BOOTH_NEW_KEY", "sk-new").unwrap_err();
+            assert!(error.contains("cannot write"), "{error}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), document);
+            assert!(
+                !cfg.dsh_home.join(".credentials.yaml.lock").exists(),
+                "a failed write left its lock behind: {error}"
+            );
+        }
+        fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    /// An empty document and an empty mapping are both an empty store to DSH, not an unversioned
+    /// one; the key write stamps the version so DSH reads the result.
+    #[test]
+    fn an_empty_store_is_stamped_with_its_version() {
+        let _env = crate::testkit::env_lock();
+        let cfg = config();
+        std::env::set_var("DSH_HOME", &cfg.dsh_home);
+        let path = cfg.dsh_home.join(".credentials.yaml");
+
+        for document in ["", "{}\n"] {
+            fs::write(&path, document).unwrap();
+            write_ref("BOOTH_NEW_KEY", "sk-new").unwrap();
+
+            let text = fs::read_to_string(&path).unwrap();
+            let root: Value = serde_norway::from_str(&text).unwrap();
+            assert_eq!(root["version"], 1, "{document:?} became {text}");
+            assert_eq!(root["refs"]["BOOTH_NEW_KEY"], "sk-new");
+        }
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
     }
 
