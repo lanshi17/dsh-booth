@@ -1,8 +1,9 @@
 //! The decider between the portal and the sub-agents.
 //!
-//! A caller hands it one jev `judge` call: a state, and questions. A choice question names
-//! exhaustive criteria. The decider picks when the top probability is at least 0.7. Otherwise a
-//! sub-agent's call goes to the portal, and the portal's call goes to the user.
+//! A caller hands it one System One request for `typesafe/jev`: a state, and typed questions.
+//! The model returns probabilities, never text. A choice or score is taken when its confidence
+//! is at least 0.7, and a noul when yes or no is clear. Otherwise a sub-agent's call goes to the
+//! portal, and the portal's call goes to the user.
 
 use crate::api::Api;
 use crate::provider;
@@ -15,12 +16,13 @@ const FLOOR: f64 = 0.7;
 const BAND_LOW: f64 = 0.3;
 const START: &str = "<!-- booth-decider -->";
 const END: &str = "<!-- /booth-decider -->";
+const MODEL: &str = "typesafe/jev";
 const CONTRACT: &str = "\
-A choice is settled by `booth decide` before the portal or the user sees it. The call is one jev judge on stdin: `from` is `subagent` or `portal`, `state` is the situation, and `questions` maps an id to `{ \"type\": \"choice\", \"instructions\", \"criteria\" }`. Each criterion is one sentence of observable evidence. Labels are exhaustive and mutually exclusive, with one catch-all.
+A choice is settled by `booth decide` before the portal or the user sees it. The call on stdin is one System One request for typesafe/jev, plus `from`. `from` is `subagent` or `portal` and is not sent to the model. `state` is shared by every question. A question is `noul` (is this true; optional criteria `{\"true\",\"false\"}`; the answer field `noul` is the probability of yes), `choice` (criteria is an object from option to description; the answer has `choice`, `confidence`, and `probabilities`), or `score` (criteria is an array of at least two levels, lowest first; the answer has `score`, `confidence`, `legend`, and `probabilities`). One call holds at most 100 questions.
 
 A result with `\"route\": \"chosen\"` is the answer. Use `answers` and do not pick again.
 
-A result with `\"route\": \"escalate\"` was not confident enough (top probability under 0.7, an uncertain bool, or an error). A sub-agent reports that call to the portal with `orchestrator_report` status `blocked`, puts the unanswered judge call in `summary`, and sets no `human_action`. The portal calls `booth decide` again with `\"from\": \"portal\"`. Only when that call escalates to `user` does the portal ask the user, once, through `human_action`. The user is the fallback after both calls come back unrouted.";
+A result with `\"route\": \"escalate\"` was not confident enough (a choice or score under 0.7, a noul between 0.3 and 0.7, or an error). A sub-agent reports that call to the portal with `orchestrator_report` status `blocked`, puts the unanswered judge call in `summary`, and sets no `human_action`. The portal calls `booth decide` again with `\"from\": \"portal\"`. Only when that call escalates to `user` does the portal ask the user, once, through `human_action`. The user is the fallback after both calls come back unrouted.";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum From {
@@ -57,7 +59,7 @@ pub fn decide(cfg: &Config, input: &mut dyn Read) -> Result<(), String> {
     let call: Value = serde_json::from_str(&text)
         .map_err(|error| format!("the judge call is not JSON: {error}"))?;
     let route = model_route(cfg)?;
-    let verdict = ask(&call, &|prompt| complete(&route, prompt))?;
+    let verdict = ask(&call, &mut |body| complete(&route, body))?;
     println!(
         "{}",
         serde_json::to_string_pretty(&verdict).unwrap_or_default()
@@ -130,10 +132,13 @@ pub fn with_contract(communication: &str) -> String {
     out
 }
 
-fn ask(call: &Value, model: &dyn Fn(&str) -> Result<String, String>) -> Result<Value, String> {
+fn ask(
+    call: &Value,
+    model: &mut dyn FnMut(&str) -> Result<String, String>,
+) -> Result<Value, String> {
     let from = From::parse(call.get("from").and_then(Value::as_str).unwrap_or(""))?;
     validate(call)?;
-    let answered = match model(&prompt(call)) {
+    let answered = match model(&systemone_body(call)) {
         Ok(text) => match json_object(&text) {
             Ok(value) => answers_of(value),
             Err(error) => return Ok(escalate(from, &error, None)),
@@ -149,6 +154,9 @@ fn validate(call: &Value) -> Result<(), String> {
         .and_then(Value::as_object)
         .filter(|questions| !questions.is_empty())
         .ok_or("a judge call needs one or more questions")?;
+    if questions.len() > 100 {
+        return Err("a judge call takes at most 100 questions".into());
+    }
     if call.get("state").is_none() {
         return Err("a judge call needs a state".into());
     }
@@ -163,20 +171,45 @@ fn validate(call: &Value) -> Result<(), String> {
             return Err(format!("question {id} needs instructions"));
         }
         match kind {
-            "choice" | "score" => {
+            "noul" => {
+                if let Some(criteria) = question.get("criteria") {
+                    if !criteria.is_object() {
+                        return Err(format!(
+                            "question {id} has noul criteria that are not {{\"true\",\"false\"}}"
+                        ));
+                    }
+                }
+            }
+            "choice" => {
                 let criteria = question
                     .get("criteria")
                     .and_then(Value::as_object)
                     .filter(|criteria| !criteria.is_empty())
                     .ok_or_else(|| format!("question {id} needs criteria"))?;
-                if criteria.keys().any(|label| label.trim().is_empty()) {
+                if criteria.iter().any(|(label, text)| {
+                    label.trim().is_empty() || text.as_str().unwrap_or("").trim().is_empty()
+                }) {
                     return Err(format!("question {id} has an empty criterion"));
                 }
             }
-            "bool" => {}
+            "score" => {
+                let levels = question
+                    .get("criteria")
+                    .and_then(Value::as_array)
+                    .filter(|levels| levels.len() >= 2)
+                    .ok_or_else(|| {
+                        format!("question {id} needs a score rubric of at least two levels, lowest first")
+                    })?;
+                if levels
+                    .iter()
+                    .any(|level| level.as_str().unwrap_or("").trim().is_empty())
+                {
+                    return Err(format!("question {id} has an empty score level"));
+                }
+            }
             other => {
                 return Err(format!(
-                    "question {id} has type {other}; use choice, bool, or score"
+                    "question {id} has type {other}; use noul, choice, or score"
                 ))
             }
         }
@@ -184,18 +217,14 @@ fn validate(call: &Value) -> Result<(), String> {
     Ok(())
 }
 
-fn prompt(call: &Value) -> String {
-    format!(
-        "You are the decider. Classify only. Reply with one JSON object and no other text.\n\
-         Map each question id to an answer. A choice or score answer is \
-         {{\"choice\":\"<label>\",\"probabilities\":{{\"<label>\":0}},\"confidence\":0}} \
-         or {{\"score\":\"<label>\",\"probabilities\":{{\"<label>\":0}},\"confidence\":0}}. \
-         Probabilities cover every criterion and sum to 1. \
-         A bool answer is {{\"bool\":0}} as P(yes). Use only labels from the criteria.\n\n\
-         STATE:\n{}\n\nQUESTIONS:\n{}",
-        call.get("state").unwrap_or(&Value::Null),
-        call.get("questions").unwrap_or(&Value::Null)
-    )
+/// The System One body. `from` stays with booth and is not part of the model request.
+fn systemone_body(call: &Value) -> String {
+    json!({
+        "model": MODEL,
+        "state": call.get("state").cloned().unwrap_or(Value::Null),
+        "questions": call.get("questions").cloned().unwrap_or(json!({})),
+    })
+    .to_string()
 }
 
 fn settle(from: From, call: &Value, answers: &Value) -> Value {
@@ -222,25 +251,22 @@ fn settle(from: From, call: &Value, answers: &Value) -> Value {
 
 fn uncertain(id: &str, question: &Value, answer: &Value) -> Option<String> {
     match question.get("type").and_then(Value::as_str).unwrap_or("") {
-        "bool" => {
-            let Some(probability) = answer.get("bool").and_then(Value::as_f64) else {
+        "noul" => {
+            let Some(probability) = answer.get("noul").and_then(Value::as_f64) else {
                 return Some(format!("question {id} has no probability"));
             };
-            if (BAND_LOW..=FLOOR).contains(&probability) {
+            if probability > BAND_LOW && probability < FLOOR {
                 Some(format!(
                     "question {id} is uncertain (P(yes)={probability:.2})"
                 ))
-            } else {
+            } else if (0.0..=1.0).contains(&probability) {
                 None
+            } else {
+                Some(format!("question {id} has P(yes)={probability:.2}"))
             }
         }
-        "choice" | "score" => {
-            let label_key = if question.get("type").and_then(Value::as_str) == Some("score") {
-                "score"
-            } else {
-                "choice"
-            };
-            let label = answer.get(label_key).and_then(Value::as_str).unwrap_or("");
+        "choice" => {
+            let label = answer.get("choice").and_then(Value::as_str).unwrap_or("");
             let Some(criteria) = question.get("criteria").and_then(Value::as_object) else {
                 return Some(format!("question {id} needs criteria"));
             };
@@ -261,6 +287,28 @@ fn uncertain(id: &str, question: &Value, answer: &Value) -> Option<String> {
                     "question {id} is uncertain (top probability {probability:.2} is below {FLOOR})"
                 )),
                 None => Some(format!("question {id} has no probability")),
+            }
+        }
+        "score" => {
+            let Some(levels) = question.get("criteria").and_then(Value::as_array) else {
+                return Some(format!("question {id} needs a score rubric"));
+            };
+            let Some(confidence) = answer.get("confidence").and_then(Value::as_f64) else {
+                return Some(format!("question {id} has no confidence"));
+            };
+            if confidence < FLOOR {
+                return Some(format!(
+                    "question {id} is uncertain (confidence {confidence:.2} is below {FLOOR})"
+                ));
+            }
+            let Some(score) = answer.get("score").and_then(Value::as_f64) else {
+                return Some(format!("question {id} has no score"));
+            };
+            let last = (levels.len() - 1) as f64;
+            if (0.0..=last).contains(&score) {
+                None
+            } else {
+                Some(format!("question {id} scored {score}, outside the rubric"))
             }
         }
         _ => Some(format!("question {id} cannot be routed")),
@@ -316,7 +364,6 @@ fn json_object(text: &str) -> Result<Value, String> {
 
 struct ModelRoute {
     base: String,
-    model: String,
     key: String,
 }
 
@@ -338,62 +385,42 @@ fn route_from(
             .iter()
             .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
     };
-    let default = entry("agent-default-model")
-        .and_then(|item| item.get("config"))
-        .ok_or("the profile has no default model")?;
-    let provider_id = default
-        .get("provider")
-        .and_then(Value::as_str)
-        .ok_or("the default model has no provider")?;
-    let model = default
-        .get("model")
-        .and_then(Value::as_str)
-        .ok_or("the default model has no id")?
-        .to_owned();
     let provider = entry("llm-pi-ai")
         .and_then(|item| item.get("config"))
         .and_then(|config| config.get("providers"))
-        .and_then(|providers| providers.get(provider_id))
-        .ok_or_else(|| format!("the profile has no provider {provider_id}"))?;
-    let api = provider.get("api").and_then(Value::as_str).unwrap_or("");
-    if api != "openai-responses" {
-        return Err(format!(
-            "the decider calls {provider_id} through openai-responses; this profile uses {api}"
-        ));
-    }
+        .and_then(|providers| providers.get("commandcode"))
+        .ok_or("the decider calls typesafe/jev, and this profile has no commandcode provider")?;
     let base = provider
         .get("baseURL")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("provider {provider_id} has no base URL"))?
+        .ok_or("the commandcode provider has no base URL")?
         .trim_end_matches('/')
         .to_owned();
     let key_ref = provider
         .get("apiKeyEnv")
         .and_then(Value::as_str)
-        .ok_or_else(|| format!("provider {provider_id} has no credential ref"))?;
+        .ok_or("the commandcode provider has no credential ref")?;
     let key = std::env::var(key_ref)
         .ok()
         .filter(|value| !value.is_empty())
         .map(Ok)
         .unwrap_or_else(|| secret(key_ref))?;
-    Ok(ModelRoute { base, model, key })
+    Ok(ModelRoute { base, key })
 }
 
-fn complete(route: &ModelRoute, prompt: &str) -> Result<String, String> {
+fn complete(route: &ModelRoute, body: &str) -> Result<String, String> {
+    let payload: Value = serde_json::from_str(body)
+        .map_err(|error| format!("the System One request is not JSON: {error}"))?;
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(60))
         .build();
     let response = agent
-        .post(&format!("{}/responses", route.base))
+        .post(&format!("{}/systemone", route.base))
         .set("Authorization", &format!("Bearer {}", route.key))
         .set("User-Agent", "dsh/0.2.1")
         .set("accept", "application/json")
-        .send_json(json!({
-            "model": route.model,
-            "input": prompt,
-            "temperature": 0
-        }));
-    let body = match response {
+        .send_json(payload);
+    let text = match response {
         Ok(response) => response
             .into_string()
             .map_err(|error| format!("the decider's model returned no body: {error}"))?,
@@ -406,35 +433,12 @@ fn complete(route: &ModelRoute, prompt: &str) -> Result<String, String> {
         }
         Err(error) => return Err(format!("the decider cannot reach its model: {error}")),
     };
-    let value: Value = serde_json::from_str(&body)
+    let value: Value = serde_json::from_str(&text)
         .map_err(|error| format!("the decider's model returned no JSON: {error}"))?;
-    output_text(&value).ok_or_else(|| "the decider's model returned no text".into())
-}
-
-fn output_text(value: &Value) -> Option<String> {
-    if let Some(text) = value.get("output_text").and_then(Value::as_str) {
-        let text = text.trim();
-        if !text.is_empty() {
-            return Some(text.to_owned());
-        }
+    if value.get("answers").is_none() {
+        return Err("the decider's model returned no answers".into());
     }
-    let mut parts = Vec::new();
-    for item in value.get("output").and_then(Value::as_array)? {
-        let Some(content) = item.get("content").and_then(Value::as_array) else {
-            continue;
-        };
-        for block in content {
-            if let Some(text) = block.get("text").and_then(Value::as_str) {
-                parts.push(text);
-            }
-        }
-    }
-    let text = parts.concat();
-    if text.trim().is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    Ok(text)
 }
 
 fn redact(text: &str, secret: &str) -> String {
@@ -481,40 +485,77 @@ mod tests {
 
     #[test]
     fn a_confident_choice_is_the_route() {
-        let verdict = ask(&call("subagent"), &|_| Ok(chosen("dsh", 0.91))).unwrap();
+        let verdict = ask(&call("subagent"), &mut |_| Ok(chosen("dsh", 0.91))).unwrap();
         assert_eq!(verdict["route"], "chosen");
         assert_eq!(verdict["answers"]["route"]["choice"], "dsh");
     }
 
     #[test]
     fn an_uncertain_subagent_goes_to_the_portal() {
-        let verdict = ask(&call("worker"), &|_| Ok(chosen("dsh", 0.42))).unwrap();
+        let verdict = ask(&call("worker"), &mut |_| Ok(chosen("dsh", 0.42))).unwrap();
         assert_eq!(verdict["route"], "escalate");
         assert_eq!(verdict["to"], "portal");
     }
 
     #[test]
     fn an_uncertain_portal_goes_to_the_user() {
-        let verdict = ask(&call("portal"), &|_| Ok(chosen("dsh", 0.42))).unwrap();
+        let verdict = ask(&call("portal"), &mut |_| Ok(chosen("dsh", 0.42))).unwrap();
         assert_eq!(verdict["to"], "user");
     }
 
     #[test]
     fn a_model_failure_escalates_instead_of_guessing() {
-        let verdict = ask(&call("subagent"), &|_| Err("offline".into())).unwrap();
+        let verdict = ask(&call("subagent"), &mut |_| Err("offline".into())).unwrap();
         assert_eq!(verdict["to"], "portal");
         assert!(verdict["reason"].as_str().unwrap().contains("offline"));
     }
 
     #[test]
-    fn an_uncertain_bool_does_not_auto_route() {
+    fn a_clear_noul_is_the_route_and_an_uncertain_one_is_not() {
         let call = json!({
             "from": "portal",
-            "state": "the button label",
-            "questions": {"keep": {"type": "bool", "instructions": "Keep the current label?"}}
+            "state": "My payments have failed for three days and I am losing sales.",
+            "questions": {"is_urgent": {"type": "noul", "instructions": "Does this request need urgent attention?"}}
         });
-        let verdict = ask(&call, &|_| Ok(r#"{"keep":{"bool":0.5}}"#.into())).unwrap();
-        assert_eq!(verdict["to"], "user");
+        let clear = ask(&call, &mut |_| {
+            Ok(r#"{"answers":{"is_urgent":{"type":"noul","noul":0.96}}}"#.into())
+        })
+        .unwrap();
+        assert_eq!(clear["route"], "chosen");
+        assert_eq!(clear["answers"]["is_urgent"]["noul"], 0.96);
+        let unclear = ask(&call, &mut |_| {
+            Ok(r#"{"answers":{"is_urgent":{"type":"noul","noul":0.5}}}"#.into())
+        })
+        .unwrap();
+        assert_eq!(unclear["to"], "user");
+    }
+
+    #[test]
+    fn an_uncertain_score_does_not_auto_route() {
+        let call = json!({
+            "from": "subagent",
+            "state": "Please help now.",
+            "questions": {"frustration": {"type": "score", "instructions": "How frustrated is the customer?", "criteria": ["Calm", "Frustrated", "Very angry"]}}
+        });
+        let verdict = ask(&call, &mut |_| {
+            Ok(r#"{"answers":{"frustration":{"type":"score","score":1.41,"confidence":0.5,"legend":{"0":"Calm","1":"Frustrated","2":"Very angry"},"probabilities":{"0":0.02,"1":0.55,"2":0.43}}}}"#.into())
+        })
+        .unwrap();
+        assert_eq!(verdict["to"], "portal");
+    }
+
+    #[test]
+    fn the_model_receives_a_systemone_request() {
+        let mut seen = String::new();
+        let _ = ask(&call("portal"), &mut |body| {
+            seen = body.to_owned();
+            Ok(chosen("dsh", 0.91))
+        })
+        .unwrap();
+        let value: Value = serde_json::from_str(&seen).unwrap();
+        assert_eq!(value["model"], "typesafe/jev");
+        assert!(value.get("from").is_none());
+        assert!(value.get("questions").is_some());
     }
 
     #[test]
@@ -527,7 +568,7 @@ mod tests {
     }
 
     #[test]
-    fn the_route_comes_from_the_default_model() {
+    fn the_decider_calls_commandcode_systemone() {
         let patch = serde_norway::from_str::<Value>(
             "
 - id: llm-pi-ai
@@ -546,7 +587,6 @@ mod tests {
         .unwrap();
         let route = route_from(&patch, |_| Ok("secret".into())).unwrap();
         assert_eq!(route.base, "https://example.test/v1");
-        assert_eq!(route.model, "deepseek/deepseek-v4.1-flash");
         assert_eq!(route.key, "secret");
     }
 }
