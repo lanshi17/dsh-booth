@@ -340,7 +340,9 @@ In the console, start the line with `@omp`, `@claude`, `@codex`, or `@cursor-age
 
 ## Decision
 
-The portal does not pick among its own options, and a sub-agent does not bring an open choice to the portal first. Both hand the choice to `booth decide`. The call is a [System One](https://commandcode.ai/docs/provider#decision-models-typesafe-jev) request for `typesafe/jev`: one `state`, and up to 100 `questions`. A question is `noul`, `choice`, or `score`. `from` is `subagent` or `portal` and stays with booth.
+The portal does not pick among its own options, and a sub-agent does not bring an open choice to the portal first. Both hand the choice to `booth decide`. The call is a [System One](https://commandcode.ai/docs/provider#decision-models-typesafe-jev) request: one `state`, and up to 100 `questions`. A question is `noul`, `choice`, or `score`. `from` is `subagent` or `portal` and stays with booth.
+
+The default route is the `commandcode` provider and `typesafe/jev`. Save another one with `booth decide --provider <id> --model <model> --save`. The same flags without `--save` override that route for a single call. The provider is one already in the profile.
 
 A choice or score at confidence 0.7 or more is the route, and so is a noul that is clearly yes or no. Below that, or on an error, a sub-agent's call escalates to the portal. The portal calls `booth decide` again with `"from": "portal"`. If that call also cannot route, it escalates to the user. `booth up` installs this order into the team's prompt.
 
