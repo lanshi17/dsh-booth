@@ -66,12 +66,14 @@ fi
 
 # run <label> <text the output must contain, or ""> <command...>
 #
-# Exiting 0 with some output does not prove the command asked the right question. The fixture
-# answers /search from the request's `q` (PR #56), so a console that dropped or mis-encoded it
-# still gets a 200 saying "nothing matched" and exits 0: `search retry` would pass with search
-# broken. Where the query, not the path, selects the answer, require a substring that proves the
-# matching result came back. The fixture's other routes answer from the path alone (it does not
-# model the tickets state filter), so their output already proves the request reached the route.
+# Exiting 0 with some output does not prove the command asked the right question or rendered the
+# answer. The fixture answers /search from the request's `q` (PR #56), so a console that dropped or
+# mis-encoded it still gets a 200 saying "nothing matched" and exits 0: `search retry` would pass
+# with search broken. For the same reason a console that loses a response's data — an empty ticket
+# or decision list, or the wrong executor counts — still exits 0 with a header line, so a check
+# that only asks for output passes. The fixture's answers are fixed: each check names a value its
+# answer supplies, and a command that stops reading the response fails here. (`version` never reads
+# the fixture; `stop` is checked below by the fixture accepting the guarded request.)
 run() {
   label=$1
   want=$2
@@ -95,11 +97,11 @@ run() {
   fi
 }
 
-run "status"   "" "$booth" --url "$base" status
-run "overview" "" "$booth" --url "$base" overview
-run "tickets"  "" "$booth" --url "$base" tickets
-run "agents"   "" "$booth" --url "$base" agents
-run "decisions" "" "$booth" --url "$base" decisions
+run "status"   "orchestrator-abc" "$booth" --url "$base" status
+run "overview" "bot CLI not configured" "$booth" --url "$base" overview
+run "tickets"  "Fix the flaky retry test" "$booth" --url "$base" tickets
+run "agents"   "up to 4 workers" "$booth" --url "$base" agents
+run "decisions" "Issue #12 flaky retry" "$booth" --url "$base" decisions
 # The fixture returns its ticket only for a query that matches it, so require that ticket.
 run "search"   "t-7f3a9c2e" "$booth" --url "$base" search retry
 run "version"  "" "$booth" --version
