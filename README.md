@@ -42,6 +42,17 @@ The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header mus
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
+```
+
+That installs Rust, Node 22, pnpm and dsh when they are missing, clones this repository
+under `~/.dsh/src/dsh-booth`, installs the `booth` binary, prepares the profile, and starts
+the service. When the terminal can be used, it opens the console. `BOOTH_NO_UP=1` installs
+only. `BOOTH_NO_CONSOLE=1` starts the service and stops there.
+
+The same steps by hand:
+
+```sh
 git clone --recursive git@github.com:lanshi17/dsh-booth.git
 cd dsh-booth
 cargo install --path .          # installs `booth`; or cargo build --release
