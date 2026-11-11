@@ -2343,7 +2343,7 @@ fn draw_providers(
     let body = match screen.step {
         ProviderStep::Duties => provider::DUTIES.len() + provider::DUTIES.len(),
         ProviderStep::Providers => offers.len().min(12),
-        ProviderStep::Models => models.len().max(1).min(12),
+        ProviderStep::Models => models.len().clamp(1, 12),
     };
     let width = area.width.saturating_sub(8).clamp(48, 78).min(area.width);
     let height = (body as u16 + 4).min(area.height);

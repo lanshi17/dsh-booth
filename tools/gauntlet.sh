@@ -2,7 +2,10 @@
 # The single entry point for every gauntlet layer. Run from anywhere; it works in the repo root.
 #
 #   tools/gauntlet.sh            every layer
-#   tools/gauntlet.sh quick      tests, format, lint, types only
+#   tools/gauntlet.sh quick      tests, format, and lint
+#
+# Set GAUNTLET_FAIL_FAST=1 to stop at the first failed layer. CI does this. A local run
+# still reports every layer.
 #
 # A layer that cannot run is a failure, never a pass (old-coder: checkers fail closed).
 set -uo pipefail
@@ -20,6 +23,23 @@ record() {
   fi
 }
 
+finish() {
+  status "result"
+  if [ "$fail" -eq 0 ]; then
+    echo "all ${1:-}layers passed"
+  else
+    echo "a layer failed"
+  fi
+  exit "$fail"
+}
+
+# CI sets this so a red layer does not pay for the compiles after it.
+stop_if_fast() {
+  if [ "${GAUNTLET_FAIL_FAST:-}" = 1 ] && [ "$fail" -ne 0 ]; then
+    finish
+  fi
+}
+
 status "versions"
 # Record this layer like every other one, and fail closed on a record that cannot report the
 # toolchain: `cat` succeeds on an empty file, which would print no versions and still pass the
@@ -34,22 +54,31 @@ else
   cat tools/versions.txt
   record versions $?
 fi
+stop_if_fast
 
 status "tool tests"
 python3 -m unittest discover -s tools -p 'test_*.py'
 record "tool tests" $?
+stop_if_fast
 
 status "format"
 cargo fmt --check
 record format $?
+stop_if_fast
 
-status "types"
-cargo check --all-targets
-record types $?
+# `cargo check` compiles dependencies as metadata. `cargo test` needs real libraries, so it
+# cannot reuse that work and the layer only adds a compile. Clippy typechecks the crate.
+if [ "${1:-}" != "quick" ]; then
+  status "types"
+  cargo check --all-targets
+  record types $?
+  stop_if_fast
+fi
 
 status "lint"
 cargo clippy --all-targets -- -D warnings
 record lint $?
+stop_if_fast
 
 status "tests"
 # `cargo test` exits 0 after running nothing: a target can carry no tests, and a suite whose
@@ -64,11 +93,10 @@ if [ "$test_code" -eq 0 ] &&
   test_code=1
 fi
 record tests "$test_code"
+stop_if_fast
 
 if [ "${1:-}" = "quick" ]; then
-  status "result"
-  [ "$fail" -eq 0 ] && echo "all quick layers passed" || echo "a layer failed"
-  exit "$fail"
+  finish "quick "
 fi
 
 status "changed-line coverage"

@@ -1,7 +1,7 @@
 name: ci
 
 # The repository already has one entry point for every check, `tools/gauntlet.sh`; this runs its
-# quick layers (format, types, lint, tests) and its credential scan on every push and pull request
+# quick layers (format, lint, tests) and its credential scan on every push and pull request
 # so a change cannot land without them. The slower layers (coverage, mutation, supply chain, real
 # execution) stay local: they need tools and a live service a hosted runner does not have.
 on:
@@ -10,8 +10,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A new push to a pull request replaces the run already in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Debug info is not what CI reads. Leaving it off keeps the compile smaller.
+  CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
   gauntlet:
@@ -27,22 +37,28 @@ jobs:
           # `Config::from_env` resolves the bundle the service runs from, and the tests build a
           # console with it, so the pinned submodule is part of the test fixture.
           submodules: recursive
-      - name: Install the toolchain the repository records
+      - name: Read the toolchain the repository records
+        id: toolchain
         # The hosted image ships its own stable, newer than the version `tools/versions.txt`
         # records. Running the layers on the image's compiler hides a change the recorded one
-        # cannot build, and the gauntlet's "versions" line reads that file, so the run would
-        # report a toolchain it did not use. The file stays the single source of truth.
+        # cannot build. The file stays the single source of truth.
         run: |
           version=$(awk '$1 == "rustc" { print $3; exit }' tools/versions.txt)
           if [ -z "$version" ]; then
             echo "tools/versions.txt does not record a rustc version" >&2
             exit 1
           fi
-          rustup toolchain install "$version" --profile minimal
-          rustup component add --toolchain "$version" clippy rustfmt
-          echo "RUSTUP_TOOLCHAIN=$version" >> "$GITHUB_ENV"
-          RUSTUP_TOOLCHAIN="$version" rustc --version
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Install that toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: clippy, rustfmt
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
       - name: Run the quick layers
+        env:
+          GAUNTLET_FAIL_FAST: "1"
         run: tools/gauntlet.sh quick
       - name: Scan the tree and history for credentials
         # The quick layers stop before the gauntlet's secret layer, and a credential that lands in
