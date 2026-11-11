@@ -166,6 +166,9 @@ pub fn init(cfg: &Config) -> Result<(), String> {
         )?;
     }
 
+    if !cfg.profile_dir().join("package.json").exists() {
+        repair_profile(cfg)?;
+    }
     write_patch(cfg)?;
     build(cfg)?;
     install(cfg)?;
@@ -174,6 +177,61 @@ pub fn init(cfg: &Config) -> Result<(), String> {
         .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
     println!("\nready — `booth up`, then `/setup owner/repo` in the console or in the panel");
     Ok(())
+}
+
+/// Recover an incomplete profile without letting DSH replace the operator's existing files.
+fn repair_profile(cfg: &Config) -> Result<(), String> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let temp = cfg.dsh_home.join(format!(
+        ".booth-profile-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&temp).map_err(|e| format!("cannot create {}: {e}", temp.display()))?;
+    let result = (|| {
+        println!(
+            "\nrepairing incomplete profile `{}` from the web template",
+            cfg.profile
+        );
+        let status = Command::new("dsh")
+            .args([
+                cfg.profile.as_str(),
+                "--from-default-profile",
+                "web",
+                "--dump-config",
+            ])
+            .env("DSH_HOME", &temp)
+            .current_dir(&temp)
+            .status()
+            .map_err(|e| format!("cannot run dsh: {e}"))?;
+        if !status.success() {
+            return Err(format!("dsh profile template failed ({status})"));
+        }
+        let template = temp.join("profiles").join(&cfg.profile);
+        for name in ["cordis.yml", "pnpm-workspace.yaml", "package.json"] {
+            let source = template.join(name);
+            let dest = cfg.profile_dir().join(name);
+            let mut output = match OpenOptions::new().write(true).create_new(true).open(&dest) {
+                Ok(file) => file,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(format!("cannot create {}: {e}", dest.display())),
+            };
+            let copied = fs::File::open(&source)
+                .and_then(|mut input| std::io::copy(&mut input, &mut output));
+            if let Err(e) = copied {
+                drop(output);
+                let _ = fs::remove_file(&dest);
+                return Err(format!(
+                    "cannot copy {} to {}: {e}",
+                    source.display(),
+                    dest.display()
+                ));
+            }
+        }
+        Ok(())
+    })();
+    let _ = fs::remove_dir_all(&temp);
+    result
 }
 
 pub fn start(cfg: &Config) -> Result<(), String> {
@@ -1493,6 +1551,45 @@ mod tests {
         assert!(manifest.contains("dsh-booth-local"), "{manifest}");
         assert!(cfg.state_dir.is_dir(), "the state directory is created");
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repairs_an_incomplete_profile_without_replacing_existing_files() {
+        use std::os::unix::fs::PermissionsExt;
+        let _env = crate::testkit::env_lock();
+        let cfg = config("repair-profile");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        fs::write(cfg.patch(), "# keep this configuration\n[]\n").unwrap();
+        fs::write(cfg.profile_dir().join("cordis.yml"), "keep this too\n").unwrap();
+        let bin = cfg.dsh_home.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let dsh = bin.join("dsh");
+        fs::write(&dsh, "#!/bin/sh\nmkdir -p \"$DSH_HOME/profiles/$1\"\nprintf '%s' '{}' > \"$DSH_HOME/profiles/$1/package.json\"\nprintf template > \"$DSH_HOME/profiles/$1/cordis.yml\"\nprintf workspace > \"$DSH_HOME/profiles/$1/pnpm-workspace.yaml\"\n").unwrap();
+        fs::set_permissions(&dsh, fs::Permissions::from_mode(0o755)).unwrap();
+        let saved = std::env::var_os("PATH");
+        let mut paths = vec![bin];
+        if let Some(value) = &saved {
+            paths.extend(std::env::split_paths(value));
+        }
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        let outcome = repair_profile(&cfg);
+        match saved {
+            Some(value) => std::env::set_var("PATH", value),
+            None => std::env::remove_var("PATH"),
+        }
+        assert!(outcome.is_ok(), "{outcome:?}");
+        assert_eq!(
+            fs::read_to_string(cfg.patch()).unwrap(),
+            "# keep this configuration\n[]\n"
+        );
+        assert_eq!(
+            fs::read_to_string(cfg.profile_dir().join("cordis.yml")).unwrap(),
+            "keep this too\n"
+        );
+        assert!(cfg.profile_dir().join("package.json").is_file());
+        assert!(cfg.profile_dir().join("pnpm-workspace.yaml").is_file());
+        let _ = fs::remove_dir_all(&cfg.dsh_home);
     }
 
     #[cfg(unix)]
