@@ -805,55 +805,44 @@ fn migration_note(result: Result<Vec<String>, String>) -> Option<String> {
 
 fn write_patch(cfg: &Config) -> Result<(), String> {
     let path = cfg.patch();
-    let console = format!(
-        "- id: dsh-booth-local\n  config:\n    stateDir: {}\n",
-        cfg.state_dir.display()
-    );
-    if path.exists() {
-        let text = fs::read_to_string(&path)
-            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-        if text.contains("dsh-superagent") {
-            // A profile from an earlier booth lacks the console Source; add only that entry.
-            if !text.contains("dsh-booth-local") {
-                let separator = if text.ends_with('\n') { "" } else { "\n" };
-                let mut next = format!("{text}{separator}{console}");
-                if !next.ends_with('\n') {
-                    next.push('\n');
-                }
-                write_staged(&path, &next)?;
-            }
-            return Ok(());
+    let mut patch = Patch::read(cfg)?;
+    let mut added = Vec::new();
+    for (id, config) in [
+        (
+            "webserver",
+            serde_json::json!({"host": "127.0.0.1", "port": cfg.port}),
+        ),
+        (
+            "dsh-superagent",
+            serde_json::json!({"stateDir": cfg.state_dir.to_string_lossy()}),
+        ),
+        (
+            "dsh-booth-local",
+            serde_json::json!({"stateDir": cfg.state_dir.to_string_lossy()}),
+        ),
+    ] {
+        if patch.get(id).is_none() {
+            let entry = serde_json::json!({"id": id, "config": config});
+            patch.entries.push(entry.clone());
+            added.push(entry);
         }
-        // A fresh profile ships a comment and an empty array; keep the comment, replace the array.
-        let kept: Vec<&str> = text
-            .lines()
-            .filter(|line| line.trim() != "[]" && !line.trim().is_empty())
-            .collect();
-        let custom = kept.iter().any(|line| !line.trim_start().starts_with('#'));
-        if custom {
-            return Err(format!(
-                "{} already holds custom entries; add the webserver, dsh-superagent and dsh-booth-local entries yourself",
-                path.display()
-            ));
-        }
-        let header = if kept.is_empty() {
-            String::new()
-        } else {
-            format!("{}\n", kept.join("\n"))
-        };
-        let yaml = format!(
-            "{header}- id: webserver\n  config:\n    host: 127.0.0.1\n    port: {}\n- id: dsh-superagent\n  config:\n    stateDir: {}\n{console}",
-            cfg.port,
-            cfg.state_dir.display()
-        );
-        return write_staged(&path, &yaml);
     }
-    let yaml = format!(
-        "- id: webserver\n  config:\n    host: 127.0.0.1\n    port: {}\n- id: dsh-superagent\n  config:\n    stateDir: {}\n{console}",
-        cfg.port,
-        cfg.state_dir.display()
-    );
-    write_staged(&path, &yaml)
+    if added.is_empty() {
+        return Ok(());
+    }
+
+    // Preserve existing comments and formatting when appending to a block-style list.
+    // Empty and flow-style lists need to be serialized as a whole instead.
+    if let Ok(text) = fs::read_to_string(&path) {
+        let (_, body) = split_header(&text);
+        if body.trim_start().starts_with('-') {
+            let suffix = serde_norway::to_string(&added)
+                .map_err(|error| format!("cannot render {}: {error}", path.display()))?;
+            let separator = if text.ends_with('\n') { "" } else { "\n" };
+            return write_staged(&path, &format!("{text}{separator}{suffix}"));
+        }
+    }
+    patch.write(cfg)
 }
 
 fn build(cfg: &Config) -> Result<(), String> {
@@ -2004,12 +1993,40 @@ mod tests {
     }
 
     #[test]
-    fn refuses_to_rewrite_a_patch_with_custom_entries() {
+    fn preserves_custom_entries_and_adds_missing_entries() {
         let cfg = config("patch-custom");
         let path = cfg.patch();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "- id: something-else\n  config: {}\n").unwrap();
-        assert!(write_patch(&cfg).is_err());
+        write_patch(&cfg).unwrap();
+        let patch = Patch::read(&cfg).unwrap();
+        for id in [
+            "something-else",
+            "webserver",
+            "dsh-superagent",
+            "dsh-booth-local",
+        ] {
+            assert!(patch.get(id).is_some(), "missing {id}");
+        }
+        let before = fs::read_to_string(&path).unwrap();
+        write_patch(&cfg).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn retains_existing_required_entries_and_ignores_ids_in_comments() {
+        let cfg = config("patch-partial");
+        fs::create_dir_all(cfg.profile_dir()).unwrap();
+        let original =
+            "# dsh-superagent is configured later\n- id: webserver\n  config:\n    port: 9999\n";
+        fs::write(cfg.patch(), original).unwrap();
+        write_patch(&cfg).unwrap();
+        let text = fs::read_to_string(cfg.patch()).unwrap();
+        assert!(text.starts_with(original));
+        let patch = Patch::read(&cfg).unwrap();
+        assert_eq!(patch.get("webserver").unwrap()["config"]["port"], 9999);
+        assert!(patch.get("dsh-superagent").is_some());
+        assert!(patch.get("dsh-booth-local").is_some());
     }
 }
 
