@@ -257,18 +257,26 @@ one added in booth appears in the panel, and `booth up` passes no `--patch` and 
 environment.
 
 `/model` lists the catalog: provider, model id and its display name, with the current one
-marked and an **add provider** row at the end. Choosing one writes `agent-default-model` into
-the profile layer and restarts the service.
+marked and an **add provider** row at the end that opens the vendor list. Choosing a row writes
+`agent-default-model` into the profile layer and restarts the service.
 
-`/login` follows Pi's shape. The first entry is the DeepSeek account; the others are
-API-key endpoints (DeepSeek, OpenAI, OpenRouter, or any OpenAI-compatible base URL), with every
-field editable. An API-key login writes:
+`/login` follows Pi's shape. The first row is the DeepSeek account; the rest are the common
+vendors, one preset each — DeepSeek, OpenAI, Anthropic Claude, Google Gemini, xAI Grok, Groq,
+Mistral, OpenRouter, OpenCode Zen, Moonshot Kimi, Z.ai GLM, Qwen, SiliconFlow, Volcengine
+Doubao, MiniMax, Together, Fireworks, Cerebras, the local Ollama and LM Studio endpoints, and a
+custom row. A preset only seeds the form: its base URL, wire protocol (`openai-completions`,
+`openai-responses` or `anthropic-messages`) and default model are the vendor's own starting
+points and stay editable. Typing filters the list, so `/login`, `anth` and Enter is enough;
+`/login gemini` opens that preset directly. Every API-key login writes:
 
 - an `llm-pi-ai.providers.<id>` entry in the profile layer — `apiKeyEnv`, `baseURL`, `api` and
   the model — naming a credential ref, never the secret;
 - the key itself as `refs.BOOTH_<ID>_KEY` in `~/.dsh/.credentials.yaml` (mode 0600), beside the
   keys DSH already stores there;
 - `agent-default-model`, so the next start uses it.
+
+The local presets open with `local` already in the key field: an Ollama or LM Studio server
+ignores the `Authorization` header, but DSH still wants a credential ref to name.
 
 The account option runs the same PKCE flow as DSH's web panel: booth asks
 `platform.deepseek.com` for an authorize URL, listens on `127.0.0.1:37029/oauth/callback` for

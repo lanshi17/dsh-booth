@@ -21,7 +21,7 @@ pub const PALETTE: &[(&str, &str)] = &[
     ),
     (
         "/login [provider]",
-        "sign in: DeepSeek account, or an API-key provider",
+        "sign in: the DeepSeek account, or a vendor's API key",
     ),
     ("/tickets [state]", "open | person | working | idle | ended"),
     ("/ticket <id>", "mandate, assignments, inputs, threads"),

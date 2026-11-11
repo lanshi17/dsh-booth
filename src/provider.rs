@@ -695,8 +695,10 @@ fn holder_exited(record: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The endpoint presets `/login` offers before "custom". Base URLs and model ids are starting
-/// points; every field in the form stays editable, and what is saved is the profile entry.
+/// The endpoint presets `/login` offers before "custom". Base URLs, wire protocols and model ids
+/// are the vendors' own, taken from `omp`'s provider catalog
+/// (`packages/catalog/src/provider-models`); they are starting points, every field in the form
+/// stays editable, and what is saved is the profile entry.
 pub struct Preset {
     pub id: &'static str,
     pub label: &'static str,
@@ -707,13 +709,49 @@ pub struct Preset {
     pub duty: &'static str,
 }
 
+impl Preset {
+    /// The host of the base URL, without the scheme or a path.
+    fn host(&self) -> &str {
+        self.base
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split('/')
+            .next()
+            .unwrap_or(self.base)
+    }
+
+    /// The second column of the login list: the host, and the protocol the vendor speaks.
+    pub fn hint(&self) -> String {
+        if self.base.is_empty() {
+            return "any base URL you name".to_owned();
+        }
+        format!("{} · {}", self.host(), self.api)
+    }
+
+    /// What the key field starts with. A hosted vendor waits for the real key; a server on this
+    /// machine ignores the key header, so its preset carries a placeholder that keeps the form
+    /// saveable.
+    pub fn key_seed(&self) -> &'static str {
+        if ["http://127.0.0.1", "http://localhost", "http://[::1]"]
+            .iter()
+            .any(|prefix| self.base.starts_with(prefix))
+        {
+            "local"
+        } else {
+            ""
+        }
+    }
+}
+
 pub const PRESETS: &[Preset] = &[
+    // The labs first, then the gateways, the regional and hosted vendors, and the servers that
+    // run on this machine last. Typesafe, search and documents follow, for the other rows.
     Preset {
         id: "deepseek",
         label: "DeepSeek",
         base: "https://api.deepseek.com",
-        api: "openai-responses",
-        model: "deepseek-chat",
+        api: "openai-completions",
+        model: "deepseek-v4-pro",
         duty: "language",
     },
     Preset {
@@ -725,6 +763,62 @@ pub const PRESETS: &[Preset] = &[
         duty: "language",
     },
     Preset {
+        id: "openai",
+        label: "OpenAI",
+        base: "https://api.openai.com/v1",
+        api: "openai-responses",
+        model: "gpt-5.5",
+        duty: "language",
+    },
+    Preset {
+        id: "anthropic",
+        label: "Anthropic Claude",
+        base: "https://api.anthropic.com",
+        api: "anthropic-messages",
+        model: "claude-opus-4-8",
+        duty: "language",
+    },
+    Preset {
+        id: "google",
+        label: "Google Gemini",
+        base: "https://generativelanguage.googleapis.com/v1beta/openai",
+        api: "openai-completions",
+        model: "gemini-3.1-pro-preview",
+        duty: "language",
+    },
+    Preset {
+        id: "xai",
+        label: "xAI Grok",
+        base: "https://api.x.ai/v1",
+        api: "openai-completions",
+        model: "grok-4-fast-non-reasoning",
+        duty: "language",
+    },
+    Preset {
+        id: "groq",
+        label: "Groq",
+        base: "https://api.groq.com/openai/v1",
+        api: "openai-completions",
+        model: "openai/gpt-oss-120b",
+        duty: "language",
+    },
+    Preset {
+        id: "mistral",
+        label: "Mistral",
+        base: "https://api.mistral.ai/v1",
+        api: "openai-completions",
+        model: "devstral-medium-latest",
+        duty: "language",
+    },
+    Preset {
+        id: "openrouter",
+        label: "OpenRouter",
+        base: "https://openrouter.ai/api/v1",
+        api: "openai-completions",
+        model: "openai/gpt-5.5",
+        duty: "language",
+    },
+    Preset {
         id: "opencode-go",
         label: "OpenCode Go",
         base: "https://opencode.ai/zen/go/v1",
@@ -733,67 +827,67 @@ pub const PRESETS: &[Preset] = &[
         duty: "language",
     },
     Preset {
-        id: "openai",
-        label: "OpenAI",
-        base: "https://api.openai.com/v1",
-        api: "openai-responses",
-        model: "gpt-5",
-        duty: "language",
-    },
-    Preset {
-        id: "openrouter",
-        label: "OpenRouter",
-        base: "https://openrouter.ai/api/v1",
-        api: "openai-completions",
-        model: "deepseek/deepseek-chat",
-        duty: "language",
-    },
-    Preset {
-        id: "groq",
-        label: "Groq",
-        base: "https://api.groq.com/openai/v1",
-        api: "openai-completions",
-        model: "llama-3.3-70b-versatile",
-        duty: "language",
-    },
-    Preset {
-        id: "google",
-        label: "Google Gemini",
-        base: "https://generativelanguage.googleapis.com/v1beta/openai",
-        api: "openai-completions",
-        model: "gemini-2.5-flash",
-        duty: "language",
-    },
-    Preset {
-        id: "xai",
-        label: "xAI",
-        base: "https://api.x.ai/v1",
-        api: "openai-completions",
-        model: "grok-3",
+        id: "opencode-zen",
+        label: "OpenCode Zen",
+        base: "https://opencode.ai/zen",
+        api: "anthropic-messages",
+        model: "claude-opus-4-8",
         duty: "language",
     },
     Preset {
         id: "moonshot",
-        label: "Moonshot",
+        label: "Moonshot Kimi",
         base: "https://api.moonshot.ai/v1",
         api: "openai-completions",
-        model: "moonshot-v1-8k",
+        model: "kimi-k2.7-code",
+        duty: "language",
+    },
+    Preset {
+        id: "zai",
+        label: "Z.ai GLM",
+        base: "https://api.z.ai/api/anthropic",
+        api: "anthropic-messages",
+        model: "glm-5.2",
+        duty: "language",
+    },
+    Preset {
+        id: "qwen",
+        label: "Qwen (DashScope)",
+        base: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        api: "openai-completions",
+        model: "qwen3.7-plus",
+        duty: "language",
+    },
+    Preset {
+        id: "siliconflow",
+        label: "SiliconFlow",
+        base: "https://api.siliconflow.cn/v1",
+        api: "openai-completions",
+        model: "deepseek-ai/DeepSeek-V4-Pro",
+        duty: "language",
+    },
+    Preset {
+        id: "volcengine",
+        label: "Volcengine Doubao",
+        base: "https://ark.cn-beijing.volces.com/api/v3",
+        api: "openai-responses",
+        model: "doubao-seed-2-1-pro-260628",
+        duty: "language",
+    },
+    Preset {
+        id: "minimax",
+        label: "MiniMax",
+        base: "https://api.minimax.io/v1",
+        api: "openai-completions",
+        model: "MiniMax-M3",
         duty: "language",
     },
     Preset {
         id: "together",
-        label: "Together",
+        label: "Together AI",
         base: "https://api.together.xyz/v1",
         api: "openai-completions",
-        model: "meta-llama/Llama-3.3-70B-Instruct-Turbo",
-        duty: "language",
-    },
-    Preset {
-        id: "mistral",
-        label: "Mistral",
-        base: "https://api.mistral.ai/v1",
-        api: "openai-completions",
-        model: "mistral-large-latest",
+        model: "moonshotai/Kimi-K2.7-Code",
         duty: "language",
     },
     Preset {
@@ -801,7 +895,7 @@ pub const PRESETS: &[Preset] = &[
         label: "Fireworks",
         base: "https://api.fireworks.ai/inference/v1",
         api: "openai-completions",
-        model: "accounts/fireworks/models/llama-v3p1-8b-instruct",
+        model: "kimi-k2.7-code",
         duty: "language",
     },
     Preset {
@@ -809,15 +903,23 @@ pub const PRESETS: &[Preset] = &[
         label: "Cerebras",
         base: "https://api.cerebras.ai/v1",
         api: "openai-completions",
-        model: "llama-3.3-70b",
+        model: "zai-glm-4.7",
         duty: "language",
     },
     Preset {
-        id: "nvidia",
-        label: "NVIDIA",
-        base: "https://integrate.api.nvidia.com/v1",
+        id: "ollama",
+        label: "Ollama (local)",
+        base: "http://127.0.0.1:11434/v1",
         api: "openai-completions",
-        model: "meta/llama-3.1-70b-instruct",
+        model: "gpt-oss:20b",
+        duty: "language",
+    },
+    Preset {
+        id: "lm-studio",
+        label: "LM Studio (local)",
+        base: "http://127.0.0.1:1234/v1",
+        api: "openai-completions",
+        model: "llama-3-8b",
         duty: "language",
     },
     Preset {
@@ -900,7 +1002,11 @@ pub fn offers(duty_id: &str, configured: &[(String, String)]) -> Vec<Offer> {
 }
 
 /// The protocols `llm-pi-ai` accepts, in the order the form cycles them.
-pub const APIS: &[&str] = &["openai-completions", "openai-responses"];
+pub const APIS: &[&str] = &[
+    "openai-completions",
+    "openai-responses",
+    "anthropic-messages",
+];
 
 /// Converts the file an earlier booth kept into the profile's own configuration.
 ///
@@ -1748,6 +1854,135 @@ mod tests {
         .unwrap_err();
         assert!(error.contains("id"), "{error}");
         fs::remove_dir_all(&cfg.dsh_home).unwrap();
+    }
+
+    #[test]
+    fn every_preset_is_a_complete_row_the_form_would_accept() {
+        let mut ids = Vec::new();
+        let mut refs = Vec::new();
+        for preset in PRESETS {
+            assert!(!preset.label.trim().is_empty(), "{}: no label", preset.id);
+            assert!(
+                preset
+                    .id
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'),
+                "{}: commit_login would refuse this id",
+                preset.id
+            );
+            assert!(!ids.contains(&preset.id), "duplicate id {}", preset.id);
+            ids.push(preset.id);
+            // Two ids that differ only in their separators would share one credential.
+            let reference = key_ref(preset.id);
+            assert!(
+                !refs.contains(&reference),
+                "{} writes over {reference}",
+                preset.id
+            );
+            refs.push(reference);
+            assert!(
+                APIS.contains(&preset.api),
+                "{}: llm-pi-ai does not serve {}",
+                preset.id,
+                preset.api
+            );
+            if preset.id == "custom" {
+                // The escape hatch is what the operator fills in.
+                assert!(preset.base.is_empty() && preset.model.is_empty());
+                continue;
+            }
+            assert!(
+                preset.base.starts_with("http"),
+                "{}: a base URL starts with http",
+                preset.id
+            );
+            assert!(
+                !preset.base.ends_with('/'),
+                "{}: commit_login trims the slash, so the preset should not carry one",
+                preset.id
+            );
+            assert!(!preset.model.is_empty(), "{}: no model", preset.id);
+        }
+        assert_eq!(
+            ids.last().copied(),
+            Some("custom"),
+            "the escape hatch stays last"
+        );
+    }
+
+    #[test]
+    fn the_common_vendors_each_have_a_preset() {
+        // The list is the point of the table; a vendor dropped by accident should fail here.
+        for id in [
+            "deepseek",
+            "openai",
+            "anthropic",
+            "google",
+            "xai",
+            "groq",
+            "mistral",
+            "openrouter",
+            "opencode-zen",
+            "moonshot",
+            "zai",
+            "qwen",
+            "siliconflow",
+            "volcengine",
+            "minimax",
+            "together",
+            "fireworks",
+            "cerebras",
+            "ollama",
+            "lm-studio",
+        ] {
+            assert!(
+                PRESETS.iter().any(|preset| preset.id == id),
+                "{id} lost its preset"
+            );
+        }
+        // The protocols are covered: an OpenAI-compatible vendor, a Responses one, an
+        // Anthropic Messages one.
+        for api in [
+            "openai-completions",
+            "openai-responses",
+            "anthropic-messages",
+        ] {
+            assert!(
+                PRESETS.iter().any(|preset| preset.api == api),
+                "no preset speaks {api}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_hint_names_the_host_and_the_protocol() {
+        let anthropic = PRESETS
+            .iter()
+            .find(|preset| preset.id == "anthropic")
+            .unwrap();
+        assert_eq!(anthropic.hint(), "api.anthropic.com · anthropic-messages");
+        let ollama = PRESETS.iter().find(|preset| preset.id == "ollama").unwrap();
+        assert_eq!(ollama.hint(), "127.0.0.1:11434 · openai-completions");
+        let custom = PRESETS.iter().find(|preset| preset.id == "custom").unwrap();
+        assert_eq!(custom.hint(), "any base URL you name");
+    }
+
+    #[test]
+    fn a_local_server_seeds_the_key_and_a_hosted_vendor_does_not() {
+        for preset in PRESETS {
+            let local = preset.base.starts_with("http://127.0.0.1")
+                || preset.base.starts_with("http://localhost");
+            assert_eq!(
+                preset.key_seed(),
+                if local { "local" } else { "" },
+                "{}: a key is only seeded where the server ignores it",
+                preset.id
+            );
+        }
+        let ollama = PRESETS.iter().find(|preset| preset.id == "ollama").unwrap();
+        assert_eq!(ollama.key_seed(), "local");
+        let openai = PRESETS.iter().find(|preset| preset.id == "openai").unwrap();
+        assert!(openai.key_seed().is_empty());
     }
 }
 

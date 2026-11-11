@@ -60,21 +60,115 @@ const TIPS: [&str; 4] = [
     "Ctrl+P opens the palette, Ctrl+R searches history; /keys lists them all.",
 ];
 
-/// `/login` starts with the account, then every preset omp-style roster, custom last.
-fn login_rows() -> Vec<(String, String)> {
-    let mut rows = vec![(
-        "DeepSeek account".to_owned(),
-        "browser sign-in, no API key".to_owned(),
-    )];
-    for preset in provider::PRESETS {
-        let detail = if preset.base.is_empty() {
-            "any OpenAI-compatible base URL".to_owned()
-        } else {
-            preset.base.to_owned()
-        };
-        rows.push((preset.label.to_owned(), detail));
+/// `/login` starts here: the account sign-in first, then one row per preset the provider table
+/// offers, so a vendor added there appears without a second list to keep in step.
+const ACCOUNT_ROW: (&str, &str) = ("DeepSeek account", "browser sign-in, no API key");
+
+/// What a row of the login list does when it is chosen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LoginChoice {
+    Account,
+    Preset(usize),
+}
+
+/// One row of the login list. `id` and `matched` only serve the filter: the id is matched but
+/// never drawn, and `matched` holds the label's char positions the query hit, for the highlight.
+struct LoginRow {
+    label: &'static str,
+    hint: String,
+    id: &'static str,
+    choice: LoginChoice,
+    matched: Vec<usize>,
+}
+
+impl LoginRow {
+    fn new(label: &'static str, hint: String, id: &'static str, choice: LoginChoice) -> Self {
+        Self {
+            label,
+            hint,
+            id,
+            choice,
+            matched: Vec::new(),
+        }
     }
-    rows
+}
+
+/// The login list's rows: the account, then every preset in table order, filtered and ranked by
+/// the subsequence the palette uses when the operator types.
+fn login_rows(query: &str) -> Vec<LoginRow> {
+    let mut rows = vec![LoginRow::new(
+        ACCOUNT_ROW.0,
+        ACCOUNT_ROW.1.to_owned(),
+        "",
+        LoginChoice::Account,
+    )];
+    for (index, preset) in provider::PRESETS.iter().enumerate() {
+        rows.push(LoginRow::new(
+            preset.label,
+            preset.hint(),
+            preset.id,
+            LoginChoice::Preset(index),
+        ));
+    }
+    let needle = query.trim();
+    if needle.is_empty() {
+        return rows;
+    }
+    let mut scored: Vec<(i32, usize, LoginRow)> = rows
+        .into_iter()
+        .enumerate()
+        .filter_map(|(order, mut row)| {
+            let haystack = format!("{} {}", row.label, row.id);
+            let (score, indices) = commands::fuzzy(&haystack, needle)?;
+            // The id sits past the label, so only the label's own letters can be highlighted.
+            let label_chars = row.label.chars().count();
+            row.matched = indices.into_iter().filter(|at| *at < label_chars).collect();
+            Some((score, order, row))
+        })
+        .collect();
+    // A higher score first; equal scores keep the table's order, the custom row last.
+    scored.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    scored.into_iter().map(|(_, _, row)| row).collect()
+}
+
+/// Which preset a `/login <name>` argument names: an exact id first, then an exact label, then
+/// a name that contains the text, then the closest fuzzy match. `None` leaves the query in the
+/// list, so a typo shows the suggestions instead of the wrong form.
+fn preset_named(query: &str) -> Option<usize> {
+    let query = query.trim();
+    if query.is_empty() {
+        return None;
+    }
+    let lowered = query.to_ascii_lowercase();
+    let presets = provider::PRESETS;
+    let exact = presets
+        .iter()
+        .position(|preset| preset.id.eq_ignore_ascii_case(&lowered))
+        .or_else(|| {
+            presets
+                .iter()
+                .position(|preset| preset.label.eq_ignore_ascii_case(query))
+        });
+    if exact.is_some() {
+        return exact;
+    }
+    let contains = presets.iter().position(|preset| {
+        preset.id.to_ascii_lowercase().contains(&lowered)
+            || preset.label.to_ascii_lowercase().contains(&lowered)
+    });
+    if contains.is_some() {
+        return contains;
+    }
+    let mut scored: Vec<(i32, usize)> = presets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, preset)| {
+            commands::fuzzy(&format!("{} {}", preset.label, preset.id), &lowered)
+                .map(|(score, _)| (score, index))
+        })
+        .collect();
+    scored.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    scored.first().map(|(_, index)| *index)
 }
 
 /// One ticket poll: the open rows plus what a tracked ticket's detail said, the total behind the
@@ -105,6 +199,7 @@ enum Msg {
 
 enum Modal {
     LoginList {
+        query: String,
         selected: usize,
     },
     Login(LoginForm),
@@ -175,7 +270,7 @@ impl LoginForm {
             base: item.base.to_owned(),
             model: item.model.to_owned(),
             api: item.api.to_owned(),
-            key: String::new(),
+            key: item.key_seed().to_owned(),
             field: 1,
             cursor: 0,
             error: None,
@@ -1363,7 +1458,10 @@ impl App {
             return;
         }
         if line == "/login" {
-            self.modal = Some(Modal::LoginList { selected: 0 });
+            self.modal = Some(Modal::LoginList {
+                query: String::new(),
+                selected: 0,
+            });
             return;
         }
         if let Some(rest) = line.strip_prefix("/login ") {
@@ -1409,11 +1507,16 @@ impl App {
     }
 
     fn open_login(&mut self, preset: &str) {
-        let index = provider::PRESETS
-            .iter()
-            .position(|item| item.id == preset || item.label.eq_ignore_ascii_case(preset))
-            .unwrap_or(0);
-        self.modal = Some(Modal::Login(LoginForm::new(index)));
+        match preset_named(preset) {
+            Some(index) => self.modal = Some(Modal::Login(LoginForm::new(index))),
+            // A name no vendor matches leaves the query in the list instead of opening DeepSeek.
+            None => {
+                self.modal = Some(Modal::LoginList {
+                    query: preset.trim().to_owned(),
+                    selected: 0,
+                })
+            }
+        }
     }
 
     fn open_model(&mut self) {
@@ -1491,7 +1594,7 @@ impl App {
 
     fn modal_key(&mut self, key: KeyEvent) {
         match self.modal.take() {
-            Some(Modal::LoginList { selected }) => self.login_list_key(key, selected),
+            Some(Modal::LoginList { query, selected }) => self.login_list_key(key, query, selected),
             Some(Modal::Login(form)) => self.login_key(key, form),
             Some(Modal::OAuth(state)) => self.oauth_key(key, state),
             Some(Modal::Model(pick)) => self.model_key(key, pick),
@@ -1539,7 +1642,10 @@ impl App {
             KeyCode::Up => screen.selected = screen.selected.saturating_sub(1),
             KeyCode::Down => screen.selected = (screen.selected + 1).min(count.saturating_sub(1)),
             KeyCode::Char('a') if key.modifiers.is_empty() => {
-                self.modal = Some(Modal::LoginList { selected: 0 });
+                self.modal = Some(Modal::LoginList {
+                    query: String::new(),
+                    selected: 0,
+                });
                 return;
             }
             KeyCode::Enter => match screen.step {
@@ -1552,7 +1658,10 @@ impl App {
                     let row = offers.get(screen.selected.min(offers.len().saturating_sub(1)));
                     match row {
                         Some(provider::Offer::Add) | None => {
-                            self.modal = Some(Modal::LoginList { selected: 0 });
+                            self.modal = Some(Modal::LoginList {
+                                query: String::new(),
+                                selected: 0,
+                            });
                             return;
                         }
                         Some(provider::Offer::Preset(index)) => {
@@ -1622,23 +1731,45 @@ impl App {
         self.modal = Some(Modal::Providers(screen));
     }
 
-    fn login_list_key(&mut self, key: KeyEvent, mut selected: usize) {
-        let count = login_rows().len();
+    /// The list filters as the operator types, the way the palette does; arrows walk what is
+    /// left, and Enter opens the form of the row under them.
+    fn login_list_key(&mut self, key: KeyEvent, mut query: String, mut selected: usize) {
+        let mut rows = login_rows(&query);
         match key.code {
             KeyCode::Esc => return,
             KeyCode::Up => selected = selected.saturating_sub(1),
-            KeyCode::Down => selected = (selected + 1).min(count - 1),
+            KeyCode::Down => selected = (selected + 1).min(rows.len().saturating_sub(1)),
             KeyCode::Enter => {
-                if selected == 0 {
-                    self.start_oauth();
-                } else {
-                    self.modal = Some(Modal::Login(LoginForm::new(selected - 1)));
+                match rows.get(selected).map(|row| row.choice) {
+                    Some(LoginChoice::Account) => self.start_oauth(),
+                    Some(LoginChoice::Preset(index)) => {
+                        self.modal = Some(Modal::Login(LoginForm::new(index)));
+                    }
+                    // A filter that matches nothing has nothing to open.
+                    None => {
+                        self.modal = Some(Modal::LoginList { query, selected });
+                    }
                 }
                 return;
             }
+            KeyCode::Backspace => {
+                query.pop();
+                selected = 0;
+                rows = login_rows(&query);
+            }
+            // Ctrl and Alt chords belong to the console, not to the filter.
+            KeyCode::Char(ch)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                query.push(ch);
+                selected = 0;
+                rows = login_rows(&query);
+            }
             _ => {}
         }
-        self.modal = Some(Modal::LoginList { selected });
+        let selected = selected.min(rows.len().saturating_sub(1));
+        self.modal = Some(Modal::LoginList { query, selected });
     }
 
     fn start_oauth(&mut self) {
@@ -1808,6 +1939,10 @@ impl App {
                         let count = provider::PRESETS.len() as i32;
                         let next = (form.preset as i32 + step).rem_euclid(count) as usize;
                         form = LoginForm::new(next);
+                        // Stay on the chooser: with the vendor list this long, the arrows are
+                        // how one walks it, and jumping into the id field would interrupt that.
+                        form.field = 0;
+                        form.cursor = 0;
                     }
                     4 => {
                         let count = provider::APIS.len() as i32;
@@ -1880,7 +2015,11 @@ impl App {
             KeyCode::Down => pick.selected = (pick.selected + 1).min(count.saturating_sub(1)),
             KeyCode::Enter => {
                 if pick.selected >= self.catalog.choices.len() {
-                    self.open_login("");
+                    // Adding a provider starts at the vendor list, not at one vendor's form.
+                    self.modal = Some(Modal::LoginList {
+                        query: String::new(),
+                        selected: 0,
+                    });
                     return;
                 }
                 let chosen = self.catalog.choices[pick.selected].clone();
@@ -2321,7 +2460,7 @@ fn draw_modal(
     config: Option<&service::Config>,
 ) {
     match modal {
-        Modal::LoginList { selected } => draw_login_list(frame, area, *selected),
+        Modal::LoginList { query, selected } => draw_login_list(frame, area, query, *selected),
         Modal::Login(form) => draw_login(frame, area, form),
         Modal::OAuth(state) => draw_oauth(frame, area, state),
         Modal::Model(pick) => draw_model(frame, area, pick, catalog),
@@ -2722,11 +2861,15 @@ fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, catalog: &Catalog
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
-    let rows = login_rows();
-    let shown = rows.len().min(12);
-    let width = area.width.saturating_sub(8).clamp(44, 78).min(area.width);
-    let height = (shown as u16 + 3).min(area.height);
+/// How many rows of the login list fit at once; the rest scroll under the selection.
+const LOGIN_ROWS: usize = 12;
+
+fn draw_login_list(frame: &mut Frame, area: Rect, query: &str, selected: usize) {
+    let rows = login_rows(query);
+    let shown = rows.len().min(LOGIN_ROWS);
+    let list_rows = if rows.is_empty() { 1 } else { shown };
+    let width = area.width.saturating_sub(8).clamp(44, 86).min(area.width);
+    let height = (list_rows as u16 + 3).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,
@@ -2734,31 +2877,53 @@ fn draw_login_list(frame: &mut Frame, area: Rect, selected: usize) {
         height,
     };
     frame.render_widget(Clear, rect);
+    // The typed query rides the title, so the box does not grow a row while it narrows.
+    let title = match query.trim() {
+        "" => " login ".to_owned(),
+        filter => format!(" login · {filter} "),
+    };
     let block = Block::bordered()
         .border_style(Style::default().fg(CYAN))
-        .title(Span::styled(" login ", Style::default().fg(MUTED)));
+        .title(Span::styled(title, Style::default().fg(MUTED)));
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
 
     let mut lines: Vec<L> = Vec::new();
+    if rows.is_empty() {
+        lines.push(Line::from(Span::styled(
+            format!(" nothing matches “{}”", query.trim()),
+            Style::default().fg(DIM),
+        )));
+    }
+    let available = (inner.width as usize).saturating_sub(23).max(8);
+    // Keep the selection in view when the list is longer than its window (omp's lists scroll).
     let offset = selected.saturating_sub(shown.saturating_sub(1));
-    for (index, (label, description)) in rows.iter().enumerate().skip(offset).take(shown) {
+    for (index, row) in rows.iter().enumerate().skip(offset).take(shown) {
         let active = index == selected;
-        lines.push(Line::from(vec![
-            Span::styled(if active { "▶ " } else { "  " }, Style::default().fg(CYAN)),
-            Span::styled(
-                format!("{label:<20}"),
-                if active {
-                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                },
-            ),
-            Span::styled(description.clone(), Style::default().fg(DIM)),
-        ]));
+        let mut spans = vec![Span::styled(
+            if active { "▶ " } else { "  " },
+            Style::default().fg(CYAN),
+        )];
+        // The label highlights the letters the filter matched, as the palette does.
+        for (position, ch) in row.label.chars().enumerate() {
+            let hit = row.matched.contains(&position);
+            let style = if hit || active {
+                Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(ch.to_string(), style));
+        }
+        let pad = 20usize.saturating_sub(UnicodeWidthStr::width(row.label));
+        spans.push(Span::raw(" ".repeat(pad.max(1))));
+        spans.push(Span::styled(
+            clip_text(&row.hint, available),
+            Style::default().fg(DIM),
+        ));
+        lines.push(Line::from(spans));
     }
     lines.push(Line::from(Span::styled(
-        " Enter select · Esc cancel",
+        " ↑↓ move · type to filter · Enter select · Esc cancel",
         Style::default().fg(DIM),
     )));
     frame.render_widget(Paragraph::new(lines), inner);
@@ -3839,7 +4004,10 @@ mod editor_tests {
 
         // Every other modal honours the same global shortcut.
         for modal in [
-            Modal::LoginList { selected: 2 },
+            Modal::LoginList {
+                query: String::new(),
+                selected: 2,
+            },
             Modal::Model(ModelPick { selected: 1 }),
             Modal::Keys,
         ] {
@@ -4464,13 +4632,13 @@ mod editor_tests {
         }));
         app.modal = Some(Modal::Model(ModelPick { selected: 0 }));
 
-        // Down past the last choice lands on the add row, which opens the login form.
+        // Down past the last choice lands on the add row, which opens the vendor list.
         app.modal_key(key(KeyCode::Down));
         app.modal_key(key(KeyCode::Down));
         app.modal_key(key(KeyCode::Enter));
         assert!(
-            matches!(app.modal, Some(Modal::Login(_))),
-            "the add row opens the login form"
+            matches!(app.modal, Some(Modal::LoginList { .. })),
+            "the add row opens the vendor list"
         );
 
         // The header shows the catalog's default, not a remembered one.
@@ -4598,6 +4766,52 @@ mod editor_tests {
     }
 
     #[test]
+    fn the_login_list_lists_the_account_and_every_preset() {
+        let rows = login_rows("");
+        assert_eq!(rows.len(), provider::PRESETS.len() + 1);
+        assert_eq!(rows[0].choice, LoginChoice::Account);
+        for (index, row) in rows.iter().skip(1).enumerate() {
+            assert_eq!(
+                row.choice,
+                LoginChoice::Preset(index),
+                "row {index} is the preset in the same position"
+            );
+        }
+        // Each row carries the host and the protocol, so two vendors with the same name still
+        // read differently.
+        assert!(
+            rows.iter()
+                .any(|row| row.hint.contains("api.anthropic.com")),
+            "{:?}",
+            rows.iter().map(|row| &row.hint).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn the_login_command_opens_the_vendor_list() {
+        let (mut app, dir, _env) = editor("login-command");
+        for line in ["/login", "/login "] {
+            app.modal = None;
+            app.input = line.into();
+            app.submit();
+            assert!(
+                matches!(app.modal, Some(Modal::LoginList { ref query, selected: 0 }) if query.is_empty()),
+                "{line} opens the list"
+            );
+        }
+        // A blank name names no vendor, so it stays a filter instead of picking the first row.
+        assert_eq!(preset_named("  "), None);
+        // A named vendor goes straight to its form.
+        app.input = "/login gemini".into();
+        app.submit();
+        match &app.modal {
+            Some(Modal::Login(form)) => assert_eq!(form.id, "google"),
+            _ => panic!("a named vendor opens its form"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn the_composer_window_keeps_the_caret_and_the_text_around_it() {
         // A line that fits is shown whole, with the caret after the characters before it.
         assert_eq!(composer_view("short", 5, 40), ("short".to_owned(), 5));
@@ -4628,6 +4842,179 @@ mod editor_tests {
         assert!(UnicodeWidthStr::width(text.as_str()) <= 10, "{text}");
         assert_eq!(UnicodeWidthStr::width(text.as_str()), caret as usize);
         assert!(text.ends_with('工'), "{text}");
+    }
+
+    #[test]
+    fn typing_filters_the_login_list_by_vendor() {
+        // A label hit, an id hit and a partial word all narrow the list.
+        let gemini = login_rows("gemini");
+        assert_eq!(gemini.len(), 1, "{} rows", gemini.len());
+        assert_eq!(
+            gemini[0].choice,
+            LoginChoice::Preset(preset_named("google").unwrap())
+        );
+        assert!(
+            !gemini[0].matched.is_empty(),
+            "the matched letters are marked"
+        );
+        assert!(
+            gemini[0]
+                .matched
+                .iter()
+                .all(|at| *at < gemini[0].label.chars().count()),
+            "the highlight stays inside the label"
+        );
+
+        let zai = login_rows("zai");
+        assert_eq!(zai.len(), 1);
+        assert_eq!(zai[0].label, "Z.ai GLM", "the id is matched but not drawn");
+
+        assert!(login_rows("anthropic")
+            .iter()
+            .any(|row| row.label == "Anthropic Claude"));
+        assert!(
+            login_rows("zzzz").is_empty(),
+            "a query no vendor matches leaves nothing"
+        );
+        // The account row is filtered by its own text like the presets.
+        let account = login_rows("account");
+        assert_eq!(account.len(), 1);
+        assert_eq!(account[0].choice, LoginChoice::Account);
+    }
+
+    #[test]
+    fn a_filtered_login_list_opens_the_preset_under_the_cursor() {
+        let (mut app, dir, _env) = editor("login-filter");
+        app.modal = Some(Modal::LoginList {
+            query: String::new(),
+            selected: 0,
+        });
+        for ch in "claude".chars() {
+            app.modal_key(key(KeyCode::Char(ch)));
+        }
+        app.modal_key(key(KeyCode::Enter));
+        match &app.modal {
+            Some(Modal::Login(LoginForm { preset, base, .. })) => {
+                assert_eq!(*preset, preset_named("anthropic").unwrap());
+                assert_eq!(base, "https://api.anthropic.com");
+            }
+            _ => panic!("the filter did not open a form"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_login_filter_that_matches_nothing_stays_open() {
+        let (mut app, dir, _env) = editor("login-none");
+        app.modal = Some(Modal::LoginList {
+            query: String::new(),
+            selected: 0,
+        });
+        for ch in "zzzz".chars() {
+            app.modal_key(key(KeyCode::Char(ch)));
+        }
+        app.modal_key(key(KeyCode::Enter));
+        match &app.modal {
+            Some(Modal::LoginList { query, selected }) => {
+                assert_eq!(query, "zzzz");
+                assert_eq!(*selected, 0);
+            }
+            _ => panic!("an empty filter must not open a form"),
+        }
+        // Backspace walks the query back out; the full list returns with the cursor at the top.
+        for _ in 0..4 {
+            app.modal_key(key(KeyCode::Backspace));
+        }
+        match &app.modal {
+            Some(Modal::LoginList { query, selected }) => {
+                assert!(query.is_empty());
+                assert_eq!(*selected, 0);
+            }
+            _ => panic!("the list closed on backspace"),
+        }
+        // Down stays inside the list, and the last row is reachable.
+        for _ in 0..provider::PRESETS.len() + 8 {
+            app.modal_key(key(KeyCode::Down));
+        }
+        match &app.modal {
+            Some(Modal::LoginList { selected, .. }) => {
+                assert_eq!(*selected, provider::PRESETS.len());
+            }
+            _ => panic!("the list closed on down"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_name_finds_its_preset_and_a_typo_leaves_the_list() {
+        let (mut app, dir, _env) = editor("login-name");
+
+        for (typed, id) in [
+            ("gemini", Some("google")),
+            ("claude", Some("anthropic")),
+            ("deepseek", Some("deepseek")),
+            ("open", Some("openai")),
+            ("local", None),
+        ] {
+            app.open_login(typed);
+            match (&app.modal, id) {
+                (Some(Modal::Login(form)), Some(id)) => {
+                    assert_eq!(form.id, id, "{typed}");
+                }
+                // "local" names two presets, so the fuzzy match picks one of them.
+                (Some(Modal::Login(form)), None) => {
+                    assert!(form.base.starts_with("http://127.0.0.1"), "{}", form.base);
+                }
+                _ => panic!("{typed} did not open a form"),
+            }
+        }
+
+        // A name no preset matches opens the list with the query typed, not a wrong form.
+        app.open_login("qqqqqq");
+        match &app.modal {
+            Some(Modal::LoginList { query, .. }) => assert_eq!(query, "qqqqqq"),
+            _ => panic!("an unknown name should leave the list open"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_arrows_walk_the_presets_without_leaving_the_chooser() {
+        let (mut app, dir, _env) = editor("login-cycle");
+        app.modal = Some(Modal::Login(LoginForm::new(0)));
+        app.modal_key(key(KeyCode::BackTab));
+        app.modal_key(key(KeyCode::Right));
+        match &app.modal {
+            Some(Modal::Login(form)) => {
+                assert_eq!(form.preset, 1);
+                assert_eq!(form.field, 0, "the arrows stay on the preset row");
+                assert_eq!(form.id, provider::PRESETS[1].id);
+            }
+            _ => panic!("the form closed"),
+        }
+        app.modal_key(key(KeyCode::Left));
+        app.modal_key(key(KeyCode::Left));
+        match &app.modal {
+            Some(Modal::Login(form)) => {
+                assert_eq!(form.preset, provider::PRESETS.len() - 1, "it wraps");
+                assert_eq!(form.field, 0);
+                assert_eq!(form.base, provider::PRESETS[form.preset].base);
+            }
+            _ => panic!("the form closed"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_local_preset_opens_with_a_placeholder_key() {
+        let local = preset_named("ollama").unwrap();
+        let form = LoginForm::new(local);
+        assert_eq!(form.key, "local", "a local server ignores the key header");
+        let hosted = LoginForm::new(preset_named("openai").unwrap());
+        assert!(
+            hosted.key.is_empty(),
+            "a hosted vendor waits for the real key"
+        );
     }
 }
 
