@@ -3,8 +3,8 @@
  *
  * dsh-superagent accepts work only from a Source: GitHub, Feishu, or a kind a bundle adds. This
  * bundle adds one whose stream is a file the console appends to. A line in `<stateDir>/booth-inbox.jsonl`
- * is one instruction from the operator; the agent's acknowledgements, replies and notices are appended
- * to `<stateDir>/booth-outbox.jsonl`, which the console reads back.
+ * is a portal conversation message; portal replies and notices are appended to `<stateDir>/booth-outbox.jsonl`,
+ * which the console reads back.
  *
  * The Source declares every instruction as a person's direct message: it is `human`, `addressed: 'direct'`,
  * and its actor is the sender the line names (default `operator`). The Policy still decides whether that
@@ -243,8 +243,8 @@ export function apply(ctx, config = {}) {
     kind: KIND,
     title: { zh: 'booth 控制台', en: 'booth console' },
     description: {
-      zh: '在 booth 控制台里输入的指令。控制台把它们写进一个本地队列，智能体在这里收到；它的回复也回到控制台。',
-      en: 'Instructions typed in the booth console. The console appends them to a local queue the agent reads here, and replies come back the same way.',
+      zh: 'booth 门户 Agent 的本地对话入口。用户消息进入队列，门户回复和进度会回到控制台。',
+      en: 'The booth portal agent’s local conversation. User messages enter a queue; portal replies and progress return to the console.',
     },
     schema: Config,
     fields: [],

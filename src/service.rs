@@ -2046,6 +2046,47 @@ mod tests {
     }
 
     #[test]
+    fn service_report_installs_the_portal_rules_idempotently() {
+        let fake = crate::testkit::FakeApi::start();
+        let mut cfg = config("portal-prompt-install");
+        cfg.port = fake.base.rsplit(':').next().unwrap().parse().unwrap();
+        fake.set_route("/prompts", serde_json::json!({
+            "current": { "revision": 4, "config": {
+                "communication": "Existing team communication.", "scope": "Keep scope.", "delivery": "Keep delivery.",
+                "skills": { "release": "Use the release skill." },
+                "overrides": { "runtime/orchestrator": { "text": "Custom role instructions.", "base": "prior" } }
+            } }
+        }));
+
+        report(&cfg).unwrap();
+        assert_eq!(fake.put_count(), 1);
+        let (name, body) = fake.last_put().unwrap();
+        assert_eq!(name, "prompts");
+        assert_eq!(body["baseRevision"], 4);
+        assert_eq!(body["config"]["scope"], "Keep scope.");
+        assert_eq!(body["config"]["delivery"], "Keep delivery.");
+        assert_eq!(
+            body["config"]["skills"]["release"],
+            "Use the release skill."
+        );
+        assert_eq!(
+            body["config"]["overrides"]["runtime/orchestrator"]["text"],
+            "Custom role instructions."
+        );
+        assert!(body["config"]["communication"]
+            .as_str()
+            .unwrap()
+            .contains("persistent team lead"));
+        report(&cfg).unwrap();
+        assert_eq!(
+            fake.put_count(),
+            1,
+            "the installed portal prompt is not rewritten"
+        );
+        let _ = fs::remove_dir_all(cfg.dsh_home);
+    }
+
+    #[test]
     fn writes_the_three_entries_into_a_fresh_patch() {
         let cfg = config("patch-fresh");
         fs::create_dir_all(cfg.profile_dir()).unwrap();

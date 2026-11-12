@@ -17,6 +17,14 @@ const BAND_LOW: f64 = 0.3;
 const START: &str = "<!-- booth-decider -->";
 const END: &str = "<!-- /booth-decider -->";
 const MODEL: &str = "typesafe/jev";
+const PORTAL_CONTRACT: &str = r#"For the main orchestrator Session handling booth local console messages, act as the user's persistent team lead. These local-only rules override the routing and reply instructions that forbid planning or conversation; other Sources retain their existing rules. Worker Sessions do not act as the portal and must follow their worker instructions.
+
+Every local candidate is a user conversation turn. Consider all messages in a candidate batch, including earlier messages, before deciding. Call booth_portal_conversation with its trigger_id to obtain the durable conversation id and task list. Reply naturally using booth_portal_reply with that conversation id; greetings, questions, clarifications, progress and final results all deserve a useful response. Finish each local candidate with orchestrator_route kind ignore and a short reason such as 'handled by portal' (unless using that trigger to stop a ticket). Never accept a local conversation message directly as a worker ticket: that would send subsequent conversation to the worker instead of you.
+
+For a concrete goal, identify independent work and plan a separate task for each using booth_portal_plan; its conversation_id is the current local trigger_id, and its returned conversation_id is the stable identifier. Task ids must be unique within the conversation. Include necessary context and scope in each instruction, without inventing user requirements. Set depends_on to task ids that must finish first. Dispatch ready tasks using booth_portal_dispatch, with a meaningful lowercase worktree_name. Dispatch independent tasks without waiting for one another. Do not delegate a simple conversation or a question requiring no investigation.
+
+A worker_report or worker_attention with a portal field identifies conversationId and taskId. Read booth_portal_tasks for the current state; when prerequisites complete, dispatch newly ready tasks. Reconcile worker findings and report accurate progress, blockers and results to the user using booth_portal_reply. Ask the user only when needed for a decision or missing information, and do not claim work is complete until all required tasks finish. Use booth_portal_forward with the current user trigger to deliver a clarification or changed instruction to the relevant worker; use orchestrator_ticket_note to share findings between workers; use the person's explicit stop trigger with orchestrator_route kind stop to stop selected worker tickets. Preserve all explicit user constraints. Do not wait or poll: worker reports and new messages arrive as events.
+"#;
 const CONTRACT: &str = "\
 A choice is settled by `booth decide` before the portal or the user sees it. The call on stdin is one System One request for typesafe/jev, plus `from`. `from` is `subagent` or `portal` and is not sent to the model. `state` is shared by every question. A question is `noul` (is this true; optional criteria `{\"true\",\"false\"}`; the answer field `noul` is the probability of yes), `choice` (criteria is an object from option to description; the answer has `choice`, `confidence`, and `probabilities`), or `score` (criteria is an array of at least two levels, lowest first; the answer has `score`, `confidence`, `legend`, and `probabilities`). One call holds at most 100 questions.
 
@@ -118,7 +126,7 @@ pub fn install(api: &Api) -> Result<(), String> {
 
 /// The communication section with one decider block. Repeating it replaces that block.
 pub fn with_contract(communication: &str) -> String {
-    let block = format!("{START}\n{CONTRACT}\n{END}");
+    let block = format!("{START}\n{CONTRACT}\n\n{PORTAL_CONTRACT}\n{END}");
     let (head, tail) = match (communication.find(START), communication.find(END)) {
         (Some(start), Some(end)) if end > start => {
             let after = end + END.len();
@@ -638,6 +646,18 @@ mod tests {
         let once = with_contract("Keep progress internal.");
         let twice = with_contract(&once);
         assert_eq!(once, twice);
+        for behavior in [
+            "persistent team lead",
+            "booth_portal_plan",
+            "booth_portal_dispatch",
+            "booth_portal_reply",
+            "booth_portal_forward",
+        ] {
+            assert!(
+                once.contains(behavior),
+                "missing portal behavior {behavior}"
+            );
+        }
         assert!(once.contains("booth decide"));
         assert!(once.contains("Keep progress internal."));
     }

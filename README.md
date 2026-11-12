@@ -1,19 +1,16 @@
 # dsh-booth
 
 A terminal console for a running [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype).
-Type `booth` and you get one screen: type an instruction and the agent takes it as a ticket,
+Type `booth` and talk to the portal agent, which leads the team and delegates work to workers,
 watch what the executor is doing, and pick commands from a palette that filters as you type —
 the frame, palette and composer of `omp`, not a web page. The top rail carries the provider,
 the executor load, how many tickets are open, how many want a person, and the repository; above
 the composer a braille spinner and elapsed time say what the console is waiting on.
 
 ```text
-  ❯ 把 README 里 “booth up” 那句说明改成 “booth up starts the service”
-  ↑ sent to the agent  3eb84e6f · picks it up within a second
-  ◆ agent · accepted  3eb84e6f
-    收到：把 README 示例中 `booth up` 那句说明改成 `booth up` starts the service。
-  ◆ agent  3eb84e6f
-    PR #1 已把说明改为 “starts the service”，可审阅。
+  ❯ 检查 README 的安装说明并修正过时的命令
+  ↑ sent to the portal  3eb84e6f
+  ◆ agent · 我会核对安装命令，再让 worker 修改 README 并汇总结果。
 
 ╭─ ◆ booth · deepseek/deepseek-chat · ready · 2/4 · 1q ────────── v0.1.0 ╮
 ╰─ › 把 README 里 “booth up” 那句说明改成 … ────── Enter run · / commands ╯
@@ -29,8 +26,7 @@ the empty transcript, as they do in `omp`.
 [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). `booth init` builds
 it, creates a DSH profile around it and links it in, together with `local-source/`; `booth up`
 runs that profile detached and waits for the management API. The console, the service and its deployment therefore ship as one
-entry point — while the bundle stays an independent MIT-licensed project that knows nothing
-about booth.
+entry point — while `superagent/` remains an MIT-licensed bundle with its own runtime.
 
 The console itself talks only to the bundle's loopback management API (`/orchestrator/api/*`),
 so a DSH upgrade does not break it as long as the routes do.
@@ -94,7 +90,8 @@ booth restart
 booth logs --lines 40
 booth provider                     # the model catalog the profile reports (no secret)
 booth status                       # one shot: health, pause, setup, accounts
-booth overview                     # problems, people waiting, executor load, 24h flow
+booth overview                     # problems, people waiting, executor load
+booth portal                       # portal conversations and delegated tasks
 booth tickets --state person       # open | person | working | idle | ended
 booth ticket t-7f3a9c2e1b          # mandate, basis, assignments, inputs, threads
 booth threads --filter recent      # recent | subscribed | evaluating | all
@@ -105,7 +102,7 @@ booth search retry
 booth stop t-7f3a9c2e1b            # withdraw the mandate
 booth retry t-7f3a9c2e1b           # start a fresh assignment
 booth pause                        # / booth resume
-booth send "把 README 里的错字改掉"  # hand one instruction to the agent
+booth send "把 README 里的错字改掉"  # message the portal agent
 booth setup owner/name             # repository + allowed senders, from the shell
 booth gh                           # the GitHub CLI the Source would use
 ```
@@ -142,7 +139,7 @@ check the deployment guide asks for.
 | `Ctrl+L` | Clear the transcript |
 | `Ctrl+C` | Quit |
 
-Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/tickets`,
+Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/portal`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/pause`, `/resume`, `/send`, `/setup`, `/agents`, `/eval` and `/provider`.
 The console adds `/requeue`, `/dismiss`, `/unsubscribe`, `/new`, `/model`, `/login`, `/keys`,
@@ -159,9 +156,9 @@ replacing it. `/agents` (or `booth agents`) prints the whole picture:
 
 | Property | Where it lives |
 | --- | --- |
-| One agent routes, another works | The main Session (`dsh-superagent-router`) judges each Trigger; every Ticket gets its own `worker-<ticket>` Session (`dsh-superagent-worker`) |
+| Portal and workers | The main Session talks to the user, plans local work and coordinates the `worker-<ticket>` Sessions |
 | Several agents in parallel | `maxWorkers` (3 by default) runs Tickets side by side, plus one extra slot so a person's message never waits for a free worker |
-| Memory that outlives a conversation | Sessions persist under `<dsh_home>/sessions/`; the router keeps the tickets, threads and decisions it judged, and a worker keeps its conversation when a later message resumes its Ticket. Restarting the console loses nothing |
+| Durable conversations | The local conversation thread and its task associations survive console and service restarts; `/new` starts a separate conversation |
 | Deciding alone, asking rarely | A Ticket reaches `person` only for an answer or a review, and `/overview` lists exactly those; workers run unattended otherwise |
 | Work that starts by itself | GitHub Issues, comments and CI, Feishu messages and console instructions all enter the same way, so nothing has to be typed |
 
@@ -185,36 +182,31 @@ Booth ships a third one, `local-source/`, so the console itself is a front door:
 - what you type without a slash (or `/send <text>`) is appended to
   `booth-inbox.jsonl` under the state directory;
 - the Source reads it as one person's direct message, the Policy admits the sender, and the main
-  Session decides the ticket;
+  Session handles the conversation and may delegate worker tickets;
 - the agent's acknowledgements, replies and notices are appended to `booth-outbox.jsonl`, which
   the console shows as `◆ agent` lines;
 - the GitHub and Feishu Sources keep working as before — booth adds a door, it does not replace
   them.
 
-The console follows what it sent:
+The portal is the team's lead. It answers questions and discusses requests directly, creates
+worker tasks for concrete work, forwards relevant follow-ups and brings worker results back to
+you. Independent tasks can run in parallel; a dependent task waits for its prerequisites.
 
 ```text
-  ❯ 在 README 里加一句：这一行由 booth 控制台发起
-  ↑ sent to the agent  b4e50b13 · picks it up within a second
-  ◆ agent · accepted  2457786b
-    收到：在 README 里加一句“这一行由 booth 控制台发起”。
-  ◇ ticket 2457786b · working
-  ◇ ticket 2457786b · needs a person · review
-  ◆ agent  2457786b
-    [PR #2](https://github.com/owner/repo/pull/2) 已按改后的措辞加上…，可审阅。
+  ❯ 请检查安装流程和文档，并分别修复发现的问题
+  ↑ sent to the portal  b4e50b13
+  ◆ agent · 我会分别检查安装流程和文档，然后汇总结果。
+  ❯ 文档只改安装部分
+  ◆ agent · 收到，我会把范围限制在安装说明。
 ```
 
-- **A greeting is not work.** The agent answers `hi` with a reason, not a ticket:
-  `◇ agent · not taken  打招呼，没有具体改动请求`. Requests need a concrete change.
-- **Follow-ups continue the ticket.** After an accept, the next instruction goes to that
-  ticket's thread, so “改成 …” revises the same work; the composer's top rail shows
-  `↳ <ticket>`, and the choice survives a console restart. `/new` starts a new ticket.
-- **A silent report is not lost.** When the agent did not also send a reply, the console prints
-  the ticket's own summary under `◇ ticket … · report`.
-- **No decision is still an answer.** After 20 seconds without a judgement the console says so,
-  and `/sources` / `/status` explain whether the Source or the service is the reason. It keeps
-  watching for ten minutes — a judgement can wait behind another turn — and a late one still
-  appears in place.
+Messages in the console and `booth send` share a conversation, including after a restart.
+Use `/new` in the console to start another conversation. Ask the portal about progress, or use
+`/portal`, `/overview`, `/tickets`, `/ticket <id>` and `/agents` to inspect execution. Tell the portal
+when to stop or redirect work; it coordinates the affected workers.
+
+After 20 seconds without a judgement the console reports that it is still waiting; `/sources`,
+`/status` and `booth logs` help identify a Source, service or model problem.
 
 `/setup` names the repository and the people who may ask for work:
 
@@ -248,7 +240,7 @@ web panel.
 
 | What you see | What it means |
 | --- | --- |
-| `◇ agent · not taken  …` | The agent judged the instruction and declined; its sentence says why (a greeting, no concrete change, an unrelated request) |
+| The portal answers but starts no worker | Conversation and simple questions do not require a worker |
 | `⋯ no decision yet` | The Source has not produced a judgement after 20 s; `/sources` shows whether it is polling and `/status` shows health |
 | `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and a follow-up message answers it |
 | `↑ sent …` and no further line | The console wrote the instruction but the service is down or still starting; `booth status`, `booth logs` |
@@ -348,14 +340,14 @@ only on the management API and does not modify `dsh-superagent`'s source.
 The default worker is dsh. Name another coding agent when you want that one to do it:
 
 ```sh
-booth send "fix the readme"            # dsh
+booth send "fix the readme"            # portal agent
 booth send --agent omp "fix the readme"
 booth send --agent claude "fix the readme"
 booth send --agent codex "fix the readme"
 booth send --agent cursor-agent "fix the readme"
 ```
 
-In the console, start the line with `@omp`, `@claude`, `@codex`, or `@cursor-agent`. A line with no prefix goes to dsh. The named agent runs the instruction itself. Booth does not keep a second control plane.
+In the console, a line starting with `@omp`, `@claude`, `@codex`, or `@cursor-agent` runs that named tool directly; an unprefixed line goes through the portal. The direct form runs outside the portal task board.
 
 ## Providers
 

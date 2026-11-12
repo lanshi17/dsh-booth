@@ -148,6 +148,10 @@ impl Api {
         self.get_as("/state")
     }
 
+    pub fn portal(&self, offset: u32) -> Result<Value, ApiError> {
+        self.get(&format!("/portal?offset={offset}&limit=20"))
+    }
+
     pub fn overview(&self) -> Result<Overview, ApiError> {
         self.get_as("/overview")
     }

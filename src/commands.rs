@@ -8,6 +8,10 @@ use ratatui::text::{Line, Span};
 /// The palette's entries; `format::help` and the completer read the same table.
 pub const PALETTE: &[(&str, &str)] = &[
     ("/overview", "what needs a person, problems, executor load"),
+    (
+        "/portal [offset]",
+        "portal conversations and delegated worker tasks",
+    ),
     ("/status", "health entries, pause state, accounts"),
     ("/agents", "how work is routed, run in parallel, remembered"),
     ("/model", "switch the worker model, or add a provider"),
@@ -36,7 +40,7 @@ pub const PALETTE: &[(&str, &str)] = &[
         "/send <text>",
         "send an instruction; bare text does the same",
     ),
-    ("/new", "start a new ticket instead of continuing one"),
+    ("/new", "start a new conversation"),
     ("/search <text>", "find tickets, threads and messages"),
     ("/stop <id>", "withdraw a ticket's mandate"),
     ("/retry <id>", "start a fresh assignment"),
@@ -124,6 +128,16 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
     let lines = match dispatch.as_str() {
         "/help" | "/?" => format::help(),
         "/overview" => format::overview(&api.overview()?, api.base()),
+        "/portal" => {
+            let offset = if argument.is_empty() {
+                0
+            } else {
+                argument
+                    .parse::<u32>()
+                    .map_err(|_| "portal offset must be a non-negative integer".to_owned())?
+            };
+            format::portal(&api.portal(offset)?)
+        }
         "/status" => format::status(&api.state()?, api.base()),
         "/agents" => {
             let view = api.overview()?;
@@ -160,7 +174,8 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
         }
         "/send" => {
             let cfg = crate::service::Config::from_env()?;
-            let id = crate::intake::send(&cfg, need("/send", argument)?, None)?;
+            let thread = crate::intake::portal_thread(&cfg)?;
+            let id = crate::intake::send(&cfg, need("/send", argument)?, Some(&thread))?;
             vec![done(format!(
                 "sent {id} — the agent picks it up within a second"
             ))]
@@ -376,6 +391,19 @@ mod tests {
                 "{command} not in the palette: {names:?}"
             );
         }
+    }
+
+    #[test]
+    fn help_and_the_palette_list_portal_tasks() {
+        let help: String = format::help()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(help.contains("/portal"), "{help}");
+        assert!(matches("/portal")
+            .iter()
+            .any(|(name, _)| name.starts_with("/portal")));
     }
 
     #[test]

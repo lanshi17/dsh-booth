@@ -350,6 +350,94 @@ fn problem_line(problem: &Value) -> L {
     }
 }
 
+/// Shows recent portal conversations and the current state of each delegated worker task.
+pub fn portal(view: &Value) -> Vec<L> {
+    let items = view
+        .get("items")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut lines = vec![section(format!("portal conversations ({})", items.len()))];
+    if items.is_empty() {
+        lines.push(bullet(
+            "no conversations yet · type a message to the portal",
+        ));
+        return lines;
+    }
+    for conversation in items {
+        let id = conversation
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let updated = conversation
+            .get("updatedAt")
+            .and_then(Value::as_str)
+            .map(short_at)
+            .unwrap_or_default();
+        lines.push(blank());
+        lines.push(kv("conversation", format!("{}  {updated}", clip(id, 18))));
+        let tasks = conversation
+            .get("tasks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        if tasks.is_empty() {
+            lines.push(bullet("no worker tasks"));
+            continue;
+        }
+        for task in tasks {
+            let task_id = task.get("id").and_then(Value::as_str).unwrap_or("task");
+            let state = task
+                .get("ticket")
+                .and_then(|ticket| ticket.get("state"))
+                .and_then(Value::as_str)
+                .unwrap_or("planned");
+            let title = task
+                .get("ticket")
+                .and_then(|ticket| ticket.get("title"))
+                .and_then(Value::as_str)
+                .or_else(|| task.get("instruction").and_then(Value::as_str))
+                .unwrap_or("");
+            lines.push(bullet(format!(
+                "{task_id} · {state} · {}",
+                clip(title, 100)
+            )));
+            if let Some(ticket) = task
+                .get("ticket")
+                .and_then(|ticket| ticket.get("ticket_id"))
+                .and_then(Value::as_str)
+            {
+                lines.push(muted(format!("    /ticket {ticket}")));
+            }
+            if let Some(question) = task
+                .get("ticket")
+                .and_then(|ticket| ticket.get("attention"))
+                .and_then(|attention| attention.get("question"))
+                .and_then(Value::as_str)
+            {
+                lines.push(muted(format!("    needs you: {}", clip(question, 100))));
+            }
+            if let Some(dependencies) = task
+                .get("dependsOn")
+                .and_then(Value::as_array)
+                .filter(|items| !items.is_empty())
+            {
+                let names = dependencies
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                lines.push(muted(format!("    waits for {names}")));
+            }
+        }
+    }
+    if let Some(offset) = view.get("next_offset").and_then(Value::as_u64) {
+        lines.push(blank());
+        lines.push(muted(&format!("more conversations: booth portal {offset}")));
+    }
+    lines
+}
+
 /// `/agents`: who does what, how many run at once, and where their memory lives.
 ///
 /// dsh-superagent already models the arrangement — a main Session that routes, one Executor
@@ -362,13 +450,13 @@ pub fn agents(view: &Overview, base: &str, sessions: usize, memory: &str) -> Vec
         blank(),
         section("how work moves"),
         bullet("you → instruction → the console Source"),
-        bullet("router · the main Session decides: accept, attach, stop, ignore"),
+        bullet("portal · the main Session talks with you and coordinates the team"),
         bullet("worker · one Session per ticket, named worker-<ticket>"),
         bullet(format!(
             "parallel · up to {} workers at once, one extra slot for a person's message",
             view.executor.max_workers
         )),
-        bullet("report · the worker answers on the ticket's thread, the console shows it"),
+        bullet("report · workers report to the portal, which responds to you"),
         blank(),
         section("now"),
         kv(
@@ -383,7 +471,7 @@ pub fn agents(view: &Overview, base: &str, sessions: usize, memory: &str) -> Vec
         blank(),
         section("memory"),
         kv("sessions", memory.to_string()),
-        bullet("the router Session keeps the tickets, threads and decisions it judged"),
+        bullet("the portal keeps the conversation and its worker task associations"),
         bullet("a worker keeps its own conversation when a later message resumes its ticket"),
         bullet("both outlive the console: restart it and the history is still there"),
         blank(),
@@ -977,7 +1065,8 @@ pub fn help() -> Vec<L> {
 #[cfg(test)]
 mod tests {
     use super::{
-        clip, overview, reason, short_at, thread_detail, ticket_detail, ticket_list, SearchView,
+        clip, overview, portal, reason, short_at, thread_detail, ticket_detail, ticket_list,
+        SearchView,
     };
     use crate::model::{DecisionList, Overview, Page, ThreadDetail, TicketDetail, TicketRow};
     use serde_json::json;
@@ -986,6 +1075,37 @@ mod tests {
         assert_eq!(clip("ab", 4), "ab");
         assert_eq!(clip("abcdef", 3), "abc…");
         assert_eq!(clip("中文标题", 2), "中文…");
+    }
+
+    #[test]
+    fn portal_lists_conversations_tasks_dependencies_and_ticket_links() {
+        let lines = portal(&json!({
+            "items": [{"id":"local-12345678901234567890","updatedAt":"2026-11-12T10:20:30Z","tasks":[
+                {"id":"inspect","instruction":"Inspect the project","dependsOn":[],"ticket":{"ticket_id":"abc123","title":"Inspect project","state":"person/answer","attention":{"question":"Which release should this target?"}}},
+                {"id":"implement","instruction":"Implement changes","dependsOn":["inspect"]}
+            ]}], "next_offset":20
+        }));
+        let text = lines
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("portal conversations (1)"), "{text}");
+        assert!(
+            text.contains("inspect · person/answer · Inspect project"),
+            "{text}"
+        );
+        assert!(text.contains("/ticket abc123"), "{text}");
+        assert!(
+            text.contains("needs you: Which release should this target?"),
+            "{text}"
+        );
+        assert!(
+            text.contains("implement · planned · Implement changes"),
+            "{text}"
+        );
+        assert!(text.contains("waits for inspect"), "{text}");
+        assert!(text.contains("booth portal 20"), "{text}");
     }
 
     #[test]

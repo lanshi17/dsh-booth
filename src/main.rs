@@ -121,6 +121,14 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Portal conversations and delegated worker tasks.
+    Portal {
+        /// Skip the latest conversations when reading a later page.
+        #[arg(default_value_t = 0)]
+        offset: u32,
+        #[arg(long)]
+        json: bool,
+    },
     /// List tickets by stage.
     Tickets {
         #[arg(long, default_value = "open")]
@@ -408,6 +416,15 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             api.overview().map_err(String::from)?,
             format::overview,
         ),
+        Command::Portal { offset, json } => {
+            let view = api.portal(offset).map_err(String::from)?;
+            if json {
+                print_json(&view)
+            } else {
+                print_lines(format::portal(&view));
+                Ok(())
+            }
+        }
         Command::Tickets { state, json } => {
             let state = list_choice(&state, "open", &TICKET_STATES, "ticket state")?;
             let view = api.tickets(state).map_err(String::from)?;
@@ -500,12 +517,7 @@ fn run(api: Api, command: Command) -> Result<(), String> {
     }
 }
 
-/// One instruction from the shell, on the thread the console was already following.
-///
-/// A follow-up is how a person answers a ticket that is waiting on them, and the console keeps
-/// that choice in `booth-follow.json` across restarts. The one-shot command used to pass no
-/// thread, so the same text started a fresh ticket here while typing it in the console continued
-/// the accepted one; the recorded follow is the console's, so both doors now agree.
+/// Send a shell instruction to the same portal conversation as the console.
 fn send_instruction(cfg: &service::Config, agent: &str, text: Vec<String>) -> Result<(), String> {
     let who = worker::Who::parse(agent)?;
     let text = text.join(" ");
@@ -513,17 +525,9 @@ fn send_instruction(cfg: &service::Config, agent: &str, text: Vec<String>) -> Re
         emit_line(&worker::run(who, &text)?);
         return Ok(());
     }
-    let follow = intake::follow(cfg);
-    let thread = follow.as_ref().map(|(_, thread)| thread.as_str());
-    let id = intake::send(cfg, &text, thread)?;
-    match follow {
-        Some((ticket, _)) => emit_line(&format!(
-            "sent {id} to dsh — follow-up to {ticket}; the agent picks it up within a second"
-        )),
-        None => emit_line(&format!(
-            "sent {id} to dsh — the agent picks it up within a second"
-        )),
-    }
+    let thread = intake::portal_thread(cfg)?;
+    let id = intake::send(cfg, &text, Some(&thread))?;
+    emit_line(&format!("sent {id} to the portal"));
     Ok(())
 }
 
@@ -588,6 +592,26 @@ fn report_write_to(out: &mut impl Write, error: io::Error) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portal_is_a_one_shot_command_with_offset_and_json_options() {
+        let cli = Cli::try_parse_from(["booth", "portal", "20", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Portal {
+                offset: 20,
+                json: true
+            })
+        ));
+        let default = Cli::try_parse_from(["booth", "portal"]).unwrap();
+        assert!(matches!(
+            default.command,
+            Some(Command::Portal {
+                offset: 0,
+                json: false
+            })
+        ));
+    }
 
     #[test]
     fn the_provider_command_says_when_there_is_no_model() {
@@ -872,7 +896,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shell_instruction_continues_the_ticket_the_console_follows() {
+    fn a_shell_instruction_uses_the_portal_conversation() {
         // The console records the accepted ticket it follows in booth-follow.json. Typing the
         // same text there sends it on that thread; the shell command used to ignore the record
         // and start a new ticket, so a person answering a blocked ticket got no answer.
@@ -900,7 +924,8 @@ mod tests {
         let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
         let line: serde_json::Value = serde_json::from_str(inbox.trim()).unwrap();
         assert_eq!(line["text"], "revise it");
-        assert_eq!(line["thread"], "t-followed", "{line}");
+        let thread = line["thread"].as_str().unwrap().to_owned();
+        assert!(thread.starts_with("portal-"), "{line}");
 
         // Without a recorded follow the instruction still starts a new ticket, as before.
         std::fs::remove_file(dir.join("booth-follow.json")).unwrap();
@@ -915,7 +940,7 @@ mod tests {
         let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
         let line: serde_json::Value = serde_json::from_str(inbox.lines().last().unwrap()).unwrap();
         assert_eq!(line["text"], "start over");
-        assert!(line.get("thread").is_none(), "{line}");
+        assert_eq!(line["thread"], thread, "{line}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

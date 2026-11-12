@@ -35,29 +35,51 @@ fn outbox(cfg: &service::Config) -> PathBuf {
     cfg.state_dir.join("booth-outbox.jsonl")
 }
 
-/// The ticket the console was continuing, so a restart resumes it instead of starting over.
-pub fn follow(cfg: &service::Config) -> Option<(String, String)> {
-    let text = std::fs::read_to_string(cfg.state_dir.join("booth-follow.json")).ok()?;
-    let value: Value = serde_json::from_str(&text).ok()?;
-    let ticket = value.get("ticket")?.as_str()?.to_owned();
-    let thread = value.get("thread")?.as_str()?.to_owned();
-    Some((ticket, thread))
+/// The local conversation thread survives a console restart and is independent of worker tickets.
+pub fn portal_thread(cfg: &service::Config) -> Result<String, String> {
+    std::fs::create_dir_all(&cfg.state_dir)
+        .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
+    let path = cfg.state_dir.join("booth-conversation");
+    let id = format!("portal-{}", oauth::uuid_v4());
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => {
+            file.write_all(id.as_bytes())
+                .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+            Ok(id)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            // Another booth process may have won create_new but not written the tiny id yet.
+            for _ in 0..20 {
+                let existing = std::fs::read_to_string(&path)
+                    .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+                let existing = existing.trim();
+                if !existing.is_empty() {
+                    return Ok(existing.to_owned());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(format!(
+                "{} is empty; use /new to start a conversation",
+                path.display()
+            ))
+        }
+        Err(error) => Err(format!("cannot create {}: {error}", path.display())),
+    }
 }
 
-/// Records the ticket the console continues; `None` forgets it.
-pub fn set_follow(cfg: &service::Config, target: Option<(&str, &str)>) {
-    let path = cfg.state_dir.join("booth-follow.json");
-    match target {
-        Some((ticket, thread)) => {
-            let _ = std::fs::write(
-                &path,
-                json!({ "ticket": ticket, "thread": thread }).to_string(),
-            );
-        }
-        None => {
-            let _ = std::fs::remove_file(&path);
+/// The next message after /new creates a new conversation.
+pub fn reset_portal_thread(cfg: &service::Config) -> Result<(), String> {
+    for path in [
+        cfg.state_dir.join("booth-conversation"),
+        cfg.state_dir.join("booth-follow.json"),
+    ] {
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("cannot remove {}: {error}", path.display())),
         }
     }
+    Ok(())
 }
 
 /// One agent message the console shows: an acknowledgement, a reply, or a notice.
@@ -66,6 +88,7 @@ pub struct Reply {
     pub kind: String,
     pub text: String,
     pub ticket: Option<String>,
+    pub thread: Option<String>,
 }
 
 /// Appends one instruction for the Source and returns its id; `thread` continues a ticket's thread.
@@ -124,7 +147,7 @@ const WITNESS: usize = 32;
 /// old one, so an offset kept from the old file would land in the middle of the new one. The
 /// bytes just before the offset are the witness — an append leaves them in place, a rewrite
 /// does not — so the next read knows whether to continue or start over.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Tail {
     offset: u64,
     witness: Vec<u8>,
@@ -136,6 +159,30 @@ const TAIL_WINDOW: u64 = 8 * 1024;
 impl Tail {
     pub fn fresh() -> Self {
         Self::default()
+    }
+
+    /// Resume after the last batch displayed by a previous console.
+    pub fn restore(cfg: &service::Config) -> Self {
+        std::fs::read(cfg.state_dir.join("booth-outbox-cursor.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_else(|| Self::at_end(cfg))
+    }
+
+    /// Save a displayed batch atomically; a failed save leaves the old cursor for replay.
+    pub fn save(&self, cfg: &service::Config) -> Result<(), String> {
+        let path = cfg.state_dir.join("booth-outbox-cursor.json");
+        let temporary = cfg
+            .state_dir
+            .join(format!(".booth-outbox-cursor-{}", oauth::uuid_v4()));
+        let contents = serde_json::to_vec(self).map_err(|error| error.to_string())?;
+        std::fs::write(&temporary, contents)
+            .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
+        if let Err(error) = std::fs::rename(&temporary, &path) {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(format!("cannot write {}: {error}", path.display()));
+        }
+        Ok(())
     }
 
     /// A tail already past everything the outbox holds.
@@ -262,6 +309,10 @@ fn parse_replies(text: &str) -> Vec<Reply> {
                 text: value.get("text")?.as_str()?.to_owned(),
                 ticket: value
                     .get("ticket")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                thread: value
+                    .get("thread")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
             })
@@ -1002,6 +1053,41 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_outbox_cursor_resumes_after_a_console_restart() {
+        let dir = scratch("saved-cursor");
+        let cfg = config(dir.clone());
+        std::fs::write(
+            outbox(&cfg),
+            "{\"id\":\"old\",\"kind\":\"reply\",\"text\":\"old\"}\n",
+        )
+        .unwrap();
+        let mut tail = Tail::restore(&cfg);
+        assert!(
+            replies_from(&cfg, &mut tail).is_empty(),
+            "legacy history is skipped"
+        );
+        tail.save(&cfg).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(outbox(&cfg))
+            .unwrap();
+        file.write_all(b"{\"id\":\"while-away\",\"kind\":\"reply\",\"text\":\"hello\"}\n")
+            .unwrap();
+        let mut resumed = Tail::restore(&cfg);
+        let replies = replies_from(&cfg, &mut resumed);
+        assert_eq!(
+            replies
+                .iter()
+                .map(|reply| reply.id.as_str())
+                .collect::<Vec<_>>(),
+            ["while-away"]
+        );
+        resumed.save(&cfg).unwrap();
+        assert!(replies_from(&cfg, &mut Tail::restore(&cfg)).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_restart_leaves_a_half_written_record_for_the_next_poll() {
         // `at_end` stops at the last newline, so a record the Source is still appending is read
         // once complete, not dropped and not parsed mid-way.
@@ -1257,18 +1343,6 @@ mod tests {
         assert_eq!(lines.len(), 501, "rewritten to 500 plus the new line");
         assert_eq!(lines[0], "l500");
         assert_eq!(lines[500], "after");
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn remembers_the_ticket_it_continues() {
-        let dir = scratch("follow");
-        let cfg = config(dir.clone());
-        assert!(follow(&cfg).is_none());
-        set_follow(&cfg, Some(("t-1", "t-9")));
-        assert_eq!(follow(&cfg), Some(("t-1".to_owned(), "t-9".to_owned())));
-        set_follow(&cfg, None);
-        assert!(follow(&cfg).is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

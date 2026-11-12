@@ -251,6 +251,7 @@ fn serve(
             } else {
                 None
             };
+            let prompt_save = method == "PUT" && path.ends_with("/prompts");
 
             // A queued failure answers the next accepted PUT instead of the normal handler. It
             // is taken only after the guard lets the request through, since a refused request
@@ -269,6 +270,15 @@ fn serve(
                 match forced {
                     Some((status, message)) => (status, json!({ "error": message })),
                     None => save(&settings, &puts, name, &body),
+                }
+            } else if prompt_save {
+                let forced = failures
+                    .lock()
+                    .ok()
+                    .and_then(|mut queue| (!queue.is_empty()).then(|| queue.remove(0)));
+                match forced {
+                    Some((status, message)) => (status, json!({ "error": message })),
+                    None => save_prompt(&routes, &puts, &body),
                 }
             } else if method == "GET" && path.ends_with("/state") {
                 let mut left = state_failures.lock().unwrap();
@@ -329,6 +339,39 @@ fn serve(
 fn save_block(path: &str) -> Option<&str> {
     let (_, rest) = path.split_once("/settings/")?;
     (!rest.is_empty() && !rest.contains('/')).then_some(rest)
+}
+
+/// Answers a prompt save and advances its revision in the canned GET response.
+fn save_prompt(routes: &Routes, puts: &Puts, body: &str) -> (u16, Value) {
+    let parsed: Value = match serde_json::from_str(body) {
+        Ok(value) => value,
+        Err(_) => return (400, json!({ "error": "The request body is not JSON" })),
+    };
+    let Some(base) = parsed.get("baseRevision").and_then(Value::as_u64) else {
+        return (400, json!({ "error": "Invalid prompt revision" }));
+    };
+    let Some(config) = parsed.get("config").filter(|value| value.is_object()) else {
+        return (400, json!({ "error": "Invalid prompt config" }));
+    };
+    let mut routes = routes.lock().unwrap();
+    let Some((_, current)) = routes.iter_mut().find(|(path, _)| path == "/prompts") else {
+        return (404, json!({ "error": "Unknown operation" }));
+    };
+    let revision = current
+        .pointer("/current/revision")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if revision != base {
+        return (
+            409,
+            json!({ "error": "Prompt changed. Reload before saving." }),
+        );
+    }
+    let next_revision = revision + 1;
+    current["current"]["revision"] = json!(next_revision);
+    current["current"]["config"] = config.clone();
+    puts.lock().unwrap().push(("prompts".into(), parsed));
+    (200, json!({ "saved": true, "revision": next_revision }))
 }
 
 /// Answers one save the way the service does: a body that is not JSON, or that carries no

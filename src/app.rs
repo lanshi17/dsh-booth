@@ -187,7 +187,7 @@ enum Msg {
     Lines(Vec<L>),
     Error(String),
     Status(Status),
-    Replies(Vec<intake::Reply>),
+    Replies(Vec<intake::Reply>, intake::Tail),
     Decisions(Vec<crate::model::Decision>),
     /// The service's model catalog, fetched with every poll so the view is never stale.
     Catalog(Box<Catalog>),
@@ -375,12 +375,6 @@ impl Status {
     }
 }
 
-/// The ticket the next instruction continues, and the thread that reaches it.
-struct Follow {
-    thread: String,
-    ticket: String,
-}
-
 /// What the console has already said about one ticket it opened.
 struct Tracked {
     stage: String,
@@ -423,8 +417,6 @@ pub struct App {
     pending: std::collections::HashMap<String, Awaiting>,
     /// Tickets this console opened, with what it has already shown about each.
     tracked: std::collections::HashMap<String, Tracked>,
-    /// Set after an accept: the next instruction goes to that ticket's thread instead of a new one.
-    continues: Option<Follow>,
     /// Tickets the agent already wrote a reply about; their reports need no second telling.
     replied: std::collections::HashSet<String>,
     /// When the transcript last polled the service for status and replies.
@@ -480,17 +472,11 @@ impl App {
         let config = service::Config::from_env().ok();
 
         let history = config.as_ref().map(intake::history).unwrap_or_default();
-        let continues = config
-            .as_ref()
-            .and_then(intake::follow)
-            .map(|(ticket, thread)| Follow { thread, ticket });
-        // A restarted console starts with an empty transcript: skip past what the outbox already
-        // holds instead of reading and parsing the history, so startup does not grow with the
-        // deployment's age. The poll below then sees only what arrives from now on.
+        // A saved cursor preserves replies delivered while the console was closed.
         let tail = Arc::new(std::sync::Mutex::new(
             config
                 .as_ref()
-                .map(intake::Tail::at_end)
+                .map(intake::Tail::restore)
                 .unwrap_or_default(),
         ));
         Self {
@@ -515,7 +501,6 @@ impl App {
             seen: std::collections::HashSet::new(),
             pending: std::collections::HashMap::new(),
             tracked: std::collections::HashMap::new(),
-            continues,
             replied: std::collections::HashSet::new(),
             polled: Instant::now(),
             polling: Arc::new(AtomicBool::new(false)),
@@ -529,17 +514,6 @@ impl App {
     }
 
     fn bootstrap(&mut self) {
-        if let Some(follow) = &self.continues {
-            let short = short_id(&follow.ticket);
-            self.push(Line::from(vec![
-                Span::styled("  ↳ ", Style::default().fg(CYAN)),
-                Span::styled(
-                    format!("continuing ticket {short}"),
-                    Style::default().fg(DIM),
-                ),
-                Span::styled("  · /new starts a new ticket", Style::default().fg(FAINT)),
-            ]));
-        }
         self.refresh_status();
     }
 
@@ -594,15 +568,20 @@ impl App {
                 Msg::Catalog(catalog) => self.catalog = *catalog,
                 Msg::Decisions(decisions) => {
                     for decision in decisions {
-                        let Some(trigger) = decision
+                        let matched: Vec<String> = decision
                             .trigger_ids
                             .iter()
-                            .find(|trigger| self.pending.contains_key(*trigger))
+                            .filter(|trigger| self.pending.contains_key(*trigger))
                             .cloned()
-                        else {
+                            .collect();
+                        if matched.is_empty() {
                             continue;
-                        };
-                        self.pending.remove(&trigger);
+                        }
+                        // One Eval decision may settle every trigger in a batch. Clear them all or
+                        // the console will later report a false timeout for the other messages.
+                        for trigger in matched {
+                            self.pending.remove(&trigger);
+                        }
                         // An accept is already answered by the acknowledgement in the outbox; the
                         // ticket it opened is followed here for its progress and final report.
                         if decision.outcome == "accept" {
@@ -613,27 +592,14 @@ impl App {
                                         stage: "new".into(),
                                     },
                                 );
-                                if let Some(thread) = decision
-                                    .thread
-                                    .as_deref()
-                                    .and_then(|key| key.strip_prefix("local:"))
-                                {
-                                    self.continues = Some(Follow {
-                                        thread: thread.to_owned(),
-                                        ticket: ticket.clone(),
-                                    });
-                                    if let Some(config) = &self.config {
-                                        intake::set_follow(config, Some((ticket.as_str(), thread)));
-                                    }
-                                }
                             }
-                        } else {
+                        } else if decision.outcome != "ignore" {
                             self.push_decision(&decision);
                         }
                     }
                 }
                 Msg::Tickets(poll) => self.show_tickets(poll),
-                Msg::Replies(replies) => {
+                Msg::Replies(replies, checkpoint) => {
                     let mut fresh = Vec::new();
                     for reply in replies {
                         if self.seen.insert(reply.id.clone()) {
@@ -642,6 +608,11 @@ impl App {
                     }
                     for reply in fresh {
                         self.push_agent(reply);
+                    }
+                    if let Some(config) = &self.config {
+                        if let Err(error) = checkpoint.save(config) {
+                            self.push(warn_line(&error));
+                        }
                     }
                 }
                 Msg::OAuthReady(attempt) => {
@@ -773,21 +744,6 @@ impl App {
         self.push_lines(lines);
         for id in done {
             self.tracked.remove(&id);
-            if self
-                .continues
-                .as_ref()
-                .map(|follow| follow.ticket == id)
-                .unwrap_or(false)
-            {
-                self.continues = None;
-                if let Some(config) = &self.config {
-                    intake::set_follow(config, None);
-                }
-                self.push(Line::from(Span::styled(
-                    "  · that ticket is closed; the next instruction starts a new one",
-                    Style::default().fg(FAINT),
-                )));
-            }
         }
     }
 
@@ -847,10 +803,17 @@ impl App {
                 self.replied.insert(ticket.clone());
             }
         }
-        let label = match reply.kind.as_str() {
-            "acknowledgement" => "agent · accepted",
-            "notice" => "agent · notice",
-            _ => "agent",
+        let portal = reply
+            .thread
+            .as_deref()
+            .is_some_and(|thread| thread.starts_with("portal-"));
+        let label = match (portal, reply.kind.as_str()) {
+            (true, "acknowledgement") => "portal · accepted",
+            (true, "notice") => "portal · notice",
+            (true, _) => "portal",
+            (false, "acknowledgement") => "agent · accepted",
+            (false, "notice") => "agent · notice",
+            (false, _) => "agent",
         };
         let mut lines = Vec::new();
         let head = vec![
@@ -930,37 +893,28 @@ impl App {
             });
             return;
         }
-        let follow = self.continues.as_ref().map(|follow| follow.thread.clone());
-        match intake::send(&config, &text, follow.as_deref()) {
+        let thread = match intake::portal_thread(&config) {
+            Ok(thread) => thread,
+            Err(error) => {
+                self.push(warn_line(&error));
+                return;
+            }
+        };
+        match intake::send(&config, &text, Some(&thread)) {
             Ok(id) => {
-                let lines = match &self.continues {
-                    Some(follow) => vec![Line::from(vec![
-                        Span::styled("  ↳ ", Style::default().fg(CYAN)),
-                        Span::styled("follow-up to ", Style::default().fg(DIM)),
-                        Span::styled(short_id(&follow.ticket), Style::default().fg(CYAN)),
-                        Span::styled("  · /new starts a new ticket", Style::default().fg(FAINT)),
-                    ])],
-                    None => {
-                        // A follow-up fans out to its ticket without a decision, so only a new
-                        // instruction is awaited as one.
-                        self.pending.insert(
-                            format!("local-{id}"),
-                            Awaiting {
-                                sent: Instant::now(),
-                                warned: false,
-                                stale: false,
-                            },
-                        );
-                        vec![Line::from(vec![
-                            Span::styled("  ↑ ", Style::default().fg(GREEN)),
-                            Span::styled("sent to the agent", Style::default().fg(GREEN)),
-                            Span::styled(
-                                format!("  {} · picks it up within a second", short_id(&id)),
-                                Style::default().fg(FAINT),
-                            ),
-                        ])]
-                    }
-                };
+                self.pending.insert(
+                    format!("local-{id}"),
+                    Awaiting {
+                        sent: Instant::now(),
+                        warned: false,
+                        stale: false,
+                    },
+                );
+                let lines = vec![Line::from(vec![
+                    Span::styled("  ↑ ", Style::default().fg(GREEN)),
+                    Span::styled("sent to the portal", Style::default().fg(GREEN)),
+                    Span::styled(format!("  {}", short_id(&id)), Style::default().fg(FAINT)),
+                ])];
                 self.push_lines(lines);
                 if self.status.runtime == "down" {
                     self.push(warn_line(
@@ -1045,7 +999,7 @@ impl App {
                 if let Ok(mut tail) = tail.lock() {
                     let replies = intake::replies_from(config, &mut tail);
                     if !replies.is_empty() {
-                        let _ = tx.send(Msg::Replies(replies));
+                        let _ = tx.send(Msg::Replies(replies, tail.clone()));
                     }
                 }
             }
@@ -1412,20 +1366,16 @@ impl App {
                 Span::styled("  ❯ ", Style::default().fg(CYAN)),
                 Span::styled(line.clone(), Style::default().fg(TEXT)),
             ]));
-            if self.continues.take().is_some() {
-                if let Some(config) = &self.config {
-                    intake::set_follow(config, None);
+            if let Some(config) = &self.config {
+                if let Err(error) = intake::reset_portal_thread(config) {
+                    self.push(warn_line(&error));
+                    return;
                 }
-                self.push(Line::from(Span::styled(
-                    "✓ the next instruction starts a new ticket",
-                    Style::default().fg(GREEN),
-                )));
-            } else {
-                self.push(Line::from(Span::styled(
-                    "each instruction already starts a new ticket",
-                    Style::default().fg(DIM),
-                )));
             }
+            self.push(Line::from(Span::styled(
+                "✓ the next message starts a new conversation",
+                Style::default().fg(GREEN),
+            )));
             return;
         }
         if line == "/provider" {
@@ -2247,12 +2197,6 @@ impl App {
         }
         if self.status.paused {
             segments.push(Span::styled("paused", Style::default().fg(Color::Yellow)));
-        }
-        if let Some(follow) = &self.continues {
-            segments.push(Span::styled(
-                format!("↳ {}", short_id(&follow.ticket)),
-                Style::default().fg(CYAN),
-            ));
         }
         let right = Span::styled(
             format!("v{}", env!("CARGO_PKG_VERSION")),
@@ -3485,10 +3429,6 @@ mod transcript_tests {
                 stage: "working".into(),
             },
         );
-        app.continues = Some(Follow {
-            thread: "t-1".into(),
-            ticket: "abcdef1234567890".into(),
-        });
         app.replied.insert("abcdef1234567890".into());
         app.show_tickets(tickets_poll(vec![TicketRow {
             id: "abcdef1234567890".into(),
@@ -3500,7 +3440,6 @@ mod transcript_tests {
         // With a reply already shown, the summary is not printed twice.
         assert!(!text(&app).contains("report"), "{}", text(&app));
         assert!(app.tracked.is_empty(), "a closed ticket is not tracked");
-        assert!(app.continues.is_none(), "the thread is released");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3543,6 +3482,7 @@ mod transcript_tests {
             kind: "acknowledgement".into(),
             text: "收到".into(),
             ticket: Some("abcdef1234567890".into()),
+            thread: None,
         });
         app.show_tickets(tickets_poll(vec![TicketRow {
             id: "abcdef1234567890".into(),
@@ -3609,6 +3549,7 @@ mod transcript_tests {
             kind: "acknowledgement".into(),
             text: "收到".into(),
             ticket: Some("abcdef1234567890".into()),
+            thread: None,
         });
         let shown = text(&app);
         assert!(shown.contains("accepted"), "{shown}");
@@ -3624,6 +3565,7 @@ mod transcript_tests {
             kind: "reply".into(),
             text: "done".into(),
             ticket: Some("abcdef1234567890".into()),
+            thread: None,
         });
         assert!(app.replied.contains("abcdef1234567890"));
         std::fs::remove_dir_all(dir).unwrap();
@@ -3636,7 +3578,7 @@ mod transcript_tests {
         app.submit();
         let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
         assert!(inbox.contains("把 README 的错字改掉"), "{inbox}");
-        assert!(text(&app).contains("sent to the agent"), "{}", text(&app));
+        assert!(text(&app).contains("sent to the portal"), "{}", text(&app));
 
         // A slash line goes to the command grammar instead of the agent.
         app.input = "/nonexistent".into();
@@ -3651,54 +3593,55 @@ mod transcript_tests {
     }
 
     #[test]
-    fn a_follow_up_continues_the_ticket_the_console_accepted() {
-        let (mut app, dir, _env) = console("follow");
-        app.continues = Some(Follow {
-            thread: "t-1".into(),
-            ticket: "abcdef1234567890".into(),
+    fn portal_replies_are_labeled_as_the_portal_agent() {
+        let (mut app, dir, _env) = console("portal-label");
+        app.push_agent(intake::Reply {
+            id: "portal-reply".into(),
+            kind: "reply".into(),
+            text: "我来协调这项工作。".into(),
+            ticket: None,
+            thread: Some("portal-abc".into()),
         });
-        app.input = "改成另一种写法".into();
+        assert!(text(&app).contains("◆ portal"), "{}", text(&app));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn messages_continue_the_portal_conversation_instead_of_a_worker_ticket() {
+        let (mut app, dir, _env) = console("portal-conversation");
+        app.input = "第一条".into();
+        app.submit();
+        app.input = "第二条".into();
         app.submit();
         let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
-        assert!(inbox.contains("\"thread\":\"t-1\""), "{inbox}");
-        assert!(
-            text(&app).contains("follow-up to abcdef12"),
-            "{}",
-            text(&app)
-        );
-        // A follow-up fans out without a decision, so it is not awaited as one.
-        assert!(
-            app.pending.is_empty(),
-            "a follow-up is not pending a judgement"
-        );
+        let entries: Vec<serde_json::Value> = inbox
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["thread"], entries[1]["thread"]);
+        assert_ne!(entries[0]["thread"], "old-worker");
+        assert_eq!(app.pending.len(), 2);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn bootstrap_announces_the_ticket_it_resumes() {
-        let (mut app, dir, _env) = console("bootstrap");
-        app.continues = Some(Follow {
-            thread: "t-1".into(),
-            ticket: "abcdef1234567890".into(),
-        });
-        app.bootstrap();
-        let shown = text(&app);
-        assert!(shown.contains("continuing ticket abcdef12"), "{shown}");
-        assert!(shown.contains("/new starts a new ticket"), "{shown}");
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn new_starts_a_new_ticket_and_forgets_the_follow_target() {
+    fn new_starts_a_distinct_conversation() {
         let (mut app, dir, _env) = console("new");
-        app.continues = Some(Follow {
-            thread: "t-1".into(),
-            ticket: "abcdef1234567890".into(),
-        });
+        app.input = "first".into();
+        app.submit();
         app.input = "/new".into();
         app.submit();
-        assert!(app.continues.is_none(), "/new releases the ticket");
-        assert!(text(&app).contains("starts a new ticket"), "{}", text(&app));
+        app.input = "second".into();
+        app.submit();
+        let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
+        let entries: Vec<serde_json::Value> = inbox
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(entries.len(), 2);
+        assert_ne!(entries[0]["thread"], entries[1]["thread"]);
+        assert!(text(&app).contains("starts a new conversation"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -3725,6 +3668,7 @@ mod transcript_tests {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
+    use crate::model::Decision;
     use crate::testkit::FakeApi;
     use serde_json::json;
 
@@ -4334,7 +4278,7 @@ mod editor_tests {
         let mut delivered: Option<Vec<intake::Reply>> = None;
         while std::time::Instant::now() < deadline {
             match app.rx.recv_timeout(std::time::Duration::from_millis(200)) {
-                Ok(Msg::Replies(replies)) => {
+                Ok(Msg::Replies(replies, _)) => {
                     delivered = Some(replies);
                     break;
                 }
@@ -4345,6 +4289,55 @@ mod editor_tests {
         let replies = delivered.expect("the poll delivers what the agent wrote");
         assert_eq!(replies.len(), 1);
         assert_eq!(replies[0].text, "done");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_batched_decision_clears_every_pending_console_message() {
+        let (mut app, dir, _env) = editor("pending-batch");
+        for id in ["local-a", "local-b"] {
+            app.pending.insert(
+                id.into(),
+                Awaiting {
+                    sent: Instant::now(),
+                    warned: false,
+                    stale: false,
+                },
+            );
+        }
+        app.apply(Msg::Decisions(vec![Decision {
+            outcome: "ignore".into(),
+            trigger_ids: vec!["local-a".into(), "local-b".into()],
+            ..Decision::default()
+        }]));
+        assert!(
+            app.pending.is_empty(),
+            "one batch judgement settles every included message"
+        );
+        for id in ["local-c", "local-d"] {
+            app.pending.insert(
+                id.into(),
+                Awaiting {
+                    sent: Instant::now(),
+                    warned: false,
+                    stale: false,
+                },
+            );
+        }
+        app.apply(Msg::Decisions(vec![Decision {
+            outcome: "accept".into(),
+            ticket_id: Some("ticket-1".into()),
+            trigger_ids: vec!["local-c".into(), "local-d".into()],
+            ..Decision::default()
+        }]));
+        assert!(
+            app.pending.is_empty(),
+            "a batch accept settles every included message"
+        );
+        assert!(
+            app.tracked.contains_key("ticket-1"),
+            "the opened worker remains tracked"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4395,46 +4388,31 @@ mod editor_tests {
     }
 
     #[test]
-    fn a_restarted_console_skips_the_outbox_it_found() {
-        let _env = crate::testkit::env_lock();
-        let dir = std::env::temp_dir().join(format!("booth-restart-{}", crate::oauth::uuid_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::env::set_var("BOOTH_STATE_DIR", &dir);
-        std::env::set_var("DSH_HOME", &dir);
-        // A transcript's worth of history the console did not show, because it was not running.
-        let history: String = (0..20)
-            .map(|index| {
-                format!("{{\"id\":\"old-{index}\",\"kind\":\"reply\",\"text\":\"old {index}\"}}\n")
-            })
-            .collect();
-        std::fs::write(dir.join("booth-outbox.jsonl"), history).unwrap();
-        let api = FakeApi::start();
-        let app = App::new(Api::new(&api.base));
-        assert!(
-            app.lines.is_empty(),
-            "a restart starts with an empty transcript"
-        );
-        // The tail the polls share sits at the end of what was already there, so the first poll
-        // has nothing to deliver; parsing the history would only cost startup time.
-        let config = app
-            .config
-            .clone()
-            .expect("the test set the state directory");
-        let mut tail = app.tail.lock().unwrap();
-        assert!(
-            intake::replies_from(&config, &mut tail).is_empty(),
-            "the history is not replayed"
-        );
-        // A message that arrives after the restart is still delivered.
+    fn a_restarted_console_receives_messages_arriving_while_closed() {
+        let (mut app, dir, _api, _env) = editor_with_api("restart-outbox");
+        let config = app.config.clone().unwrap();
+        let path = dir.join("booth-outbox.jsonl");
+        std::fs::write(
+            &path,
+            "{\"id\":\"seen\",\"kind\":\"reply\",\"text\":\"first\"}\n",
+        )
+        .unwrap();
+        let (first, checkpoint) = {
+            let mut tail = app.tail.lock().unwrap();
+            let replies = intake::replies_from(&config, &mut tail);
+            (replies, tail.clone())
+        };
+        app.apply(Msg::Replies(first, checkpoint));
         let mut file = std::fs::OpenOptions::new()
             .append(true)
-            .open(dir.join("booth-outbox.jsonl"))
+            .open(&path)
             .unwrap();
-        file.write_all(b"{\"id\":\"new-1\",\"kind\":\"reply\",\"text\":\"new\"}\n")
+        file.write_all(b"{\"id\":\"unseen\",\"kind\":\"reply\",\"text\":\"while closed\"}\n")
             .unwrap();
-        let fresh = intake::replies_from(&config, &mut tail);
-        assert_eq!(fresh.len(), 1);
-        assert_eq!(fresh[0].id, "new-1");
+        let mut restored = intake::Tail::restore(&config);
+        let replies = intake::replies_from(&config, &mut restored);
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].id, "unseen");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
