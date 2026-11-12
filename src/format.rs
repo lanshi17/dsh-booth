@@ -433,7 +433,7 @@ pub fn portal(view: &Value) -> Vec<L> {
     }
     if let Some(offset) = view.get("next_offset").and_then(Value::as_u64) {
         lines.push(blank());
-        lines.push(muted(&format!("more conversations: booth portal {offset}")));
+        lines.push(muted(format!("more conversations: booth portal {offset}")));
     }
     lines
 }
