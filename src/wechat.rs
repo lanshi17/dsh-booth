@@ -41,7 +41,7 @@ struct QrStatus {
     ret: Option<i64>,
 }
 
-#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 struct IlinkCredentials {
     bot_token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,12 +56,17 @@ struct IlinkCredentials {
 pub fn login(cfg: &service::Config, api: &Api) -> Result<(), String> {
     service::create_private_state_dir(cfg)?;
     let credentials_path = cfg.state_dir.join("weixin-credentials.json");
-    if let Some(credentials) = read_credentials(&credentials_path)? {
+    let (credentials, reused) = cached_or_connect(&credentials_path, connect)?;
+    if reused {
         println!("已读取本机保存的 iLink 会话凭证，复用现有登录，不重新扫码。\n");
-        activate(api, &credentials);
-        return Ok(());
+    } else {
+        println!("微信 Bot 已绑定，凭证已安全保存。\n");
     }
+    activate(api, &credentials);
+    Ok(())
+}
 
+fn connect() -> Result<IlinkCredentials, String> {
     println!("微信 iLink 登录：请用微信扫描下面的链接并在手机上确认。按 Ctrl+C 可退出。\n");
     loop {
         let qr: QrCode = get_json(&format!("{ILINK}/ilink/bot/get_bot_qrcode?bot_type=3"))?;
@@ -89,10 +94,7 @@ pub fn login(cfg: &service::Config, api: &Api) -> Result<(), String> {
                         ilink_user_id: status.ilink_user_id.filter(|value| !value.is_empty()),
                         baseurl: status.baseurl.filter(|value| !value.is_empty()),
                     };
-                    save_credentials(&credentials_path, &credentials)?;
-                    println!("微信 Bot 已绑定，凭证已安全保存。");
-                    activate(api, &credentials);
-                    return Ok(());
+                    return Ok(credentials);
                 }
                 Ok(status) if status.status == "expired" || status.ret == Some(3) => {
                     println!("二维码已过期，正在获取新链接……\n");
@@ -124,6 +126,18 @@ pub fn login(cfg: &service::Config, api: &Api) -> Result<(), String> {
             }
         }
     }
+}
+
+fn cached_or_connect(
+    path: &Path,
+    connect: impl FnOnce() -> Result<IlinkCredentials, String>,
+) -> Result<(IlinkCredentials, bool), String> {
+    if let Some(credentials) = read_credentials(path)? {
+        return Ok((credentials, true));
+    }
+    let credentials = connect()?;
+    save_credentials(path, &credentials)?;
+    Ok((credentials, false))
 }
 
 fn activate(api: &Api, credentials: &IlinkCredentials) {
@@ -353,6 +367,51 @@ mod tests {
             0o600
         );
         assert_eq!(read_credentials(&path).unwrap(), Some(credentials));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reuses_a_saved_session_without_requesting_another_qr_scan() {
+        let dir = std::env::temp_dir().join(format!("booth-wechat-reuse-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("weixin-credentials.json");
+        let credentials = IlinkCredentials {
+            bot_token: "x".into(),
+            ilink_bot_id: Some("bot".into()),
+            ilink_user_id: Some("wx-user".into()),
+            baseurl: None,
+        };
+        save_credentials(&path, &credentials).unwrap();
+        let mut requested_qr = false;
+        let (loaded, reused) = cached_or_connect(&path, || {
+            requested_qr = true;
+            Err("QR must not be requested".into())
+        })
+        .unwrap();
+        assert_eq!(loaded, credentials);
+        assert!(reused);
+        assert!(!requested_qr);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saves_a_new_session_for_the_next_login() {
+        let dir = std::env::temp_dir().join(format!("booth-wechat-new-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("weixin-credentials.json");
+        let credentials = IlinkCredentials {
+            bot_token: "y".into(),
+            ilink_bot_id: None,
+            ilink_user_id: None,
+            baseurl: None,
+        };
+        let (_, reused) = cached_or_connect(&path, || Ok(credentials.clone())).unwrap();
+        assert!(!reused);
+        let (loaded, reused) = cached_or_connect(&path, || Err("must reuse".into())).unwrap();
+        assert!(reused);
+        assert_eq!(loaded, credentials);
         fs::remove_dir_all(dir).unwrap();
     }
 
