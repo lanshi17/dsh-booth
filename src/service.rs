@@ -338,7 +338,7 @@ pub fn start(cfg: &Config) -> Result<(), String> {
 /// The directory holds the database, the message files and the service log; the log carries the
 /// web panel's access token (see `open_log`). `create_dir_all` uses the umask, so a new directory
 /// is normally world-traversable, and a directory created by an earlier booth keeps its mode.
-fn create_private_state_dir(cfg: &Config) -> Result<(), String> {
+pub(crate) fn create_private_state_dir(cfg: &Config) -> Result<(), String> {
     fs::create_dir_all(&cfg.state_dir)
         .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
     #[cfg(unix)]

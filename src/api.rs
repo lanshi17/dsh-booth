@@ -137,6 +137,24 @@ impl Api {
         ))
     }
 
+    /// One source's saved value and revision, read fresh before changing its enabled state.
+    pub fn source_block(&self, id: &str) -> Result<(Value, u64), ApiError> {
+        let settings = self.settings()?;
+        let entry = settings
+            .get("sources")
+            .and_then(Value::as_array)
+            .and_then(|sources| {
+                sources
+                    .iter()
+                    .find(|source| source.get("id").and_then(Value::as_str) == Some(id))
+            })
+            .ok_or_else(|| ApiError::Protocol(format!("no source `{id}`")))?;
+        Ok((
+            entry.get("value").cloned().unwrap_or_else(|| json!({})),
+            entry.get("revision").and_then(Value::as_u64).unwrap_or(0),
+        ))
+    }
+
     /// Saves one settings block after rereading its revision.
     pub fn set(&self, name: &str, change: &dyn Fn(&mut Value)) -> Result<Value, ApiError> {
         let (mut value, revision) = self.block(name)?;

@@ -17,6 +17,7 @@ mod provider;
 mod service;
 #[cfg(test)]
 mod testkit;
+mod wechat;
 mod worker;
 
 use api::Api;
@@ -54,6 +55,11 @@ struct Cli {
 enum Command {
     /// Prepare the DSH profile and build the bundled superagent.
     Init,
+    /// Connect the WeChat iLink Bot or allow a sender to contact the portal.
+    Wechat {
+        #[command(subcommand)]
+        command: WechatCommand,
+    },
     /// Start the service in the background.
     Up,
     /// Stop the service booth started.
@@ -186,6 +192,14 @@ enum Command {
     Resume,
 }
 
+#[derive(Subcommand)]
+enum WechatCommand {
+    /// Print a fresh iLink login link, wait for confirmation, and save credentials.
+    Login,
+    /// Allow a WeChat sender ID to message the portal.
+    Allow { user_id: String },
+}
+
 fn main() {
     let cli = Cli::parse();
     let api = Api::new(&cli.url);
@@ -289,6 +303,13 @@ fn list_choice(
 fn run(api: Api, command: Command) -> Result<(), String> {
     match command {
         Command::Init => service::init(&service::Config::from_env()?),
+        Command::Wechat { command } => {
+            let cfg = service::Config::from_env()?;
+            match command {
+                WechatCommand::Login => wechat::login(&cfg, &api),
+                WechatCommand::Allow { user_id } => wechat::allow(&api, &user_id),
+            }
+        }
         Command::Up => service::start(&service::Config::from_env()?),
         Command::Down => service::stop(&service::Config::from_env()?),
         Command::Restart => service::restart(&service::Config::from_env()?),
@@ -611,6 +632,22 @@ mod tests {
                 json: false
             })
         ));
+    }
+
+    #[test]
+    fn wechat_login_and_allow_are_terminal_subcommands() {
+        assert!(matches!(
+            Cli::try_parse_from(["booth", "wechat", "login"])
+                .unwrap()
+                .command,
+            Some(Command::Wechat {
+                command: WechatCommand::Login
+            })
+        ));
+        assert!(
+            matches!(Cli::try_parse_from(["booth", "wechat", "allow", "wxid-user"]).unwrap().command,
+            Some(Command::Wechat { command: WechatCommand::Allow { user_id } }) if user_id == "wxid-user")
+        );
     }
 
     #[test]

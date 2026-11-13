@@ -88,6 +88,8 @@ booth up                           # start the service in the background
 booth down                         # stop the service booth started
 booth restart
 booth logs --lines 40
+booth wechat login                # connect an iLink bot from the terminal
+booth wechat allow <微信用户 ID>  # allow another sender to contact the portal
 booth provider                     # the model catalog the profile reports (no secret)
 booth status                       # one shot: health, pause, setup, accounts
 booth overview                     # problems, people waiting, executor load
@@ -106,6 +108,14 @@ booth send "把 README 里的错字改掉"  # message the portal agent
 booth setup owner/name             # repository + allowed senders, from the shell
 booth gh                           # the GitHub CLI the Source would use
 ```
+
+For WeChat, run `booth wechat login`. It prints a fresh iLink link you can open on your phone,
+waits for confirmation, and saves the bot credentials under the booth state directory with mode
+`0600` without printing the token. The account that confirms the QR is added to the allow-list
+automatically. The saved session is reused by later `booth wechat login` runs, so restarting booth
+does not require another scan. Run `/setup owner/repo` in booth if the profile is not configured yet. Other
+senders need `booth wechat allow <微信用户 ID>`. Check `booth sources --json` for poll and
+delivery health.
 
 | Global flag | Default | Meaning |
 | --- | --- | --- |
