@@ -1,6 +1,6 @@
 [package]
 name = "dsh-booth"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2021"
 description = "A terminal console for dsh-superagent: tickets, threads and the people who are waiting"
 license = "GPL-3.0-only"

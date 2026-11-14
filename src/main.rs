@@ -236,8 +236,8 @@ fn main() {
     let api = Api::new(&cli.url);
     let result = match cli.command {
         None => {
-            // OMP-style entry point: opening `booth` starts the local runtime when needed. The
-            // explicit `booth up` command remains available for scripts and headless use.
+            // The interactive frontend is OMP itself. Booth only owns lifecycle and the portal
+            // adapter; this keeps composer, palette, history, transcript and shortcuts native.
             let startup = service::Config::from_env().and_then(|cfg| {
                 if api.state().is_err() {
                     service::start(&cfg)
@@ -245,7 +245,7 @@ fn main() {
                     Ok(())
                 }
             });
-            startup.and_then(|_| app::run(api))
+            startup.and_then(|_| launch_omp())
         }
         Some(command) => run(api, command),
     };
@@ -256,6 +256,21 @@ fn main() {
         }
         std::process::exit(1);
     }
+}
+
+fn launch_omp() -> Result<(), String> {
+    let extension = std::env::var_os("BOOTH_OMP_EXTENSION")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("omp-portal/extension.ts"));
+    if !extension.is_file() {
+        return Err(format!("OMP portal extension is missing: {}", extension.display()));
+    }
+    let status = std::process::Command::new("omp")
+        .arg("--extension")
+        .arg(extension)
+        .status()
+        .map_err(|error| format!("cannot launch OMP (`omp`): {error}"))?;
+    if status.success() { Ok(()) } else { Err(format!("OMP exited with {status}")) }
 }
 
 /// What `booth provider` prints: the service's own catalog, never a secret.
