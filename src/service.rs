@@ -731,6 +731,23 @@ impl Patch {
         self.set_config(id, config);
     }
 
+    /// Switches one plugin entry on or off. A missing entry is appended; the bundle's entry with
+    /// the same id supplies the plugin name, so this layer only carries the switch.
+    pub fn set_enabled(&mut self, id: &str, enabled: bool) {
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.get("id").and_then(|value| value.as_str()) == Some(id))
+        {
+            entry["disabled"] = serde_json::json!(!enabled);
+            return;
+        }
+        self.entries.push(serde_json::json!({
+            "id": id,
+            "disabled": !enabled,
+        }));
+    }
+
     /// Removes one entry by id; returns whether it was there.
     pub fn remove(&mut self, id: &str) -> bool {
         let before = self.entries.len();

@@ -90,6 +90,9 @@ booth restart
 booth logs --lines 40
 booth wechat login                # connect an iLink bot from the terminal
 booth wechat allow <微信用户 ID>  # allow another sender to contact the portal
+booth feishu login                # connect a Feishu bot (App ID and App Secret)
+booth feishu allow ou_…           # allow a Feishu sender to contact the portal
+booth feishu chat oc_…            # receive messages in a group the bot joined
 booth provider                     # the model catalog the profile reports (no secret)
 booth status                       # one shot: health, pause, setup, accounts
 booth overview                     # problems, people waiting, executor load
@@ -117,6 +120,20 @@ does not require another scan. Run `/setup owner/repo` in booth if the profile i
 senders need `booth wechat allow <微信用户 ID>`. Check `booth sources --json` for poll and
 delivery health.
 
+For Feishu, create a self-built app with the bot capability and run `booth feishu login` with
+`--app-id` and `--app-secret` (or set `FEISHU_APP_ID` and `FEISHU_APP_SECRET`). The command
+installs `lark-cli` under the state directory when it is missing, saves the app in its own
+configuration directory, restricts the CLI to the bot identity, writes the `lark-bot` wrapper
+the Source runs, and turns the Feishu Source on, restarting the service when it is up. The App
+Secret goes to the CLI on standard input and is not printed. Direct messages work once your
+open_id is allowed (`booth feishu allow ou_…`); `booth feishu chat oc_…` adds a group the bot has
+joined, with `--all` for every message instead of only mentions. The app needs message events
+subscribed over the long connection and the `im` read/send scopes granted in the developer
+console: `booth feishu login` prints the scopes it is missing and where to apply for them, and
+`booth sources` shows the event stream's health. A configured group is also backfilled, which
+needs the sensitive `im:message.group_msg` (获取群组中所有消息) permission; without it the group
+still receives live @mentions, but `booth sources` reports the failed backfill.
+
 | Global flag | Default | Meaning |
 | --- | --- | --- |
 | `--url` | `http://127.0.0.1:3082` | The management API's base URL |
@@ -125,6 +142,7 @@ delivery health.
 | `BOOTH_PROFILE` | `superagent` | DSH profile name |
 | `BOOTH_STATE_DIR` | `$DSH_HOME/state/superagent` | Database, `booth.pid`, `booth.log` |
 | `BOOTH_SUPERAGENT_DIR` | the repository's `superagent/` | Checkout to build and link |
+| `FEISHU_APP_ID`, `FEISHU_APP_SECRET` | — | The app `booth feishu login` configures |
 | `DSH_HOME` | `~/.dsh` | Where profiles and state live |
 
 Every read command takes `--json` and prints the view as served, for scripts and the hourly

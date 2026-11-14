@@ -8,6 +8,7 @@ mod api;
 mod app;
 mod commands;
 mod decider;
+mod feishu;
 mod format;
 mod gh;
 mod intake;
@@ -59,6 +60,11 @@ enum Command {
     Wechat {
         #[command(subcommand)]
         command: WechatCommand,
+    },
+    /// Connect a Feishu bot, allow a sender, or receive a group chat.
+    Feishu {
+        #[command(subcommand)]
+        command: FeishuCommand,
     },
     /// Start the service in the background.
     Up,
@@ -200,6 +206,31 @@ enum WechatCommand {
     Allow { user_id: String },
 }
 
+#[derive(Subcommand)]
+enum FeishuCommand {
+    /// Configure the Feishu app, the bot-only lark-cli and the Feishu Source.
+    Login {
+        /// The app's App ID (cli_…).
+        #[arg(long, env = "FEISHU_APP_ID")]
+        app_id: String,
+        /// The app's App Secret; prefer the environment over the command line.
+        #[arg(long, env = "FEISHU_APP_SECRET", hide_env_values = true)]
+        app_secret: String,
+        /// A Feishu open_id to allow to contact the portal; repeatable.
+        #[arg(long = "allow", value_name = "OPEN_ID")]
+        allow: Vec<String>,
+    },
+    /// Allow a Feishu sender to message the portal.
+    Allow { open_id: String },
+    /// Receive messages in a group chat, in addition to direct messages.
+    Chat {
+        chat_id: String,
+        /// Receive every message, not only those that mention the bot.
+        #[arg(long)]
+        all: bool,
+    },
+}
+
 fn main() {
     let cli = Cli::parse();
     let api = Api::new(&cli.url);
@@ -308,6 +339,18 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             match command {
                 WechatCommand::Login => wechat::login(&cfg, &api),
                 WechatCommand::Allow { user_id } => wechat::allow(&api, &user_id),
+            }
+        }
+        Command::Feishu { command } => {
+            let cfg = service::Config::from_env()?;
+            match command {
+                FeishuCommand::Login {
+                    app_id,
+                    app_secret,
+                    allow,
+                } => feishu::login(&cfg, &api, &app_id, &app_secret, &allow),
+                FeishuCommand::Allow { open_id } => feishu::allow(&api, &open_id),
+                FeishuCommand::Chat { chat_id, all } => feishu::chat(&api, &chat_id, all),
             }
         }
         Command::Up => service::start(&service::Config::from_env()?),
@@ -648,6 +691,35 @@ mod tests {
             matches!(Cli::try_parse_from(["booth", "wechat", "allow", "wxid-user"]).unwrap().command,
             Some(Command::Wechat { command: WechatCommand::Allow { user_id } }) if user_id == "wxid-user")
         );
+    }
+
+    #[test]
+    fn feishu_login_allow_and_chat_are_terminal_subcommands() {
+        let cli = Cli::try_parse_from([
+            "booth",
+            "feishu",
+            "login",
+            "--app-id",
+            "cli_abc123",
+            "--app-secret",
+            "secret",
+            "--allow",
+            "ou_one",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Feishu { command: FeishuCommand::Login { ref app_id, ref app_secret, ref allow } })
+                if app_id == "cli_abc123" && app_secret == "secret" && allow == &["ou_one".to_owned()]
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["booth", "feishu", "allow", "ou_user"]).unwrap().command,
+            Some(Command::Feishu { command: FeishuCommand::Allow { open_id } }) if open_id == "ou_user"
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["booth", "feishu", "chat", "oc_chat", "--all"]).unwrap().command,
+            Some(Command::Feishu { command: FeishuCommand::Chat { chat_id, all: true } }) if chat_id == "oc_chat"
+        ));
     }
 
     #[test]

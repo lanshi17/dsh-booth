@@ -778,7 +778,7 @@ fn wait_budget() -> Duration {
         .unwrap_or(RESTART_TIMEOUT)
 }
 
-fn wait_ready(api: &Api) -> Result<(), String> {
+pub(crate) fn wait_ready(api: &Api) -> Result<(), String> {
     let budget = wait_budget();
     let deadline = Instant::now() + budget;
     loop {
