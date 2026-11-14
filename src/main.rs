@@ -239,13 +239,7 @@ fn main() {
         None => {
             // The interactive frontend is OMP itself. Booth only owns lifecycle and the portal
             // adapter; this keeps composer, palette, history, transcript and shortcuts native.
-            let startup = service::Config::from_env().and_then(|cfg| {
-                if api.state().is_err() {
-                    service::start(&cfg)
-                } else {
-                    Ok(())
-                }
-            });
+            let startup = service::Config::from_env().and_then(|cfg| service::start(&cfg));
             startup.and_then(|_| launch_omp())
         }
         Some(command) => run(api, command),

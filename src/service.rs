@@ -237,8 +237,8 @@ fn repair_profile(cfg: &Config) -> Result<(), String> {
 pub fn start(cfg: &Config) -> Result<(), String> {
     if let Some(pid) = read_pid(cfg) {
         if alive(pid) && is_service(pid, &cfg.profile) {
-            println!("already running (pid {pid})");
-            return report(cfg);
+            println!("already running (pid {pid}); waiting for its management API");
+            return wait_ready(cfg, Some(pid));
         }
         // A stale or reused pid must not stop a start.
         let _ = fs::remove_file(cfg.pid());
@@ -248,7 +248,7 @@ pub fn start(cfg: &Config) -> Result<(), String> {
             "a service already listens on {} — not started by booth",
             cfg.url()
         );
-        return report(cfg);
+        return wait_ready(cfg, None);
     }
     // The management API is not the only sign that the port is taken. DSH's web server binds
     // before dsh-superagent registers its routes, and another program can own the port, so a
@@ -307,6 +307,12 @@ pub fn start(cfg: &Config) -> Result<(), String> {
         .map_err(|error| format!("cannot write {}: {error}", cfg.pid().display()))?;
     println!("starting dsh (pid {pid}); log {}", cfg.log().display());
 
+    wait_ready(cfg, Some(pid))
+}
+
+/// Waits for a DSH management API to mount its runtime, whether booth started the process or
+/// found it already running. A listening web server can answer before the plugin is ready.
+fn wait_ready(cfg: &Config, pid: Option<u32>) -> Result<(), String> {
     let api = Api::new(&cfg.url());
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
@@ -323,12 +329,14 @@ pub fn start(cfg: &Config) -> Result<(), String> {
                 return report(cfg);
             }
         }
-        if !alive(pid) {
-            tail(cfg, 12);
-            return Err(format!(
-                "dsh exited while starting; see {}",
-                cfg.log().display()
-            ));
+        if let Some(pid) = pid {
+            if !alive(pid) {
+                tail(cfg, 12);
+                return Err(format!(
+                    "dsh exited while starting; see {}",
+                    cfg.log().display()
+                ));
+            }
         }
         if Instant::now() > deadline {
             tail(cfg, 12);
@@ -1381,6 +1389,19 @@ mod tests {
         // The stale pid file is cleared first, then the answering service is reported.
         assert!(!cfg.pid().exists(), "a stale pid file is removed");
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn waits_for_an_existing_service_while_its_management_api_is_restarting() {
+        // A live dsh pid can outlast the management API during startup or restart. The console
+        // must wait for /state to come back instead of failing on the first 503 response.
+        let mut cfg = config("start-existing-restarting");
+        let api = crate::testkit::FakeApi::start();
+        cfg.port = api.base.rsplit(':').next().unwrap().parse().unwrap();
+        api.refuse_state(2);
+
+        assert!(wait_ready(&cfg, None).is_ok());
+        let _ = fs::remove_dir_all(&cfg.state_dir);
     }
 
     /// A listener that answers every request the way DSH's web server does before
