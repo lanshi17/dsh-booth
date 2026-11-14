@@ -8,7 +8,10 @@ use crate::oauth;
 use crate::provider::{self, Catalog};
 use crate::service;
 use ratatui::backend::CrosstermBackend;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -395,8 +398,11 @@ pub struct App {
     input: String,
     /// Cursor position in characters, not bytes.
     cursor: usize,
+    /// Most recently drawn terminal width, used to move through visually wrapped rows.
+    composer_width: u16,
     history: Vec<String>,
     hist: Option<usize>,
+    history_draft: Option<(String, usize)>,
     selection: usize,
     busy: bool,
     follow: bool,
@@ -442,26 +448,62 @@ pub fn run(api: Api) -> Result<(), String> {
             "the console needs a terminal; use `booth <command>` for one-shot output".into(),
         );
     }
+    enable_raw_mode().map_err(|error| error.to_string())?;
+    // Keep cleanup armed during setup, drawing, and unwinding, not just the normal exit path.
+    let mut guard = TerminalGuard(true);
     let mut terminal = setup_terminal().map_err(|error| error.to_string())?;
     let mut app = App::new(api);
     app.bootstrap();
     let result = app
         .event_loop(&mut terminal)
         .map_err(|error| error.to_string());
-    restore_terminal(&mut terminal).map_err(|error| error.to_string())?;
-    result
+    let restored = restore_terminal(&mut terminal).map_err(|error| error.to_string());
+    if restored.is_ok() {
+        guard.0 = false;
+    }
+    terminal_result(result, restored)
+}
+
+fn terminal_result(run: Result<(), String>, restore: Result<(), String>) -> Result<(), String> {
+    match (run, restore) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(format!("could not restore terminal: {error}")),
+        (Err(error), Err(restore)) => {
+            Err(format!("{error}; could not restore terminal: {restore}"))
+        }
+    }
+}
+
+struct TerminalGuard(bool);
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        if self.0 {
+            let _ = disable_raw_mode();
+            let _ = execute!(
+                io::stdout(),
+                DisableBracketedPaste,
+                LeaveAlternateScreen,
+                ratatui::crossterm::cursor::Show
+            );
+        }
+    }
 }
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
-    enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
     Terminal::new(CrosstermBackend::new(stdout))
 }
 
 fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        DisableBracketedPaste,
+        LeaveAlternateScreen
+    )?;
     terminal.show_cursor()
 }
 
@@ -487,8 +529,10 @@ impl App {
             lines: Vec::new(),
             input: String::new(),
             cursor: 0,
+            composer_width: 80,
             history,
             hist: None,
+            history_draft: None,
             selection: 0,
             busy: false,
             follow: true,
@@ -530,10 +574,10 @@ impl App {
                 self.refresh_status();
             }
             if event::poll(Duration::from_millis(120))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind == KeyEventKind::Press {
-                        self.on_key(key);
-                    }
+                match event::read()? {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key),
+                    Event::Paste(text) => self.paste_event(&text),
+                    _ => {}
                 }
             }
         }
@@ -579,8 +623,8 @@ impl App {
                         }
                         // One Eval decision may settle every trigger in a batch. Clear them all or
                         // the console will later report a false timeout for the other messages.
-                        for trigger in matched {
-                            self.pending.remove(&trigger);
+                        for trigger in &matched {
+                            self.pending.remove(trigger);
                         }
                         // An accept is already answered by the acknowledgement in the outbox; the
                         // ticket it opened is followed here for its progress and final report.
@@ -593,7 +637,19 @@ impl App {
                                     },
                                 );
                             }
-                        } else if decision.outcome != "ignore" {
+                        } else if decision.outcome == "ignore" {
+                            // The portal may still respond independently of a ticket decision.
+                            // Show that assessment ended without implying the conversation ended.
+                            let ids = matched
+                                .iter()
+                                .map(|id| short_id(id.strip_prefix("local-").unwrap_or(id)))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            self.push(Line::from(Span::styled(
+                                format!("  ⋯ {ids} · assessment finished without a ticket · portal reply may follow"),
+                                Style::default().fg(FAINT),
+                            )));
+                        } else {
                             self.push_decision(&decision);
                         }
                     }
@@ -679,6 +735,24 @@ impl App {
 
     fn push(&mut self, line: L) {
         self.push_lines(vec![line]);
+    }
+
+    /// Render every line of the submitted draft, including empty lines, as transcript rows.
+    fn push_input(&mut self, text: &str) {
+        let lines = text
+            .split('\n')
+            .enumerate()
+            .map(|(index, part)| {
+                Line::from(vec![
+                    Span::styled(
+                        if index == 0 { "  ❯ " } else { "    " },
+                        Style::default().fg(CYAN),
+                    ),
+                    Span::styled(part.to_owned(), Style::default().fg(TEXT)),
+                ])
+            })
+            .collect();
+        self.push_lines(lines);
     }
 
     /// Reports the stage of the tickets this console opened, once per change; a report the agent
@@ -866,19 +940,19 @@ impl App {
     }
 
     /// Hands one instruction to the agent; the Source picks it up on its next poll.
-    fn instruct(&mut self, text: &str) {
+    fn instruct(&mut self, text: &str) -> bool {
         let text = text.trim();
         if text.is_empty() {
             self.push(warn_line(
                 "/send needs an instruction; bare text sends one too",
             ));
-            return;
+            return false;
         }
         let Some(config) = self.config.clone() else {
             self.push(warn_line(
                 "the console cannot find its state directory; set BOOTH_STATE_DIR",
             ));
-            return;
+            return false;
         };
         let (who, text) = crate::worker::split(text);
         if who != crate::worker::Who::Dsh {
@@ -891,13 +965,13 @@ impl App {
                 };
                 let _ = tx.send(message);
             });
-            return;
+            return true;
         }
         let thread = match intake::portal_thread(&config) {
             Ok(thread) => thread,
             Err(error) => {
                 self.push(warn_line(&error));
-                return;
+                return false;
             }
         };
         match intake::send(&config, &text, Some(&thread)) {
@@ -912,7 +986,7 @@ impl App {
                 );
                 let lines = vec![Line::from(vec![
                     Span::styled("  ↑ ", Style::default().fg(GREEN)),
-                    Span::styled("sent to the portal", Style::default().fg(GREEN)),
+                    Span::styled("queued for the portal", Style::default().fg(GREEN)),
                     Span::styled(format!("  {}", short_id(&id)), Style::default().fg(FAINT)),
                 ])];
                 self.push_lines(lines);
@@ -920,11 +994,33 @@ impl App {
                     self.push(warn_line(
                         "the service is down; the instruction waits in the queue — `booth up`",
                     ));
+                } else if self.status.paused {
+                    self.push(warn_line(
+                        "the service is paused; the instruction waits in the queue — /resume",
+                    ));
+                } else if self.status.setup {
+                    self.push(warn_line(
+                        "setup is incomplete; the instruction waits in the queue — /status",
+                    ));
                 }
                 self.refresh_status();
+                true
             }
-            Err(error) => self.push(warn_line(&error)),
+            Err(error) => {
+                self.push(warn_line(&error));
+                false
+            }
         }
+    }
+
+    /// Put a draft back in the composer when a local send failed before it reached the Source.
+    /// Losing the only copy of a long instruction made transient setup or filesystem errors feel
+    /// like the console had swallowed the user's work.
+    fn restore_draft(&mut self, line: &str) {
+        self.input = line.to_owned();
+        self.cursor = self.input.chars().count();
+        self.selection = 0;
+        self.hist = None;
     }
 
     fn spawn_setup(&mut self, argument: String) {
@@ -952,12 +1048,13 @@ impl App {
     fn check_pending(&mut self) {
         let now = Instant::now();
         let mut lines = Vec::new();
-        for entry in self.pending.values_mut() {
+        for (id, entry) in self.pending.iter_mut() {
+            let short = short_id(id.strip_prefix("local-").unwrap_or(id));
             let waited = now.duration_since(entry.sent);
             if !entry.warned && waited > Duration::from_secs(20) {
                 entry.warned = true;
                 lines.push(Line::from(Span::styled(
-                    "  ⋯ no decision yet · /sources shows whether the source is polling",
+                    format!("  ⋯ {short} · no decision yet · /sources shows whether the source is polling"),
                     Style::default().fg(FAINT),
                 )));
             } else if entry.warned && !entry.stale && waited > Duration::from_secs(600) {
@@ -966,8 +1063,8 @@ impl App {
                 // failure, and say what a long wait usually means.
                 entry.stale = true;
                 lines.push(warn_line(
-                    "10 minutes without a judgement · /status shows whether a model failure stopped it; \
-                     a late answer still appears here",
+                    &format!("{short} · 10 minutes without a judgement · /status shows whether a model failure stopped it; \
+                     a late answer still appears here"),
                 ));
             }
         }
@@ -1072,16 +1169,17 @@ impl App {
         if !self.input.starts_with('/') {
             return None;
         }
-        let matches = commands::matches(&self.input);
-        if matches.is_empty() {
-            None
-        } else {
-            Some(matches)
-        }
+        // Keep the palette open even when the filter has no result. An empty list is useful
+        // feedback (and leaves the typed query visible); treating it as closed made an unknown
+        // slash command look like a frozen composer until Enter produced an unrelated error.
+        Some(commands::matches(&self.input))
     }
 
     fn complete(&mut self) {
         if let Some(matches) = self.palette() {
+            if matches.is_empty() {
+                return;
+            }
             let index = self.selection.min(matches.len().saturating_sub(1));
             let name = matches[index].0.split_whitespace().next().unwrap_or("");
             // The palette filters on the command word, not on the argument after it. Replace the
@@ -1116,6 +1214,16 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
+                KeyCode::Char('d') => {
+                    // Match the familiar terminal behavior: an empty composer exits; with a
+                    // draft, delete the character under the caret so a shortcut never discards
+                    // unsent work.
+                    if self.input.is_empty() {
+                        self.quit = true;
+                    } else {
+                        self.delete();
+                    }
+                }
                 KeyCode::Char('l') => {
                     self.lines.clear();
                     self.scroll = 0;
@@ -1145,6 +1253,7 @@ impl App {
         }
         if key.modifiers.contains(KeyModifiers::ALT) {
             match key.code {
+                KeyCode::Enter => self.insert('\n'),
                 KeyCode::Char('b') => self.word_left(),
                 KeyCode::Char('f') => self.word_right(),
                 KeyCode::Backspace => self.delete_word_back(),
@@ -1153,12 +1262,32 @@ impl App {
             return;
         }
         match key.code {
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => self.insert('\n'),
             KeyCode::Enter => {
-                if self.input.trim() == "/" {
-                    self.complete();
-                } else {
+                // These console aliases are intentionally absent from the palette. Running fuzzy
+                // completion on them could replace a valid alias with an unrelated command.
+                if matches!(self.input.trim(), "/q" | "/?" | "/reset" | "/hotkeys") {
                     self.submit();
+                    return;
                 }
+                if let Some(matches) = self.palette().filter(|matches| !matches.is_empty()) {
+                    let chosen = matches[self.selection.min(matches.len() - 1)].0;
+                    let name = chosen.split_whitespace().next().unwrap_or("");
+                    let typed = self.input.split_whitespace().next().unwrap_or("");
+                    let needs_argument =
+                        chosen.contains('<') && self.input.split_whitespace().count() < 2;
+                    if self.selection > 0 || !typed.eq_ignore_ascii_case(name) {
+                        self.complete();
+                    }
+                    if needs_argument {
+                        if !self.input.ends_with(char::is_whitespace) {
+                            self.input.push(' ');
+                            self.cursor = self.input.chars().count();
+                        }
+                        return;
+                    }
+                }
+                self.submit();
             }
             KeyCode::Tab => self.complete(),
             KeyCode::Esc => {
@@ -1197,6 +1326,46 @@ impl App {
         self.cursor += 1;
         self.selection = 0;
         self.hist = None;
+        self.history_draft = None;
+    }
+
+    /// Bracketed paste is one event: keep its line breaks in the draft, never submit them.
+    fn paste(&mut self, text: &str) {
+        let pasted = text.replace("\r\n", "\n").replace('\r', "\n");
+        if pasted.is_empty() {
+            return;
+        }
+        let byte = char_to_byte(&self.input, self.cursor);
+        self.input.insert_str(byte, &pasted);
+        self.cursor += pasted.chars().count();
+        self.selection = 0;
+        self.hist = None;
+        self.history_draft = None;
+    }
+
+    fn paste_event(&mut self, text: &str) {
+        if self.modal.is_none() {
+            self.paste(text);
+            return;
+        }
+        // Feed a bracketed paste through the focused modal editor. This keeps API keys, history
+        // queries and OAuth callback URLs in their field instead of silently putting them in the
+        // hidden main composer. The help modal has no editable field, so leave it open.
+        if !matches!(
+            self.modal,
+            Some(
+                Modal::LoginList { .. } | Modal::Login(_) | Modal::OAuth(_) | Modal::History { .. }
+            )
+        ) {
+            return;
+        }
+        let pasted = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+        for ch in pasted.chars() {
+            if self.modal.is_none() {
+                break;
+            }
+            self.modal_key(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
     }
 
     fn backspace(&mut self) {
@@ -1207,6 +1376,8 @@ impl App {
         self.input.remove(byte);
         self.cursor -= 1;
         self.selection = 0;
+        self.hist = None;
+        self.history_draft = None;
     }
 
     fn delete(&mut self) {
@@ -1215,6 +1386,8 @@ impl App {
         }
         let byte = char_to_byte(&self.input, self.cursor);
         self.input.remove(byte);
+        self.hist = None;
+        self.history_draft = None;
     }
 
     fn word_left(&mut self) {
@@ -1254,6 +1427,8 @@ impl App {
         self.input.replace_range(range, "");
         self.cursor = start;
         self.selection = 0;
+        self.hist = None;
+        self.history_draft = None;
     }
 
     fn delete_to_start(&mut self) {
@@ -1265,6 +1440,8 @@ impl App {
         self.input = rest;
         self.cursor = 0;
         self.selection = 0;
+        self.hist = None;
+        self.history_draft = None;
     }
 
     fn delete_to_end(&mut self) {
@@ -1275,6 +1452,8 @@ impl App {
         let kept = self.input[..char_to_byte(&self.input, self.cursor)].to_owned();
         self.input = kept;
         self.selection = 0;
+        self.hist = None;
+        self.history_draft = None;
     }
 
     fn yank(&mut self) {
@@ -1286,15 +1465,28 @@ impl App {
         self.input.insert_str(byte, &killed);
         self.cursor += killed.chars().count();
         self.selection = 0;
+        self.hist = None;
+        self.history_draft = None;
     }
 
     fn up(&mut self) {
         if let Some(matches) = self.palette() {
+            if matches.is_empty() {
+                return;
+            }
             self.selection = self.selection.saturating_sub(1).min(matches.len() - 1);
+            return;
+        }
+        if wrap_composer(&self.input, self.composer_width).len() > 1
+            && (self.move_input_line(false) || self.hist.is_none())
+        {
             return;
         }
         if self.history.is_empty() {
             return;
+        }
+        if self.hist.is_none() {
+            self.history_draft = Some((self.input.clone(), self.cursor));
         }
         let next = match self.hist {
             None => self.history.len() - 1,
@@ -1308,7 +1500,15 @@ impl App {
 
     fn down(&mut self) {
         if let Some(matches) = self.palette() {
+            if matches.is_empty() {
+                return;
+            }
             self.selection = (self.selection + 1).min(matches.len() - 1);
+            return;
+        }
+        if wrap_composer(&self.input, self.composer_width).len() > 1
+            && (self.move_input_line(true) || self.hist.is_none())
+        {
             return;
         }
         match self.hist {
@@ -1317,16 +1517,51 @@ impl App {
                 self.input = self.history[index + 1].clone();
                 self.cursor = self.input.chars().count();
             }
-            // Only a line recalled from the history is cleared when the walk passes the newest
-            // entry. With no entry recalled, Down is not an editing key: a fresh draft, even
-            // when the history is empty, stays exactly as typed.
             Some(_) => {
                 self.hist = None;
-                self.input.clear();
-                self.cursor = 0;
+                let (draft, cursor) = self.history_draft.take().unwrap_or_default();
+                self.input = draft;
+                self.cursor = cursor.min(self.input.chars().count());
             }
             None => {}
         }
+    }
+
+    fn move_input_line(&mut self, down: bool) -> bool {
+        let rows = wrap_composer(&self.input, self.composer_width);
+        let current = rows
+            .iter()
+            .rposition(|row| row.1 <= self.cursor)
+            .unwrap_or(0);
+        let target = if down {
+            current.checked_add(1).filter(|i| *i < rows.len())
+        } else {
+            current.checked_sub(1)
+        };
+        let Some(target) = target else { return false };
+        let column: usize = rows[current]
+            .0
+            .chars()
+            .take(self.cursor - rows[current].1)
+            .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(0))
+            .sum();
+        let mut cells = 0;
+        let mut count = 0;
+        for ch in rows[target].0.chars() {
+            let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if cells + width > column {
+                break;
+            }
+            cells += width;
+            count += 1;
+        }
+        // At a soft wrap the next row starts at the same character offset; leave the caret on
+        // the target row instead of jumping straight back to the following one.
+        if target + 1 < rows.len() && rows[target + 1].1 == rows[target].1 + count && count > 0 {
+            count -= 1;
+        }
+        self.cursor = rows[target].1 + count;
+        true
     }
 
     fn submit(&mut self) {
@@ -1391,11 +1626,10 @@ impl App {
             if !rest.is_empty() && !rest.starts_with(' ') {
                 // `/sender` is not `/send`: fall through to the command grammar.
             } else {
-                self.push(Line::from(vec![
-                    Span::styled("  ❯ ", Style::default().fg(CYAN)),
-                    Span::styled(line.clone(), Style::default().fg(TEXT)),
-                ]));
-                self.instruct(rest.trim());
+                self.push_input(&line);
+                if !self.instruct(rest.trim()) {
+                    self.restore_draft(&line);
+                }
                 return;
             }
         }
@@ -1440,17 +1674,28 @@ impl App {
             }
             _ => {}
         }
-        self.push(Line::from(vec![
-            Span::styled("  ❯ ", Style::default().fg(CYAN)),
-            Span::styled(line.clone(), Style::default().fg(TEXT)),
-        ]));
+        if line.starts_with('/') && commands::matches(&line).is_empty() {
+            self.push(Line::from(vec![
+                Span::styled("  ❯ ", Style::default().fg(CYAN)),
+                Span::styled(line.clone(), Style::default().fg(TEXT)),
+            ]));
+            self.push(warn_line(&format!(
+                "unknown command `{}` · type / to browse commands",
+                line.split_whitespace().next().unwrap_or(&line)
+            )));
+            self.restore_draft(&line);
+            return;
+        }
+        self.push_input(&line);
         if line == "/help" || line == "/?" {
             self.push_lines(format::help());
             return;
         }
         // Bare text is an instruction for the agent; the commands above are the console's own.
         if !line.starts_with('/') {
-            self.instruct(&line);
+            if !self.instruct(&line) {
+                self.restore_draft(&line);
+            }
             return;
         }
         self.spawn(line);
@@ -2148,7 +2393,7 @@ impl App {
             return Some(format!("{} health error(s) — /status", self.status.errors));
         }
         if self.unread > 0 && !self.follow {
-            return Some(format!("{} new line(s) · PgDn follows", self.unread));
+            return Some(format!("{} new line(s) · PgDn scrolls down", self.unread));
         }
         None
     }
@@ -2209,21 +2454,83 @@ impl App {
 
         let hint = if self.busy {
             Some(Span::styled("working…", Style::default().fg(Color::Yellow)))
+        } else if !self.input.is_empty() {
+            // Give the draft the full row once typing starts; the shortcut hints return when the
+            // composer is empty. Long instructions otherwise lose half of an 80-column screen.
+            None
+        } else if bottom.width >= 80 {
+            Some(Span::styled(
+                "Enter send · / commands · Ctrl+R history",
+                Style::default().fg(FAINT),
+            ))
         } else if bottom.width >= 58 {
             Some(Span::styled(
-                "Enter run · / commands",
+                "Enter send · / commands · Ctrl+P palette",
                 Style::default().fg(FAINT),
             ))
         } else {
             None
         };
-        let (composer, caret) = compose_bottom(&self.input, self.cursor, bottom.width, hint);
-        frame.render_widget(Paragraph::new(composer), bottom);
-
-        if self.modal.is_none() {
-            let x = bottom.x + 5 + caret;
-            let max = bottom.x + bottom.width.saturating_sub(2);
-            frame.set_cursor_position(Position::new(x.min(max), bottom.y));
+        let parts = wrap_composer(&self.input, bottom.width);
+        let active = parts
+            .iter()
+            .rposition(|part| part.1 <= self.cursor)
+            .unwrap_or(0);
+        let column = self
+            .cursor
+            .saturating_sub(parts[active].1)
+            .min(parts[active].0.chars().count());
+        let rows = usize::from(bottom.height);
+        let offset = active
+            .saturating_sub(rows.saturating_sub(1))
+            .min(parts.len().saturating_sub(rows));
+        for row in 0..rows {
+            let index = offset + row;
+            let text = parts.get(index).map(|part| part.0.as_str()).unwrap_or("");
+            // The placeholder belongs only to an entirely empty composer. Blank lines inside a
+            // multiline draft must remain visibly blank, including a trailing line after Enter.
+            let shown_text = if text.is_empty() && !self.input.is_empty() {
+                " "
+            } else {
+                text
+            };
+            let last = row + 1 == rows;
+            let row_hint = if last { hint.clone() } else { None };
+            let (mut line, caret) = compose_bottom(
+                shown_text,
+                if index == active { column } else { 0 },
+                bottom.width,
+                row_hint,
+            );
+            if !last {
+                // Continuation rows share one frame; only the final row closes the composer.
+                line.spans[0] = Span::styled("│  ", Style::default().fg(CYAN));
+                line.spans[1] = Span::styled("  ", Style::default());
+                let fill = line.spans[4].width();
+                line.spans[4] = Span::raw(" ".repeat(fill));
+                if let Some(edge) = line.spans.last_mut() {
+                    *edge = Span::styled("│", Style::default().fg(CYAN));
+                }
+            }
+            if row == 0 && offset > 0 {
+                line.spans[0] = Span::styled("↑  ", Style::default().fg(TIP));
+            }
+            if last && offset + rows < parts.len() {
+                if let Some(edge) = line.spans.last_mut() {
+                    *edge = Span::styled("↓", Style::default().fg(TIP));
+                }
+            }
+            let rect = Rect {
+                x: bottom.x,
+                y: bottom.y + row as u16,
+                width: bottom.width,
+                height: 1,
+            };
+            frame.render_widget(Paragraph::new(line), rect);
+            if index == active && self.modal.is_none() && rect.width > 0 {
+                let x = (rect.x + 5 + caret).min(rect.x + rect.width.saturating_sub(1));
+                frame.set_cursor_position(Position::new(x, rect.y));
+            }
         }
     }
 
@@ -2239,7 +2546,14 @@ impl App {
         } else if self.status.queued > 0 {
             Some(format!("{} ticket(s) queued", self.status.queued))
         } else if !self.pending.is_empty() {
-            Some("waiting for the agent's decision".to_owned())
+            let count = self.pending.len();
+            let waiting = match self.status.runtime.as_str() {
+                "down" => "service is down",
+                _ if self.status.paused => "service is paused",
+                _ if self.status.setup => "setup is incomplete",
+                _ => "waiting for the agent's decision",
+            };
+            Some(format!("{count} message(s) queued · {waiting}"))
         } else if self
             .tracked
             .values()
@@ -2263,6 +2577,7 @@ impl App {
 
     fn draw(&mut self, frame: &mut Frame) {
         let area = frame.area();
+        self.composer_width = area.width;
         let alert = self.alert_text(area.width);
         let alert_height = u16::from(alert.is_some());
         let working = self.activity();
@@ -2273,12 +2588,19 @@ impl App {
         } else {
             u16::from(working.is_some())
         };
+        let composer_height = (wrap_composer(&self.input, area.width).len() as u16)
+            .clamp(1, 5)
+            .min(
+                area.height
+                    .saturating_sub(alert_height + working_height + 2)
+                    .max(1),
+            );
         let [alert_area, body, working_area, top, bottom] = Layout::vertical([
             Constraint::Length(alert_height),
             Constraint::Min(3),
             Constraint::Length(working_height),
             Constraint::Length(1),
-            Constraint::Length(1),
+            Constraint::Length(composer_height),
         ])
         .areas(area);
 
@@ -2329,56 +2651,65 @@ impl App {
         // the working row instead of sharing its cells.
         if let Some(matches) = self.palette() {
             let room = top.y.saturating_sub(area.y) as usize;
-            let shown = matches.len().min(8).min(room.max(1));
+            let shown = matches.len().clamp(1, 8).min(room);
             let selected = self.selection.min(matches.len().saturating_sub(1));
             // Keep the selection in view when the list is longer than its window (omp's list scrolls).
             let offset = selected.saturating_sub(shown.saturating_sub(1));
-            let width = area.width.saturating_sub(4).clamp(24, 82).min(area.width);
+            let margin = 2u16.min(area.width.saturating_sub(1));
+            let width = area.width.saturating_sub(margin).min(82);
             let height = shown as u16;
             let rect = Rect {
-                x: area.x + 2,
+                x: area.x + margin,
                 y: top.y.saturating_sub(height),
                 width,
                 height,
             };
             frame.render_widget(Clear, rect);
             let token = commands::query(&self.input);
-            let lines: Vec<L> = matches
-                .iter()
-                .enumerate()
-                .skip(offset)
-                .take(shown)
-                .map(|(index, (name, description))| {
-                    let active = index == selected;
-                    let word = name.split_whitespace().next().unwrap_or("");
-                    let hit = commands::fuzzy(word, &token)
-                        .map(|(_, indices)| indices)
-                        .unwrap_or_default();
-                    let mut spans = vec![Span::styled(
-                        if active { "❯ " } else { "  " },
-                        Style::default().fg(CYAN),
-                    )];
-                    // The command word highlights the letters the fuzzy filter matched.
-                    for (position, ch) in name.chars().enumerate() {
-                        let matched = hit.contains(&position);
-                        let style = if matched {
-                            Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
-                        } else if active {
-                            Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
-                        } else {
-                            Style::default().fg(MUTED)
-                        };
-                        spans.push(Span::styled(ch.to_string(), style));
-                    }
-                    let pad = 18usize.saturating_sub(UnicodeWidthStr::width(*name));
-                    spans.push(Span::raw(" ".repeat(pad.max(1))));
-                    spans.push(Span::styled(
-                        *description,
-                        Style::default().fg(if active { MUTED } else { FAINT }),
-                    ));
-                    Line::from(spans)
-                })
-                .collect();
+            let lines: Vec<L> = if matches.is_empty() {
+                vec![Line::from(vec![
+                    Span::styled("  ", Style::default().fg(CYAN)),
+                    Span::styled("no matching command", Style::default().fg(TIP)),
+                    Span::styled(" · Esc clears the line", Style::default().fg(FAINT)),
+                ])]
+            } else {
+                matches
+                    .iter()
+                    .enumerate()
+                    .skip(offset)
+                    .take(shown)
+                    .map(|(index, (name, description))| {
+                        let active = index == selected;
+                        let word = name.split_whitespace().next().unwrap_or("");
+                        let hit = commands::fuzzy(word, &token)
+                            .map(|(_, indices)| indices)
+                            .unwrap_or_default();
+                        let mut spans = vec![Span::styled(
+                            if active { "❯ " } else { "  " },
+                            Style::default().fg(CYAN),
+                        )];
+                        // The command word highlights the letters the fuzzy filter matched.
+                        for (position, ch) in name.chars().enumerate() {
+                            let matched = hit.contains(&position);
+                            let style = if matched {
+                                Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                            } else if active {
+                                Style::default().fg(TEXT).add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default().fg(MUTED)
+                            };
+                            spans.push(Span::styled(ch.to_string(), style));
+                        }
+                        let pad = 18usize.saturating_sub(UnicodeWidthStr::width(*name));
+                        spans.push(Span::raw(" ".repeat(pad.max(1))));
+                        spans.push(Span::styled(
+                            *description,
+                            Style::default().fg(if active { MUTED } else { FAINT }),
+                        ));
+                        Line::from(spans)
+                    })
+                    .collect()
+            };
             frame.render_widget(Paragraph::new(lines), rect);
         }
 
@@ -2556,7 +2887,11 @@ const KEYS: &[(&str, &str)] = &[
     ("↑ ↓", "pick in the palette, or walk the history"),
     ("PgUp / PgDn", "scroll the transcript"),
     ("Ctrl+L", "clear the transcript"),
-    ("Ctrl+C", "quit"),
+    (
+        "Ctrl+D",
+        "quit on an empty line; delete at the caret otherwise",
+    ),
+    ("Ctrl+C", "quit immediately"),
 ];
 
 fn draw_keys(frame: &mut Frame, area: Rect) {
@@ -3139,11 +3474,34 @@ fn compose_top(segments: Vec<Span<'static>>, right: Option<Span<'static>>, width
 ///
 /// The caret is returned rather than recomputed from the whole line: the visible text is a
 /// window, so the caret's column is the window's prefix, not the whole input's.
+/// Split the draft into visible rows and retain each row's character offset in the draft.
+fn wrap_composer(input: &str, width: u16) -> Vec<(String, usize)> {
+    let room = usize::from(width).saturating_sub(8).max(2);
+    let mut rows = vec![(String::new(), 0)];
+    let mut used = 0;
+    for (index, ch) in input.chars().enumerate() {
+        if ch == '\n' {
+            rows.push((String::new(), index + 1));
+            used = 0;
+            continue;
+        }
+        let cells = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if used + cells > room && used > 0 {
+            rows.push((String::new(), index));
+            used = 0;
+        }
+        rows.last_mut().unwrap().0.push(ch);
+        used += cells;
+    }
+    rows
+}
+
 fn compose_bottom(input: &str, cursor: usize, width: u16, hint: Option<Span<'static>>) -> (L, u16) {
     let width = width as usize;
     let hint_w = hint.as_ref().map(|span| span.width()).unwrap_or(0);
     let tail = if hint.is_some() { hint_w + 2 } else { 0 };
-    let room = width.saturating_sub(5 + tail + 1 + 1);
+    // Reserve a cell for the caret after the last character, before the closing rail.
+    let room = width.saturating_sub(5 + tail + 1 + 1 + 1);
     let empty = input.is_empty();
     let (text, style, caret) = if empty {
         (
@@ -3182,7 +3540,12 @@ fn compose_bottom(input: &str, cursor: usize, width: u16, hint: Option<Span<'sta
 /// frame's edge and the characters being typed sat off screen. Keep the caret on the visible
 /// text: show a window that contains it, with an ellipsis when the line's start is hidden.
 fn composer_view(input: &str, cursor: usize, room: usize) -> (String, u16) {
-    let chars: Vec<char> = input.chars().collect();
+    // The compact composer has one row. Show a visible return symbol while retaining the real
+    // newlines in the draft, with a one-to-one character mapping for editing and the caret.
+    let chars: Vec<char> = input
+        .chars()
+        .map(|ch| if ch == '\n' { '↵' } else { ch })
+        .collect();
     let cursor = cursor.min(chars.len());
     let room = room.max(1);
     let width_of = |slice: &[char]| -> usize {
@@ -3193,7 +3556,7 @@ fn composer_view(input: &str, cursor: usize, room: usize) -> (String, u16) {
     };
     // A line that fits is shown whole; the caret sits after the characters before it.
     if width_of(&chars) <= room {
-        return (input.to_owned(), width_of(&chars[..cursor]) as u16);
+        return (chars.iter().collect(), width_of(&chars[..cursor]) as u16);
     }
     // The end of the line has no text after the caret, so the whole room may hold the prefix.
     // Editing in the middle keeps half the room for the text after it, so both sides stay in
@@ -3299,6 +3662,14 @@ fn draw_splash(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn terminal_cleanup_failure_does_not_hide_the_original_error() {
+        let error =
+            terminal_result(Err("input failed".into()), Err("restore failed".into())).unwrap_err();
+        assert!(error.contains("input failed"));
+        assert!(error.contains("restore failed"));
+    }
 
     #[test]
     fn counts_wrapped_rows_for_the_oauth_box() {
@@ -3578,7 +3949,11 @@ mod transcript_tests {
         app.submit();
         let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
         assert!(inbox.contains("把 README 的错字改掉"), "{inbox}");
-        assert!(text(&app).contains("sent to the portal"), "{}", text(&app));
+        assert!(
+            text(&app).contains("queued for the portal"),
+            "{}",
+            text(&app)
+        );
 
         // A slash line goes to the command grammar instead of the agent.
         app.input = "/nonexistent".into();
@@ -3588,6 +3963,37 @@ mod transcript_tests {
                 .unwrap()
                 .contains("nonexistent"),
             "a command must not reach the agent"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn pasted_multiline_instruction_reaches_the_inbox_intact() {
+        let (mut app, dir, _env) = console("multiline-submit");
+        app.paste("first\nsecond");
+        app.submit();
+        let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
+        let entry: serde_json::Value = serde_json::from_str(inbox.lines().next().unwrap()).unwrap();
+        assert_eq!(entry["text"], "first\nsecond");
+        assert!(
+            text(&app).contains("  ❯ first\n    second"),
+            "{}",
+            text(&app)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_paused_service_explains_why_a_queued_instruction_waits() {
+        let (mut app, dir, _env) = console("paused-send");
+        app.status.paused = true;
+        app.input = "check the README".into();
+        app.submit();
+        let shown = text(&app);
+        assert!(shown.contains("queued for the portal"), "{shown}");
+        assert!(
+            shown.contains("paused") && shown.contains("/resume"),
+            "{shown}"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -3845,6 +4251,280 @@ mod editor_tests {
         app.on_key(key(KeyCode::Esc));
         assert!(app.input.is_empty());
         assert!(app.palette().is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn enter_uses_the_selected_palette_command_and_keeps_required_arguments_editable() {
+        let (mut app, dir, _env) = editor("palette-enter");
+        typed(&mut app, "/mod");
+        app.on_key(key(KeyCode::Enter));
+        assert!(matches!(app.modal, Some(Modal::Model(_))));
+        app.modal = None;
+        typed(&mut app, "/ticke");
+        let matches = app.palette().unwrap();
+        app.selection = matches
+            .iter()
+            .position(|(name, _)| *name == "/ticket <id>")
+            .unwrap();
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.input, "/ticket ");
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(
+            app.input, "/ticket ",
+            "an exact command still waits for its required id"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn console_aliases_are_not_replaced_by_fuzzy_palette_matches() {
+        let (mut app, dir, _env) = editor("palette-alias");
+        typed(&mut app, "/hotkeys");
+        app.on_key(key(KeyCode::Enter));
+        assert!(matches!(app.modal, Some(Modal::Keys)));
+        app.modal = None;
+        typed(&mut app, "/q");
+        app.on_key(key(KeyCode::Enter));
+        assert!(app.quit);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_unknown_slash_query_stays_visible_and_safe_to_navigate() {
+        let (mut app, dir, _env) = editor("palette-empty");
+        typed(&mut app, "/does-not-exist");
+        assert!(app.palette().is_some(), "the query keeps the palette open");
+        assert!(app.palette().unwrap().is_empty());
+        app.on_key(key(KeyCode::Up));
+        app.on_key(key(KeyCode::Down));
+        app.on_key(key(KeyCode::Tab));
+        assert_eq!(app.input, "/does-not-exist");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_local_send_keeps_the_draft_in_the_composer() {
+        let (mut app, dir, _env) = editor("restore-draft");
+        app.config = None;
+        app.input = "请检查服务是否已启动".into();
+        app.cursor = app.input.chars().count();
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.input, "请检查服务是否已启动");
+        assert_eq!(app.cursor, app.input.chars().count());
+        assert!(rendered(&app).contains("state directory"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn bracketed_paste_keeps_newlines_inside_one_draft() {
+        let (mut app, dir, _env) = editor("paste");
+        app.paste("第一行\r\n第二行\n第三行");
+        assert_eq!(app.input, "第一行\n第二行\n第三行");
+        assert_eq!(composer_view("a\nb", 2, 10), ("a↵b".into(), 2));
+        assert_eq!(app.cursor, app.input.chars().count());
+
+        app.modal = Some(Modal::OAuth(OAuthState {
+            url: String::new(),
+            status: String::new(),
+            paste: String::new(),
+            cursor: 0,
+            attempt: None,
+            cancel: None,
+        }));
+        app.paste_event("https://example/callback?code=abc");
+        match app.modal {
+            Some(Modal::OAuth(state)) => {
+                assert_eq!(state.paste, "https://example/callback?code=abc")
+            }
+            _ => panic!("paste stays in the focused modal field"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn multiline_composer_displays_lines_and_moves_between_them() {
+        use ratatui::backend::TestBackend;
+        let (mut app, dir, _env) = editor("multiline-display");
+        app.paste("first\n第二行\nthird");
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(
+            app.input.chars().take(app.cursor).collect::<String>(),
+            "first\n第二"
+        );
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(
+            app.input.chars().take(app.cursor).collect::<String>(),
+            "first\n第二行\nthir"
+        );
+        let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(rendered.contains("first"), "{rendered}");
+        assert!(rendered.contains("第 二 行"), "{rendered}");
+        assert!(rendered.contains("third"), "{rendered}");
+        let screen = terminal.backend().buffer();
+        assert_eq!(screen.cell((0, 13)).unwrap().symbol(), "│");
+        assert_eq!(screen.cell((0, 14)).unwrap().symbol(), "│");
+        assert_eq!(screen.cell((0, 15)).unwrap().symbol(), "╰");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn long_mixed_width_input_wraps_without_losing_characters() {
+        let input = "ab中文cd".repeat(12);
+        let rows = wrap_composer(&input, 20);
+        assert!(rows.len() > 1);
+        assert_eq!(
+            rows.iter().map(|row| row.0.as_str()).collect::<String>(),
+            input
+        );
+        assert!(rows
+            .iter()
+            .all(|row| UnicodeWidthStr::width(row.0.as_str()) <= 12));
+        for (text, start) in rows {
+            assert_eq!(
+                input
+                    .chars()
+                    .skip(start)
+                    .take(text.chars().count())
+                    .collect::<String>(),
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn arrows_move_between_soft_wrapped_rows_before_history() {
+        let (mut app, dir, _env) = editor("wrapped-navigation");
+        app.composer_width = 20;
+        app.input = "abcdefghijklmnopqrstuvwx".into();
+        app.cursor = 18;
+        app.history.push("old command".into());
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.cursor, 6);
+        assert_eq!(app.input, "abcdefghijklmnopqrstuvwx");
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.cursor, 18);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn blank_lines_in_a_multiline_draft_do_not_show_the_empty_prompt() {
+        use ratatui::backend::TestBackend;
+        let (mut app, dir, _env) = editor("multiline-blank");
+        app.paste("first\n\nlast\n");
+        let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        // The splash can contain this phrase; inspect just the four composer rows.
+        let rows: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .skip(80 * 12)
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains("first") && rendered.contains("last"));
+        assert!(!rows.contains("type an instruction"), "{rows}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_long_draft_shows_where_more_rows_are_hidden() {
+        use ratatui::backend::TestBackend;
+        let (mut app, dir, _env) = editor("composer-overflow");
+        app.paste("one\ntwo\nthree\nfour\nfive\nsix\nseven");
+        let mut terminal = Terminal::new(TestBackend::new(80, 16)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        assert_eq!(
+            terminal.backend().buffer().cell((0, 11)).unwrap().symbol(),
+            "↑"
+        );
+        app.cursor = 0;
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        assert_eq!(
+            terminal.backend().buffer().cell((79, 15)).unwrap().symbol(),
+            "↓"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn console_can_draw_while_the_terminal_is_very_small() {
+        use ratatui::backend::TestBackend;
+        let (mut app, dir, _env) = editor("tiny-terminal");
+        for (width, height) in [(1, 1), (2, 3), (10, 4), (20, 6)] {
+            let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+            for input in ["/", "/unknown", "第一行\n第二行"] {
+                app.input = input.into();
+                app.cursor = app.input.chars().count();
+                terminal.draw(|frame| app.draw(frame)).unwrap();
+            }
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn typing_reclaims_the_composer_space_used_by_shortcut_hints() {
+        use ratatui::backend::TestBackend;
+        let (mut app, dir, _env) = editor("composer-hint-space");
+        app.input = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN".into();
+        app.cursor = app.input.chars().count();
+        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let rendered: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(rendered.contains(&app.input), "{rendered}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ctrl_d_exits_only_when_the_composer_is_empty() {
+        {
+            let (mut app, dir, _env) = editor("ctrl-d");
+            app.on_key(ctrl('d'));
+            assert!(app.quit);
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+        {
+            let (mut app, dir, _env) = editor("ctrl-d-draft");
+            app.input = "abc".into();
+            app.cursor = 1;
+            app.on_key(ctrl('d'));
+            assert!(!app.quit);
+            assert_eq!(app.input, "ac");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_unknown_command_explains_itself_and_keeps_the_draft() {
+        let (mut app, dir, _env) = editor("unknown-command");
+        app.input = "/definitely-not-a-command".into();
+        app.cursor = app.input.chars().count();
+        app.on_key(key(KeyCode::Enter));
+        assert_eq!(app.input, "/definitely-not-a-command");
+        assert!(rendered(&app).contains("unknown command"));
+        assert!(rendered(&app).contains("type / to browse commands"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4138,6 +4818,40 @@ mod editor_tests {
     }
 
     #[test]
+    fn multiline_history_can_be_navigated_and_the_draft_restored() {
+        let (mut app, dir, _env) = editor("history-multiline");
+        app.history = vec!["older".into(), "first\nsecond".into()];
+        typed(&mut app, "draft");
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "first\nsecond");
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.cursor, 5);
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "older");
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "first\nsecond");
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "draft");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn editing_a_recalled_entry_keeps_the_edited_draft() {
+        let (mut app, dir, _env) = editor("history-edit");
+        app.history = vec!["previous".into()];
+        typed(&mut app, "original draft");
+        app.on_key(key(KeyCode::Up));
+        app.on_key(key(KeyCode::Backspace));
+        assert_eq!(app.input, "previou");
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "previou");
+        app.on_key(key(KeyCode::Up));
+        app.on_key(key(KeyCode::Down));
+        assert_eq!(app.input, "previou");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn down_leaves_a_fresh_draft_alone() {
         let (mut app, dir, _env) = editor("down-draft");
         typed(&mut app, "keep this line");
@@ -4157,15 +4871,13 @@ mod editor_tests {
         app.on_key(key(KeyCode::Down));
         assert_eq!(app.input, "keep this line");
 
-        // Past the newest entry, Down still clears the recalled line.
+        // Past the newest entry, Down restores the draft and its original cursor position.
         app.history = vec!["first".into(), "second".into()];
         app.on_key(key(KeyCode::Up));
         assert_eq!(app.input, "second");
         app.on_key(key(KeyCode::Down));
-        assert!(
-            app.input.is_empty(),
-            "leaving the history at its newest end clears the recalled line"
-        );
+        assert_eq!(app.input, "keep this line");
+        assert_eq!(app.cursor, 13);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4232,6 +4944,34 @@ mod editor_tests {
             shown.contains("TAIL"),
             "following the bottom keeps the newest wrapped rows on screen:\n{shown}"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn page_down_scrolls_gradually_and_follows_only_at_the_bottom() {
+        use ratatui::backend::TestBackend;
+        let (mut app, dir, _env) = editor("page-down");
+        for index in 0..100 {
+            app.push(Line::from(format!("line {index}")));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(40, 12)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        app.on_key(key(KeyCode::PageUp));
+        app.on_key(key(KeyCode::PageUp));
+        app.on_key(key(KeyCode::PageUp));
+        app.push(Line::from("new"));
+        let before = app.scroll;
+        app.on_key(key(KeyCode::PageDown));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        assert_eq!(app.scroll, before + 10);
+        assert!(!app.follow);
+        assert_eq!(app.unread, 1);
+        for _ in 0..4 {
+            app.on_key(key(KeyCode::PageDown));
+            terminal.draw(|frame| app.draw(frame)).unwrap();
+        }
+        assert!(app.follow);
+        assert_eq!(app.unread, 0);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4314,6 +5054,8 @@ mod editor_tests {
             app.pending.is_empty(),
             "one batch judgement settles every included message"
         );
+        assert!(rendered(&app).contains("assessment finished without a ticket"));
+        assert!(rendered(&app).contains("a, b"), "{}", rendered(&app));
         for id in ["local-c", "local-d"] {
             app.pending.insert(
                 id.into(),
@@ -4338,6 +5080,26 @@ mod editor_tests {
             app.tracked.contains_key("ticket-1"),
             "the opened worker remains tracked"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn activity_names_the_number_of_waiting_messages_and_a_paused_service() {
+        let (mut app, dir, _env) = editor("pending-activity");
+        for id in ["local-a", "local-b"] {
+            app.pending.insert(
+                id.into(),
+                Awaiting {
+                    sent: Instant::now(),
+                    warned: false,
+                    stale: false,
+                },
+            );
+        }
+        app.status.paused = true;
+        let label = app.activity().unwrap().0;
+        assert!(label.contains("2 message(s)"), "{label}");
+        assert!(label.contains("paused"), "{label}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

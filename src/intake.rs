@@ -400,7 +400,14 @@ pub fn eval(api: &Api, argument: &str) -> Result<Vec<L>, String> {
 /// The lines typed in earlier console sessions, oldest first, capped at 500.
 pub fn history(cfg: &service::Config) -> Vec<String> {
     let text = std::fs::read_to_string(cfg.state_dir.join("booth-history.txt")).unwrap_or_default();
-    let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+    let lines: Vec<String> = text
+        .lines()
+        .map(|line| {
+            line.strip_prefix("@booth-json:")
+                .and_then(|json| serde_json::from_str::<String>(json).ok())
+                .unwrap_or_else(|| line.to_owned())
+        })
+        .collect();
     lines[lines.len().saturating_sub(500)..].to_vec()
 }
 
@@ -427,7 +434,14 @@ pub fn remember(cfg: &service::Config, line: &str) {
         if ends_mid_record(&mut file).unwrap_or(false) {
             let _ = file.write_all(b"\n");
         }
-        let _ = writeln!(file, "{}", line.replace('\n', " "));
+        // JSON encodes embedded newlines while retaining compatibility with existing plain lines.
+        if line.contains(['\n', '\r']) || line.starts_with("@booth-json:") {
+            if let Ok(encoded) = serde_json::to_string(line) {
+                let _ = writeln!(file, "@booth-json:{encoded}");
+            }
+        } else {
+            let _ = writeln!(file, "{line}");
+        }
     }
 }
 
@@ -1282,9 +1296,11 @@ mod tests {
         assert!(history(&cfg).is_empty());
         remember(&cfg, "one");
         remember(&cfg, "two words");
+        remember(&cfg, "first\nsecond");
+        remember(&cfg, "@booth-json:literal");
         assert_eq!(
             history(&cfg),
-            vec!["one".to_owned(), "two words".to_owned()]
+            vec!["one", "two words", "first\nsecond", "@booth-json:literal"]
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

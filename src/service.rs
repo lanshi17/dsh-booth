@@ -310,8 +310,18 @@ pub fn start(cfg: &Config) -> Result<(), String> {
     let api = Api::new(&cfg.url());
     let deadline = Instant::now() + READY_TIMEOUT;
     loop {
-        if api.state().is_ok() {
-            return report(cfg);
+        if let Ok(state) = api.state() {
+            // The web server answers before dsh-superagent has mounted its runtime. Returning
+            // here made `booth up` print success while the console still had nowhere to send
+            // work, which looked like a hung composer. Wait for the runtime health entry (or a
+            // setup problem that the operator must fix through the now-available API).
+            let runtime = state
+                .health
+                .get("runtime")
+                .map(|health| health.state.as_str());
+            if runtime == Some("ready") || state.setup.problem.is_some() {
+                return report(cfg);
+            }
         }
         if !alive(pid) {
             tail(cfg, 12);
@@ -930,7 +940,6 @@ fn build(cfg: &Config) -> Result<(), String> {
 }
 
 fn install(cfg: &Config) -> Result<(), String> {
-    link(cfg, "dsh-superagent", &cfg.bundle)?;
     let console = cfg
         .bundle
         .parent()
@@ -942,7 +951,11 @@ fn install(cfg: &Config) -> Result<(), String> {
             console.display()
         ));
     }
+    // Link the local Source first. DSH reconciles every bundle listed in the profile whenever
+    // `plugin add` runs; linking superagent first can therefore fail if an older profile already
+    // lists dsh-booth-local but its dependency is missing from node_modules.
     link(cfg, "dsh-booth-local", &console)?;
+    link(cfg, "dsh-superagent", &cfg.bundle)?;
     ensure_bundle(cfg, "dsh-booth-local")
 }
 

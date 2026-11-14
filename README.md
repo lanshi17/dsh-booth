@@ -9,11 +9,11 @@ the composer a braille spinner and elapsed time say what the console is waiting 
 
 ```text
   ❯ 检查 README 的安装说明并修正过时的命令
-  ↑ sent to the portal  3eb84e6f
+  ↑ queued for the portal  3eb84e6f
   ◆ agent · 我会核对安装命令，再让 worker 修改 README 并汇总结果。
 
 ╭─ ◆ booth · deepseek/deepseek-chat · ready · 2/4 · 1q ────────── v0.1.0 ╮
-╰─ › 把 README 里 “booth up” 那句说明改成 … ────── Enter run · / commands ╯
+╰─ › 把 README 里 “booth up” 那句说明改成 … ── Enter send · / commands ╯
 ```
 
 The composer is one bordered block: the top rail carries the provider, runtime state and
@@ -152,7 +152,8 @@ check the deployment guide asks for.
 
 | Key | Does |
 | --- | --- |
-| `Enter` | Run the line; bare text sends the agent an instruction |
+| `Enter` | Send the line; bare text sends the agent an instruction |
+| `Alt+Enter` / `Shift+Enter` | Insert a newline when supported by the terminal |
 | `Ctrl+P` | Open the command palette on an empty line |
 | `Ctrl+R` | Search the history (fuzzy, newest first; it survives restarts) |
 | `Ctrl+A` `Ctrl+E` | Start / end of the line |
@@ -162,10 +163,14 @@ check the deployment guide asks for.
 | `Ctrl+Y` | Paste the last deleted text |
 | `Tab` | Complete the selected palette entry |
 | `↑` `↓` | Move in the palette, or walk the command history when it is closed |
-| `PgUp` `PgDn` | Scroll the transcript (new output snaps back to the bottom) |
+| `PgUp` `PgDn` | Scroll the transcript; follow new output again at the bottom |
 | `Esc` | Clear the line and close the palette |
 | `Ctrl+L` | Clear the transcript |
-| `Ctrl+C` | Quit |
+| `Ctrl+D` | Quit on an empty line; delete at the caret otherwise |
+| `Ctrl+C` | Quit immediately |
+
+Pasting uses the terminal's bracketed-paste mode. A pasted paragraph stays as one editable draft;
+line breaks are retained and long lines wrap. The composer shows up to five rows around the cursor.
 
 Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/portal`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
@@ -222,7 +227,7 @@ you. Independent tasks can run in parallel; a dependent task waits for its prere
 
 ```text
   ❯ 请检查安装流程和文档，并分别修复发现的问题
-  ↑ sent to the portal  b4e50b13
+  ↑ queued for the portal  b4e50b13
   ◆ agent · 我会分别检查安装流程和文档，然后汇总结果。
   ❯ 文档只改安装部分
   ◆ agent · 收到，我会把范围限制在安装说明。
@@ -271,7 +276,7 @@ web panel.
 | The portal answers but starts no worker | Conversation and simple questions do not require a worker |
 | `⋯ no decision yet` | The Source has not produced a judgement after 20 s; `/sources` shows whether it is polling and `/status` shows health |
 | `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and a follow-up message answers it |
-| `↑ sent …` and no further line | The console wrote the instruction but the service is down or still starting; `booth status`, `booth logs` |
+| `↑ queued …` and no further line | The console wrote the instruction but the service may be down or still starting; check `booth status` and `booth logs` |
 | `◇ agent · could not judge  timeout` | The assessment ran past the Eval timeout; the panel's Eval block raises `timeoutSeconds`, and `/requeue <id>` puts the instruction back |
 | `no adapter registered for provider …` in a session | The profile layer no longer registers that provider; `/login` adds it back, or `booth reset-sessions` starts fresh sessions — the second costs the conversation history, so prefer the first |
 
