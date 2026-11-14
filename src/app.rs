@@ -303,13 +303,17 @@ struct Status {
     base: String,
     runtime: String,
     paused: bool,
+    #[allow(dead_code)]
     running: u32,
+    #[allow(dead_code)]
     workers: u32,
+    #[allow(dead_code)]
     queued: u32,
     errors: usize,
     setup: bool,
     note: Option<String>,
     account: bool,
+    #[allow(dead_code)]
     repository: Option<String>,
     /// The name of the first health entry in error, so the alert can say which part is failing.
     first_error: Option<String>,
@@ -440,6 +444,8 @@ pub struct App {
     /// Open tickets and those waiting for a person, from the last ticket poll.
     open: u32,
     person: u32,
+    /// Test-only diagnostic rendering; normal portal mode hides worker details.
+    show_worker_details: bool,
 }
 
 pub fn run(api: Api) -> Result<(), String> {
@@ -554,6 +560,7 @@ impl App {
             work_since: None,
             open: 0,
             person: 0,
+            show_worker_details: false,
         }
     }
 
@@ -637,9 +644,7 @@ impl App {
                                     },
                                 );
                             }
-                        } else if decision.outcome == "ignore" {
-                            // The portal may still respond independently of a ticket decision.
-                            // Show that assessment ended without implying the conversation ended.
+                        } else if decision.outcome == "ignore" && self.show_worker_details {
                             let ids = matched
                                 .iter()
                                 .map(|id| short_id(id.strip_prefix("local-").unwrap_or(id)))
@@ -649,12 +654,12 @@ impl App {
                                 format!("  ⋯ {ids} · assessment finished without a ticket · portal reply may follow"),
                                 Style::default().fg(FAINT),
                             )));
-                        } else {
-                            self.push_decision(&decision);
                         }
                     }
                 }
-                Msg::Tickets(poll) => self.show_tickets(poll),
+                // Worker tickets and executor stages are implementation details. The main
+                // transcript is the portal conversation; inspect the team with explicit commands.
+                Msg::Tickets(poll) => self.show_tickets_if_enabled(poll),
                 Msg::Replies(replies, checkpoint) => {
                     let mut fresh = Vec::new();
                     for reply in replies {
@@ -757,6 +762,15 @@ impl App {
 
     /// Reports the stage of the tickets this console opened, once per change; a report the agent
     /// did not also send as a reply is shown as a short fallback.
+    fn show_tickets_if_enabled(&mut self, poll: TicketPoll) {
+        if self.show_worker_details {
+            self.show_tickets(poll);
+        } else {
+            self.open = poll.open_total;
+            self.person = poll.person.unwrap_or(0);
+        }
+    }
+
     fn show_tickets(&mut self, poll: TicketPoll) {
         let rows = poll.rows;
         // The page is a window: its length is not the number of open tickets.
@@ -822,6 +836,7 @@ impl App {
     }
 
     /// Shows why the agent did not take an instruction; silence is the one answer a console cannot show.
+    #[allow(dead_code)]
     fn push_decision(&mut self, decision: &crate::model::Decision) {
         let label = match decision.outcome.as_str() {
             "ignore" => "agent · not taken",
@@ -2399,58 +2414,20 @@ impl App {
     }
 
     fn draw_composer(&self, frame: &mut Frame, top: Rect, bottom: Rect) {
-        let runtime_color = match self.status.runtime.as_str() {
-            "ready" => GREEN,
-            "paused" => Color::Yellow,
-            "connecting" => DIM,
-            _ => RED,
-        };
         let mut segments = vec![
             Span::styled(
                 "◆ booth",
                 Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
             ),
             Span::styled(self.model_label(), Style::default().fg(TEXT)),
-            Span::styled(
-                self.status.runtime.clone(),
-                Style::default().fg(runtime_color),
-            ),
-            Span::styled(
-                format!(
-                    "{}/{} · {}q",
-                    self.status.running,
-                    self.status.workers.max(self.status.running),
-                    self.status.queued
-                ),
-                Style::default().fg(MUTED),
-            ),
         ];
-        if self.open > 0 {
+        if self.status.runtime != "ready" {
             segments.push(Span::styled(
-                format!("{} open", self.open),
-                Style::default().fg(MUTED),
-            ));
-        }
-        if self.person > 0 {
-            segments.push(Span::styled(
-                format!("{} need you", self.person),
+                self.status.runtime.clone(),
                 Style::default().fg(TIP),
             ));
         }
-        if let Some(repository) = &self.status.repository {
-            segments.push(Span::styled(repository.clone(), Style::default().fg(FAINT)));
-        }
-        if self.status.paused {
-            segments.push(Span::styled("paused", Style::default().fg(Color::Yellow)));
-        }
-        let right = Span::styled(
-            format!("v{}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(FAINT),
-        );
-        frame.render_widget(
-            Paragraph::new(compose_top(segments, Some(right), top.width)),
-            top,
-        );
+        frame.render_widget(Paragraph::new(compose_top(segments, None, top.width)), top);
 
         let hint = if self.busy {
             Some(Span::styled("working…", Style::default().fg(Color::Yellow)))
@@ -2538,28 +2515,8 @@ impl App {
     fn activity(&mut self) -> Option<(String, Instant)> {
         let active = if self.busy {
             Some("working".to_owned())
-        } else if self.status.running > 0 {
-            Some(format!(
-                "the agent is working · {} running",
-                self.status.running
-            ))
-        } else if self.status.queued > 0 {
-            Some(format!("{} ticket(s) queued", self.status.queued))
-        } else if !self.pending.is_empty() {
-            let count = self.pending.len();
-            let waiting = match self.status.runtime.as_str() {
-                "down" => "service is down",
-                _ if self.status.paused => "service is paused",
-                _ if self.status.setup => "setup is incomplete",
-                _ => "waiting for the agent's decision",
-            };
-            Some(format!("{count} message(s) queued · {waiting}"))
-        } else if self
-            .tracked
-            .values()
-            .any(|tracked| tracked.stage == "working")
-        {
-            Some("the agent is working".to_owned())
+        } else if !self.pending.is_empty() || self.busy {
+            Some("working…".to_owned())
         } else {
             None
         };
@@ -3727,7 +3684,9 @@ mod transcript_tests {
         std::env::set_var("BOOTH_STATE_DIR", &dir);
         std::env::set_var("DSH_HOME", &dir);
         let api = FakeApi::start();
-        (App::new(Api::new(&api.base)), dir, guard)
+        let mut app = App::new(Api::new(&api.base));
+        app.show_worker_details = true;
+        (app, dir, guard)
     }
 
     fn text(app: &App) -> String {
@@ -4087,7 +4046,9 @@ mod editor_tests {
         std::env::set_var("BOOTH_STATE_DIR", &dir);
         std::env::set_var("DSH_HOME", &dir);
         let api = FakeApi::start();
-        (App::new(Api::new(&api.base)), dir, guard)
+        let mut app = App::new(Api::new(&api.base));
+        app.show_worker_details = true;
+        (app, dir, guard)
     }
 
     /// The same console, with the fake service kept so a test can replace its routes.
@@ -4106,7 +4067,8 @@ mod editor_tests {
         std::env::set_var("BOOTH_STATE_DIR", &dir);
         std::env::set_var("DSH_HOME", &dir);
         let api = FakeApi::start();
-        let app = App::new(Api::new(&api.base));
+        let mut app = App::new(Api::new(&api.base));
+        app.show_worker_details = true;
         (app, dir, api, guard)
     }
 
@@ -5098,8 +5060,7 @@ mod editor_tests {
         }
         app.status.paused = true;
         let label = app.activity().unwrap().0;
-        assert!(label.contains("2 message(s)"), "{label}");
-        assert!(label.contains("paused"), "{label}");
+        assert_eq!(label, "working…");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
