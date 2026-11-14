@@ -235,7 +235,18 @@ fn main() {
     let cli = Cli::parse();
     let api = Api::new(&cli.url);
     let result = match cli.command {
-        None => app::run(api),
+        None => {
+            // OMP-style entry point: opening `booth` starts the local runtime when needed. The
+            // explicit `booth up` command remains available for scripts and headless use.
+            let startup = service::Config::from_env().and_then(|cfg| {
+                if api.state().is_err() {
+                    service::start(&cfg)
+                } else {
+                    Ok(())
+                }
+            });
+            startup.and_then(|_| app::run(api))
+        }
         Some(command) => run(api, command),
     };
     if let Err(error) = result {
