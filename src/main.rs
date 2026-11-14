@@ -5,6 +5,7 @@
 //! calls without a terminal, for scripts and the hourly check the deployment guide asks for.
 
 mod api;
+#[allow(dead_code)]
 mod app;
 mod commands;
 mod decider;
@@ -261,16 +262,25 @@ fn main() {
 fn launch_omp() -> Result<(), String> {
     let extension = std::env::var_os("BOOTH_OMP_EXTENSION")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("omp-portal/extension.ts"));
+        .unwrap_or_else(|| {
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("omp-portal/extension.ts")
+        });
     if !extension.is_file() {
-        return Err(format!("OMP portal extension is missing: {}", extension.display()));
+        return Err(format!(
+            "OMP portal extension is missing: {}",
+            extension.display()
+        ));
     }
     let status = std::process::Command::new("omp")
         .arg("--extension")
         .arg(extension)
         .status()
         .map_err(|error| format!("cannot launch OMP (`omp`): {error}"))?;
-    if status.success() { Ok(()) } else { Err(format!("OMP exited with {status}")) }
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("OMP exited with {status}"))
+    }
 }
 
 /// What `booth provider` prints: the service's own catalog, never a secret.
