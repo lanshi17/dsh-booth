@@ -96,7 +96,15 @@ node_major=$(node -v | sed 's/^v//' | cut -d. -f1)
 
 if ! have pnpm || ! pnpm --version >/dev/null 2>&1; then
   say "installing pnpm"
-  curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=11.7.0 PNPM_HOME="$PNPM_HOME" SHELL=/bin/sh sh -
+  # pnpm's installer edits shell startup files and older releases fail for a
+  # non-interactive `sh`. Give it a sandboxed ENV file; booth puts pnpm on its
+  # own PATH below and does not need to modify the user's shell configuration.
+  pnpm_shell_env=$(mktemp)
+  if ! curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=11.7.0 PNPM_HOME="$PNPM_HOME" SHELL=/bin/sh ENV="$pnpm_shell_env" sh -; then
+    rm -f "$pnpm_shell_env"
+    die "pnpm installation failed"
+  fi
+  rm -f "$pnpm_shell_env"
 fi
 prepend "$PNPM_HOME"
 prepend "$PNPM_HOME/bin"
