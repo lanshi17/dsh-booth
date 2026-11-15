@@ -162,7 +162,7 @@ pub fn init(cfg: &Config) -> Result<(), String> {
     println!("state    {}", cfg.state_dir.display());
 
     tool("dsh", "--version", "install DSH first")?;
-    tool("pnpm", "--version", "install pnpm first")?;
+    tool("bun", "--version", "install Bun first")?;
 
     // DSH creates the profile under its home, but the command below runs *from* that home. On a
     // machine that never ran DSH — or with a fresh `DSH_HOME` — the directory does not exist yet,
@@ -977,10 +977,10 @@ fn build(cfg: &Config) -> Result<(), String> {
     }
     if !cfg.bundle.join("node_modules").is_dir() {
         println!("\ninstalling superagent dependencies");
-        run("pnpm", &["install"], &cfg.bundle)?;
+        run("bun", &["install"], &cfg.bundle)?;
     }
     println!("\nbuilding superagent");
-    run("pnpm", &["build"], &cfg.bundle)
+    run("bun", &["run", "build"], &cfg.bundle)
 }
 
 fn install(cfg: &Config) -> Result<(), String> {
@@ -1041,7 +1041,7 @@ fn linked(cfg: &Config, package: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Links one package into the profile with `dsh plugin add`, which runs pnpm in the profile.
+/// Links one package into the profile with Bun, without requiring DSH's pnpm forwarding command.
 fn link(cfg: &Config, package: &str, path: &Path) -> Result<(), String> {
     let manifest = cfg.profile_dir().join("package.json");
     let text = fs::read_to_string(&manifest)
@@ -1058,11 +1058,22 @@ fn link(cfg: &Config, package: &str, path: &Path) -> Result<(), String> {
         return Ok(());
     }
     println!("\nlinking {package} into profile `{}`", cfg.profile);
-    run(
-        "dsh",
-        &["plugin", "--profile", cfg.profile.as_str(), "add", &want],
-        &cfg.profile_dir(),
-    )
+    let mut value = package_json;
+    let dependencies = value
+        .as_object_mut()
+        .ok_or_else(|| format!("{} is not a JSON object", manifest.display()))?
+        .entry("dependencies")
+        .or_insert_with(|| serde_json::json!({}));
+    let dependencies = dependencies
+        .as_object_mut()
+        .ok_or_else(|| format!("{} has invalid dependencies", manifest.display()))?;
+    dependencies.insert(package.to_owned(), serde_json::Value::String(want));
+    let mut next = serde_json::to_string_pretty(&value)
+        .map_err(|error| format!("cannot write {}: {error}", manifest.display()))?;
+    next.push('\n');
+    fs::write(&manifest, next)
+        .map_err(|error| format!("cannot write {}: {error}", manifest.display()))?;
+    run("bun", &["install"], &cfg.profile_dir())
 }
 
 fn run(program: &str, args: &[&str], cwd: &Path) -> Result<(), String> {
@@ -1654,9 +1665,9 @@ mod tests {
             ),
         )
         .unwrap();
-        let pnpm = bin.join("pnpm");
-        fs::write(&pnpm, "#!/bin/sh\nexit 0\n").unwrap();
-        for tool in [&dsh, &pnpm] {
+        let bun = bin.join("bun");
+        fs::write(&bun, "#!/bin/sh\nexit 0\n").unwrap();
+        for tool in [&dsh, &bun] {
             fs::set_permissions(tool, fs::Permissions::from_mode(0o755)).unwrap();
         }
 

@@ -26,7 +26,7 @@ The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header mus
 curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
 ```
 
-That downloads the prebuilt booth and team bundle, installs Node, pnpm, dsh and OMP only when
+That downloads the prebuilt booth and team bundle, installs Node, Bun, dsh and OMP only when
 missing, prepares the profile, and starts the service. Headless installs skip OMP. It does not install Rust, Git or compile
 projects on the user's machine. When the terminal is available, it opens OMP; set
 `BOOTH_NO_CONSOLE=1` to leave the service running without opening the console. Releases currently
@@ -50,7 +50,7 @@ booth up                        # dsh --profile superagent --no-open
 booth                           # the console
 ```
 
-Source builds need Rust, Node, pnpm and dsh. The installer uses a release bundle instead of
+Source builds need Rust, Node, Bun and dsh. The installer uses a release bundle instead of
 building the agent's development dependencies on each machine. Clone with `--recursive` for a
 source build, or run `git submodule update --init` — otherwise `superagent/` is empty.
 

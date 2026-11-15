@@ -90,36 +90,23 @@ if [ "$node_ok" != true ]; then
 fi
 have node || die 'Node installation failed'
 
-# Use npm bundled with Node rather than an unrelated npm shim earlier on PATH.
-node_exec=$(node -p 'process.execPath')
-node_bin=$(dirname "$node_exec")
-npm_cli=
-for candidate in "$node_bin/../lib/node_modules/npm/bin/npm-cli.js" \
-                 "$node_bin/../share/nodejs/npm/bin/npm-cli.js" \
-                 /usr/share/nodejs/npm/bin/npm-cli.js; do
-  if [ -f "$candidate" ]; then npm_cli=$candidate; break; fi
-done
-npm_install() {
-  if [ -n "$npm_cli" ]; then
-    node "$npm_cli" install --global --prefix "$PREFIX" "$@"
-  elif have npm; then
-    npm install --global --prefix "$PREFIX" "$@"
-  else
-    die 'npm is missing from the Node installation'
-  fi
-}
-
-if ! have pnpm || ! pnpm --version >/dev/null 2>&1; then
-  say 'installing pnpm'
-  npm_install pnpm@11.7.0
+# Bun is the package manager and runtime used by the team service. Reuse it when
+# present; otherwise install the official Bun binary into this user's prefix.
+if ! have bun; then
+  say 'installing Bun'
+  bun_home="$PREFIX/.bun"
+  curl -fsSL https://bun.sh/install | BUN_INSTALL="$bun_home" bash -s --
+  add_path "$bun_home/bin"
 fi
+have bun || die 'Bun installation failed'
+add_path "$(bun pm bin -g 2>/dev/null || true)"
+
 if ! have dsh || [ "$(dsh --version 2>/dev/null || true)" != "$DSH_VERSION" ]; then
   say 'installing dsh'
-  mkdir -p "$PREFIX/share/pnpm/global"
-  PNPM_HOME="$PREFIX" pnpm add --global --global-dir "$PREFIX/share/pnpm/global" "@deepseek-ai/dsh@$DSH_VERSION"
+  bun add --global --exact "@deepseek-ai/dsh@$DSH_VERSION"
 fi
-add_path "$PREFIX/bin"
-pnpm --version >/dev/null 2>&1 || die 'pnpm could not be started'
+add_path "$(bun pm bin -g 2>/dev/null || true)"
+bun --version >/dev/null 2>&1 || die 'Bun could not be started'
 dsh --version >/dev/null 2>&1 || die 'dsh could not be started'
 
 case "$arch" in x86_64) ASSET=booth-linux-x86_64 ;; aarch64) ASSET=booth-linux-aarch64 ;; esac
