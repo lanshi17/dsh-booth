@@ -1,24 +1,8 @@
 # dsh-booth
 
-A terminal console for a running [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype).
-Type `booth` and talk to the portal agent, which leads the team and delegates work to workers,
-watch what the executor is doing, and pick commands from a palette that filters as you type —
-the frame, palette and composer of `omp`, not a web page. The top rail carries the provider,
-the executor load, how many tickets are open, how many want a person, and the repository; above
-the composer a braille spinner and elapsed time say what the console is waiting on.
-
-```text
-  ❯ 检查 README 的安装说明并修正过时的命令
-  ↑ queued for the portal  3eb84e6f
-  ◆ agent · 我会核对安装命令，再让 worker 修改 README 并汇总结果。
-
-╭─ ◆ booth · deepseek/deepseek-chat · ready · 2/4 · 1q ────────── v0.1.0 ╮
-╰─ › 把 README 里 “booth up” 那句说明改成 … ── Enter send · / commands ╯
-```
-
-The composer is one bordered block: the top rail carries the provider, runtime state and
-executor load, the bottom rail the input and its hint. The wordmark and a rotating tip sit in
-the empty transcript, as they do in `omp`.
+A terminal console for [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype).
+`booth` launches the real OMP terminal frontend and routes its conversation to the team's
+portal agent. OMP provides the composer, history, palette and shortcuts; the team runs behind it.
 
 ## What is in the repository
 
@@ -45,6 +29,12 @@ That installs Rust, Node 22, pnpm, dsh and the OMP frontend when they are missin
 under `~/.dsh/src/dsh-booth`, installs the `booth` binary, prepares the profile, and starts
 the service. When the terminal can be used, it opens the console. `BOOTH_NO_UP=1` installs
 only. `BOOTH_NO_CONSOLE=1` starts the service and stops there.
+
+The team backend currently requires an authenticated GitHub CLI and a repository the account
+can push to. Run `gh auth login`, open `booth`, and enter `/booth-setup owner/repo`. Configure
+the DSH model provider and its credentials for the team. Until setup succeeds, booth shows the
+problem in the conversation instead of silently accepting messages it cannot process. If an old
+service remains stuck after an upgrade, `booth down && booth up` restarts the booth-owned service.
 
 The same steps by hand:
 
