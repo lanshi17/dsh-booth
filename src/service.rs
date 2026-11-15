@@ -120,6 +120,9 @@ fn bundle_dir() -> Result<PathBuf, String> {
     if let Some(value) = std::env::var_os("BOOTH_SUPERAGENT_DIR") {
         return Ok(PathBuf::from(value));
     }
+    if let Some(bundle) = installed_bundle_dir(&install_data_dir()) {
+        return Ok(bundle);
+    }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("superagent");
     if manifest.join("package.json").is_file() {
         return Ok(manifest);
@@ -131,6 +134,26 @@ fn bundle_dir() -> Result<PathBuf, String> {
         return Ok(cwd);
     }
     Err("cannot find superagent/; run booth from the repository or set BOOTH_SUPERAGENT_DIR".into())
+}
+
+/// The release installer stores runtime files beside the binary's standard prefix, not in the
+/// CI checkout path baked into `CARGO_MANIFEST_DIR`.
+pub fn install_data_dir() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let bin_dir = executable.parent()?;
+    Some(
+        bin_dir
+            .parent()
+            .unwrap_or(bin_dir)
+            .join("share")
+            .join("dsh-booth"),
+    )
+}
+
+fn installed_bundle_dir(data_dir: &Option<PathBuf>) -> Option<PathBuf> {
+    let path = data_dir.as_ref()?.join("bundle-path");
+    let bundle = PathBuf::from(std::fs::read_to_string(path).ok()?.trim());
+    (bundle.is_absolute() && bundle.join("package.json").is_file()).then_some(bundle)
 }
 
 pub fn init(cfg: &Config) -> Result<(), String> {
@@ -939,6 +962,19 @@ fn write_patch(cfg: &Config) -> Result<(), String> {
 }
 
 fn build(cfg: &Config) -> Result<(), String> {
+    if cfg.bundle.join(".booth-prebuilt").is_file() {
+        let complete = cfg.bundle.join("lib/index.js").is_file()
+            && cfg.bundle.join("node_modules/zod/package.json").is_file()
+            && cfg
+                .bundle
+                .join("node_modules/proper-lockfile/package.json")
+                .is_file();
+        if !complete {
+            return Err("the prebuilt dsh-superagent bundle is incomplete".into());
+        }
+        println!("using the prebuilt dsh-superagent bundle");
+        return Ok(());
+    }
     if !cfg.bundle.join("node_modules").is_dir() {
         println!("\ninstalling superagent dependencies");
         run("pnpm", &["install"], &cfg.bundle)?;
@@ -1233,6 +1269,57 @@ fn tail(cfg: &Config, lines: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installed_bundle_path_is_used_only_when_it_points_to_a_package() {
+        let root =
+            std::env::temp_dir().join(format!("booth-installed-path-{}", std::process::id()));
+        let data = root.join("share");
+        let bundle = root.join("checkout/superagent");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&bundle).unwrap();
+        fs::write(bundle.join("package.json"), "{}\n").unwrap();
+        fs::write(data.join("bundle-path"), bundle.display().to_string()).unwrap();
+
+        assert_eq!(
+            installed_bundle_dir(&Some(data.clone())),
+            Some(bundle.clone())
+        );
+        fs::remove_file(bundle.join("package.json")).unwrap();
+        assert_eq!(installed_bundle_dir(&Some(data)), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn init_can_use_the_release_bundle_without_build_tooling() {
+        let _env = crate::testkit::env_lock();
+        let root = std::env::temp_dir().join(format!("booth-prebuilt-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("lib")).unwrap();
+        fs::create_dir_all(root.join("node_modules/zod")).unwrap();
+        fs::create_dir_all(root.join("node_modules/proper-lockfile")).unwrap();
+        fs::write(root.join("lib/index.js"), "// bundled\n").unwrap();
+        fs::write(root.join("node_modules/zod/package.json"), "{}\n").unwrap();
+        fs::write(
+            root.join("node_modules/proper-lockfile/package.json"),
+            "{}\n",
+        )
+        .unwrap();
+        fs::write(root.join(".booth-prebuilt"), "0.3.8\n").unwrap();
+        let cfg = Config {
+            profile: "superagent".into(),
+            port: DEFAULT_PORT,
+            dsh_home: root.clone(),
+            state_dir: root.join("state"),
+            bundle: root.clone(),
+        };
+
+        let result = build(&cfg);
+
+        let _ = fs::remove_dir_all(root);
+        assert!(result.is_ok(), "{result:?}");
+    }
 
     fn config(name: &str) -> Config {
         let root = std::env::temp_dir().join(format!("booth-{name}-{}", std::process::id()));

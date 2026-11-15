@@ -7,10 +7,11 @@ portal agent. OMP provides the composer, history, palette and shortcuts; the tea
 ## What is in the repository
 
 `superagent/` is a git submodule pinned to one commit of
-[dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). `booth init` builds
-it, creates a DSH profile around it and links it in, together with `local-source/`; `booth up`
-runs that profile detached and waits for the management API. The console, the service and its deployment therefore ship as one
-entry point — while `superagent/` remains an MIT-licensed bundle with its own runtime.
+[dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). The release installer
+downloads its prebuilt runtime; a source checkout lets `booth init` build it locally. Both paths
+create the DSH profile and link the team bundle with `local-source/`; `booth up` runs that profile
+detached and waits for the management API. The submodule remains an MIT-licensed bundle with its
+own runtime.
 
 The console itself talks only to the bundle's loopback management API (`/orchestrator/api/*`),
 so a DSH upgrade does not break it as long as the routes do.
@@ -25,10 +26,12 @@ The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header mus
 curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
 ```
 
-That installs Rust, Node 22, pnpm, dsh and the OMP frontend when they are missing, clones this repository
-under `~/.dsh/src/dsh-booth`, installs the `booth` binary, prepares the profile, and starts
-the service. When the terminal can be used, it opens the console. `BOOTH_NO_UP=1` installs
-only. `BOOTH_NO_CONSOLE=1` starts the service and stops there.
+That downloads the prebuilt booth and team bundle, installs Node, pnpm, dsh and OMP only when
+missing, prepares the profile, and starts the service. It does not install Rust, Git or compile
+projects on the user's machine. When the terminal is available, it opens OMP; set
+`BOOTH_NO_CONSOLE=1` to leave the service running without opening the console. Releases currently
+support Linux x86_64 and ARM64; the installer adds its command directory to the active shell's
+login profile.
 
 The team backend currently requires an authenticated GitHub CLI and a repository the account
 can push to. Run `gh auth login`, open `booth`, and enter `/booth-setup owner/repo`. Configure
@@ -36,20 +39,20 @@ the DSH model provider and its credentials for the team. Until setup succeeds, b
 problem in the conversation instead of silently accepting messages it cannot process. If an old
 service remains stuck after an upgrade, `booth down && booth up` restarts the booth-owned service.
 
-The same steps by hand:
+For development from source:
 
 ```sh
 git clone --recursive git@github.com:lanshi17/dsh-booth.git
 cd dsh-booth
 cargo install --path .          # installs `booth`; or cargo build --release
-booth init                      # pnpm install + build, profile `superagent`, link
+booth init                      # install dependencies, build the bundle, and link the profile
 booth up                        # dsh --profile superagent --no-open
 booth                           # the console
 ```
 
-`booth init` needs `dsh`, `pnpm` and Node. It skips what is already done, so it is safe to
-rerun. Clone with `--recursive`, or run `git submodule update --init` — otherwise `superagent/`
-is empty.
+Source builds need Rust, Node, pnpm and dsh. The installer uses a release bundle instead of
+building the agent's development dependencies on each machine. Clone with `--recursive` for a
+source build, or run `git submodule update --init` — otherwise `superagent/` is empty.
 
 Updating the bundle:
 

@@ -1,0 +1,78 @@
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-booth:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Package release binary and checksum
+        run: |
+          name="booth-linux-${{ matrix.arch }}"
+          cp target/release/booth "$name"
+          sha256sum "$name" > "$name.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: booth-linux-${{ matrix.arch }}
+          path: booth-linux-${{ matrix.arch }}*
+          if-no-files-found: error
+
+  build-superagent:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --global pnpm@11.7.0
+      - run: pnpm install --frozen-lockfile && pnpm build
+        working-directory: superagent
+      - run: pnpm install --prod --frozen-lockfile
+        working-directory: superagent
+      - name: Package the runtime bundle
+        run: |
+          mkdir -p booth-runtime/superagent booth-runtime/local-source booth-runtime/omp-portal
+          cp -a superagent/lib superagent/locale superagent/prompts superagent/skills booth-runtime/superagent/
+          cp superagent/package.json superagent/cordis.patch.yml superagent/LICENSE booth-runtime/superagent/
+          cp -a superagent/node_modules booth-runtime/superagent/
+          cp local-source/index.js local-source/package.json local-source/cordis.patch.yml booth-runtime/local-source/
+          cp omp-portal/extension.ts omp-portal/config.yml omp-portal/LICENSE booth-runtime/omp-portal/
+          tar -czf booth-runtime.tar.gz -C booth-runtime .
+          sha256sum booth-runtime.tar.gz > booth-runtime.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: booth-runtime
+          path: booth-runtime.tar.gz*
+          if-no-files-found: error
+
+  publish:
+    needs: [build-booth, build-superagent]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release-assets/booth-linux-* release-assets/booth-runtime.tar.gz* --generate-notes --verify-tag

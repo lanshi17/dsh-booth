@@ -265,8 +265,16 @@ fn main() {
 }
 
 fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> {
-    let extension = std::env::var_os("BOOTH_OMP_EXTENSION")
-        .map(std::path::PathBuf::from)
+    let data_dir = service::install_data_dir();
+    let extension_override = std::env::var_os("BOOTH_OMP_EXTENSION").map(std::path::PathBuf::from);
+    let extension = extension_override
+        .clone()
+        .or_else(|| {
+            data_dir
+                .as_ref()
+                .map(|dir| dir.join("omp-portal/extension.ts"))
+                .filter(|path| path.is_file())
+        })
         .unwrap_or_else(|| {
             std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("omp-portal/extension.ts")
         });
@@ -276,10 +284,22 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
             extension.display()
         ));
     }
-    let config = extension
-        .parent()
-        .ok_or("cannot find OMP portal config directory")?
-        .join("config.yml");
+    let installed_config = data_dir.map(|dir| dir.join("omp-portal/config.yml"));
+    let config = if extension_override.is_some() {
+        extension
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("config.yml")
+    } else {
+        installed_config
+            .filter(|path| path.is_file())
+            .unwrap_or_else(|| {
+                extension
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new("."))
+                    .join("config.yml")
+            })
+    };
     if !config.is_file() {
         return Err(format!(
             "OMP portal config is missing: {}",

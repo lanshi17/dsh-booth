@@ -1,162 +1,177 @@
 #!/bin/sh
-# One-shot install for booth. From a shell:
-#
+# Install and start the latest booth release:
 #   curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
-#
-# It installs anything missing (Rust, Node 22, pnpm, dsh, OMP), clones this
-# repository, builds booth, prepares the superagent profile, and starts the
-# service. When a terminal is available it then opens the OMP console.
-#
-#   BOOTH_HOME          checkout directory (default: ~/.dsh/src/dsh-booth)
-#   BOOTH_REF           git ref to install (default: master)
-#   DSH_VERSION         @deepseek-ai/dsh version (default: 0.2.1-rc.3)
-#   BOOTH_NO_UP=1       install only; do not start the service
-#   BOOTH_NO_CONSOLE=1  start the service, but do not open the console
 set -eu
 
-REPO="${BOOTH_REPO:-https://github.com/lanshi17/dsh-booth.git}"
-REF="${BOOTH_REF:-master}"
-DSH_VERSION="${DSH_VERSION:-0.2.1-rc.3}"
+REPOSITORY=https://github.com/lanshi17/dsh-booth
+DSH_VERSION=0.2.1-rc.3
 HOME="${HOME:-$(cd && pwd)}"
-DEST="${BOOTH_HOME:-$HOME/.dsh/src/dsh-booth}"
-PREFIX="${BOOTH_PREFIX:-$HOME/.local}"
-CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
-CARGO_BIN="$CARGO_HOME/bin"
-PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+PREFIX="$HOME/.local"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
-
 have() { command -v "$1" >/dev/null 2>&1; }
+add_path() { PATH="$1:$PATH"; export PATH; }
 
-prepend() {
-  case ":$PATH:" in
-    *":$1:"*) ;;
-    *) PATH="$1:$PATH" ;;
-  esac
-  export PATH
+have curl || die 'curl is required'
+[ "$(uname -s)" = Linux ] || die 'booth currently supports Linux only'
+case "$(uname -m)" in
+  x86_64 | amd64) arch=x86_64; node_os_arch=linux-x64 ;;
+  aarch64 | arm64) arch=aarch64; node_os_arch=linux-arm64 ;;
+  *) die "unsupported architecture: $(uname -m)" ;;
+esac
+
+mkdir -p "$PREFIX" "$PREFIX/bin"
+
+if have booth; then
+  previous_bin=$(dirname "$(command -v booth)")
+  if [ -w "$previous_bin" ]; then BIN_DIR=$previous_bin; else BIN_DIR="$PREFIX/bin"; fi
+else
+  BIN_DIR="$PREFIX/bin"
+fi
+mkdir -p "$BIN_DIR"
+
+DATA_DIR="$(dirname "$BIN_DIR")/share/dsh-booth"
+
+# Make the installed commands available in new login shells. Keep the edit to
+# the active shell family; the install command has already updated this process.
+case "${SHELL##*/}" in
+  zsh) shell_profile="$HOME/.zprofile" ;;
+  bash) shell_profile="$HOME/.bash_profile" ;;
+  fish) shell_profile="$HOME/.config/fish/config.fish" ;;
+  *) shell_profile="$HOME/.profile" ;;
+esac
+case "$BIN_DIR" in
+  "$PREFIX/bin") profile_paths="$BIN_DIR" ;;
+  *) profile_paths="$BIN_DIR:$PREFIX/bin" ;;
+esac
+mkdir -p "$(dirname "$shell_profile")"
+if [ ! -f "$shell_profile" ]; then : > "$shell_profile"; fi
+if ! grep -Fq "$BIN_DIR" "$shell_profile" || ! grep -Fq "$PREFIX/bin" "$shell_profile"; then
+  if [ "${SHELL##*/}" = fish ]; then
+    printf '\nfish_add_path "%s" "%s"\n' "$BIN_DIR" "$PREFIX/bin" >> "$shell_profile"
+  else
+    printf '\nexport PATH="%s:$PATH"\n' "$profile_paths" >> "$shell_profile"
+  fi
+fi
+add_path "$BIN_DIR"
+add_path "$PREFIX/bin"
+
+# dsh needs Node 22.19+ or 24+. Reuse it if present; otherwise install Node 22
+# LTS after verifying the checksum published alongside the archive.
+node_ok=false
+if have node; then
+  node_version=$(node -p 'process.versions.node' 2>/dev/null || true)
+  node_major=$(printf '%s' "$node_version" | cut -d. -f1)
+  node_minor=$(printf '%s' "$node_version" | cut -d. -f2)
+  if { [ "$node_major" = 22 ] && [ "${node_minor:-0}" -ge 19 ]; } || [ "${node_major:-0}" -ge 24 ]; then
+    node_ok=true
+  fi
+fi
+if [ "$node_ok" != true ]; then
+  say 'installing Node 22 LTS'
+  sums=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt)
+  archive=$(printf '%s\n' "$sums" | awk -v os="$node_os_arch" '$2 ~ "node-v.*-" os "[.]tar[.]xz$" { print $2; exit }')
+  [ -n "$archive" ] || die "no Node 22 build for $node_os_arch"
+  expected=$(printf '%s\n' "$sums" | awk -v name="$archive" '$2 == name { print $1; exit }')
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+  curl -fsSL "https://nodejs.org/dist/latest-v22.x/$archive" -o "$tmp/$archive"
+  actual=$(sha256sum "$tmp/$archive" | awk '{ print $1 }')
+  [ "$actual" = "$expected" ] || die 'Node download checksum did not match'
+  tar -xJf "$tmp/$archive" -C "$PREFIX"
+  node_home="$PREFIX/${archive%.tar.xz}"
+  ln -sf "$node_home/bin/node" "$PREFIX/bin/node"
+  ln -sf "$node_home/bin/npm" "$PREFIX/bin/npm"
+  ln -sf "$node_home/bin/npx" "$PREFIX/bin/npx"
+  add_path "$node_home/bin"
+  rm -rf "$tmp"
+  trap - EXIT HUP INT TERM
+fi
+have node || die 'Node installation failed'
+
+# Use npm bundled with Node rather than an unrelated npm shim earlier on PATH.
+node_exec=$(node -p 'process.execPath')
+node_bin=$(dirname "$node_exec")
+npm_cli=
+for candidate in "$node_bin/../lib/node_modules/npm/bin/npm-cli.js" \
+                 "$node_bin/../share/nodejs/npm/bin/npm-cli.js" \
+                 /usr/share/nodejs/npm/bin/npm-cli.js; do
+  if [ -f "$candidate" ]; then npm_cli=$candidate; break; fi
+done
+npm_install() {
+  if [ -n "$npm_cli" ]; then
+    node "$npm_cli" install --global --prefix "$PREFIX" "$@"
+  elif have npm; then
+    npm install --global --prefix "$PREFIX" "$@"
+  else
+    die 'npm is missing from the Node installation'
+  fi
 }
 
-os=$(uname -s)
-cpu=$(uname -m)
-case "$os" in
-  Linux) node_os=linux ;;
-  Darwin) node_os=darwin ;;
-  *) die "unsupported system: $os" ;;
-esac
-case "$cpu" in
-  x86_64 | amd64) node_cpu=x64 ;;
-  aarch64 | arm64) node_cpu=arm64 ;;
-  *) die "unsupported architecture: $cpu" ;;
-esac
-
-have git || die "git is required; install it, then run this again"
-have curl || die "curl is required; install it, then run this again"
-
-if ! have cargo; then
-  say "installing Rust"
-  curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
-fi
-if [ -f "$CARGO_HOME/env" ]; then
-  # shellcheck disable=SC1091
-  . "$CARGO_HOME/env"
-fi
-prepend "$CARGO_BIN"
-have cargo || die "cargo is not on PATH after installing Rust"
-
-node_major=0
-if have node; then
-  node_major=$(node -v | sed 's/^v//' | cut -d. -f1)
-fi
-if [ "$node_major" -lt 22 ]; then
-  say "installing Node 22"
-  sums=$(curl -fsSL https://nodejs.org/dist/latest-v22.x/SHASUMS256.txt)
-  name=$(printf '%s\n' "$sums" | awk -v os="$node_os" -v cpu="$node_cpu" '
-    $2 ~ ("node-v[0-9.]+-" os "-" cpu "\\.tar\\.xz$") { print $2; exit }')
-  [ -n "$name" ] || die "cannot find a Node 22 build for $node_os-$node_cpu"
-  hash=$(printf '%s\n' "$sums" | awk -v name="$name" '$2 == name { print $1; exit }')
-  tmp=$(mktemp -d)
-  curl -fsSL "https://nodejs.org/dist/latest-v22.x/$name" -o "$tmp/$name"
-  if have sha256sum; then
-    printf '%s  %s\n' "$hash" "$name" | (cd "$tmp" && sha256sum -c -)
-  elif have shasum; then
-    printf '%s  %s\n' "$hash" "$name" | (cd "$tmp" && shasum -a 256 -c -)
-  else
-    die "need sha256sum or shasum to verify the Node download"
-  fi
-  mkdir -p "$PREFIX"
-  tar -xJf "$tmp/$name" -C "$PREFIX"
-  rm -rf "$tmp"
-  extracted=$(printf '%s\n' "$name" | sed 's/\.tar\.xz$//')
-  prepend "$PREFIX/$extracted/bin"
-fi
-have node || die "node is not on PATH"
-node_major=$(node -v | sed 's/^v//' | cut -d. -f1)
-[ "$node_major" -ge 22 ] || die "node $(node -v) is too old; booth needs Node 22 or newer"
-
 if ! have pnpm || ! pnpm --version >/dev/null 2>&1; then
-  say "installing pnpm"
-  # pnpm's installer edits shell startup files and older releases fail for a
-  # non-interactive `sh`. Give it a sandboxed ENV file; booth puts pnpm on its
-  # own PATH below and does not need to modify the user's shell configuration.
-  pnpm_shell_env=$(mktemp)
-  if ! curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=11.7.0 PNPM_HOME="$PNPM_HOME" SHELL=/bin/sh ENV="$pnpm_shell_env" sh -; then
-    rm -f "$pnpm_shell_env"
-    die "pnpm installation failed"
-  fi
-  rm -f "$pnpm_shell_env"
+  say 'installing pnpm'
+  npm_install pnpm@11.7.0
 fi
-prepend "$PNPM_HOME"
-prepend "$PNPM_HOME/bin"
-pnpm --version >/dev/null 2>&1 || die "pnpm cannot run from PATH; check PNPM_HOME=$PNPM_HOME"
-
-if ! have dsh; then
-  say "installing dsh $DSH_VERSION"
-  mkdir -p "$PREFIX"
-  npm install -g --prefix "$PREFIX" "@deepseek-ai/dsh@$DSH_VERSION"
+if ! have dsh || [ "$(dsh --version 2>/dev/null || true)" != "$DSH_VERSION" ]; then
+  say 'installing dsh'
+  mkdir -p "$PREFIX/share/pnpm/global"
+  PNPM_HOME="$PREFIX" pnpm add --global --global-dir "$PREFIX/share/pnpm/global" "@deepseek-ai/dsh@$DSH_VERSION"
 fi
-prepend "$PREFIX/bin"
-have dsh || die "dsh is not on PATH after installing it"
+add_path "$PREFIX/bin"
+pnpm --version >/dev/null 2>&1 || die 'pnpm could not be started'
+dsh --version >/dev/null 2>&1 || die 'dsh could not be started'
 
-if [ -d "$DEST/.git" ]; then
-  say "updating $DEST"
-  git -C "$DEST" fetch origin "$REF"
-  git -C "$DEST" checkout --detach FETCH_HEAD
-  git -C "$DEST" submodule update --init --recursive
-else
-  say "cloning $REPO"
-  mkdir -p "$(dirname "$DEST")"
-  git clone --recursive --branch "$REF" "$REPO" "$DEST"
+case "$arch" in x86_64) ASSET=booth-linux-x86_64 ;; aarch64) ASSET=booth-linux-aarch64 ;; esac
+release_url="$REPOSITORY/releases/latest/download"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+say 'installing booth'
+curl -fsSL "$release_url/$ASSET" -o "$tmp/$ASSET"
+curl -fsSL "$release_url/$ASSET.sha256" -o "$tmp/$ASSET.sha256"
+(cd "$tmp" && sha256sum -c "$ASSET.sha256") || die 'booth download checksum did not match'
+curl -fsSL "$release_url/booth-runtime.tar.gz" -o "$tmp/booth-runtime.tar.gz"
+curl -fsSL "$release_url/booth-runtime.tar.gz.sha256" -o "$tmp/booth-runtime.tar.gz.sha256"
+(cd "$tmp" && sha256sum -c booth-runtime.tar.gz.sha256) || die 'booth runtime download checksum did not match'
+chmod 755 "$tmp/$ASSET"
+mkdir -p "$DATA_DIR"
+version=$($tmp/$ASSET --version | sed -n 's/^booth //p')
+case "$version" in '' | *[!0-9.]* ) die 'downloaded booth reported an invalid version' ;; esac
+runtime_dir="$DATA_DIR/releases/$version"
+if [ ! -f "$runtime_dir/.booth-runtime-installed" ]; then
+  staged_runtime="$DATA_DIR/releases/.${version}.$$"
+  mkdir -p "$staged_runtime"
+  tar -xzf "$tmp/booth-runtime.tar.gz" -C "$staged_runtime"
+  [ -f "$staged_runtime/superagent/lib/index.js" ] || die 'team bundle is incomplete'
+  [ -f "$staged_runtime/superagent/node_modules/zod/package.json" ] || die 'team bundle dependencies are incomplete'
+  [ -f "$staged_runtime/superagent/node_modules/proper-lockfile/package.json" ] || die 'team bundle dependencies are incomplete'
+  [ -f "$staged_runtime/local-source/index.js" ] || die 'local portal source is missing'
+  printf '%s\n' "$version" > "$staged_runtime/superagent/.booth-prebuilt"
+  : > "$staged_runtime/.booth-runtime-installed"
+  mv "$staged_runtime" "$runtime_dir"
 fi
+mkdir -p "$DATA_DIR/omp-portal"
+cp "$runtime_dir/omp-portal/extension.ts" "$runtime_dir/omp-portal/config.yml" "$runtime_dir/omp-portal/LICENSE" "$DATA_DIR/omp-portal/"
+printf '%s\n' "$runtime_dir/superagent" > "$DATA_DIR/bundle-path.tmp"
+mv "$DATA_DIR/bundle-path.tmp" "$DATA_DIR/bundle-path"
+mv "$tmp/$ASSET" "$BIN_DIR/booth"
 
-say "installing booth"
-cargo install --path "$DEST" --locked --force
-prepend "$CARGO_BIN"
-have booth || die "booth is not on PATH after installing it"
-
-# Booth launches OMP as its native terminal frontend. Install it on a fresh
-# machine instead of leaving the user with a backend command that cannot open.
 if ! have omp || ! omp --version >/dev/null 2>&1; then
-  say "installing OMP frontend"
-  curl -fsSL https://omp.sh/install | env PI_INSTALL_DIR="$CARGO_BIN" sh -
+  say 'installing OMP'
+  curl -fsSL https://omp.sh/install | env PI_INSTALL_DIR="$BIN_DIR" sh -
 fi
-prepend "$CARGO_BIN"
-have omp || die "OMP was not installed; install it with: curl -fsSL https://omp.sh/install | sh"
+have omp || die 'OMP installation failed'
 
-if [ "${BOOTH_NO_UP:-}" = 1 ]; then
-  say "installed. start it with: booth init && booth up && booth"
-  exit 0
-fi
-
-say "preparing the profile"
-BOOTH_SUPERAGENT_DIR="$DEST/superagent" booth init
-say "starting the service"
-BOOTH_SUPERAGENT_DIR="$DEST/superagent" booth up
+say 'preparing the team service'
+booth init
 
 if [ "${BOOTH_NO_CONSOLE:-}" = 1 ] || [ ! -r /dev/tty ]; then
-  say "the service is up. open the console with: booth"
+  say 'starting the team service'
+  booth restart
+  say 'installed booth. Open it with: booth'
   exit 0
 fi
 
-say "opening the console"
+say 'starting booth'
+booth restart
 exec booth </dev/tty >/dev/tty
