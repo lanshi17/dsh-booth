@@ -3,9 +3,9 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
 #
-# It installs anything missing (Rust, Node 22, pnpm, dsh), clones this repository,
-# builds booth, prepares the superagent profile, and starts the service. When a
-# terminal is available it then opens the console.
+# It installs anything missing (Rust, Node 22, pnpm, dsh, OMP), clones this
+# repository, builds booth, prepares the superagent profile, and starts the
+# service. When a terminal is available it then opens the OMP console.
 #
 #   BOOTH_HOME          checkout directory (default: ~/.dsh/src/dsh-booth)
 #   BOOTH_REF           git ref to install (default: master)
@@ -20,6 +20,8 @@ DSH_VERSION="${DSH_VERSION:-0.2.1-rc.3}"
 HOME="${HOME:-$(cd && pwd)}"
 DEST="${BOOTH_HOME:-$HOME/.dsh/src/dsh-booth}"
 PREFIX="${BOOTH_PREFIX:-$HOME/.local}"
+CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}"
+CARGO_BIN="$CARGO_HOME/bin"
 PNPM_HOME="${PNPM_HOME:-$HOME/.local/share/pnpm}"
 
 say() { printf '%s\n' "$*"; }
@@ -55,11 +57,11 @@ if ! have cargo; then
   say "installing Rust"
   curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
 fi
-if [ -f "$HOME/.cargo/env" ]; then
+if [ -f "$CARGO_HOME/env" ]; then
   # shellcheck disable=SC1091
-  . "$HOME/.cargo/env"
+  . "$CARGO_HOME/env"
 fi
-prepend "$HOME/.cargo/bin"
+prepend "$CARGO_BIN"
 have cargo || die "cargo is not on PATH after installing Rust"
 
 node_major=0
@@ -92,12 +94,12 @@ have node || die "node is not on PATH"
 node_major=$(node -v | sed 's/^v//' | cut -d. -f1)
 [ "$node_major" -ge 22 ] || die "node $(node -v) is too old; booth needs Node 22 or newer"
 
-if ! have pnpm; then
+if ! have pnpm || ! pnpm --version >/dev/null 2>&1; then
   say "installing pnpm"
   curl -fsSL https://get.pnpm.io/install.sh | env PNPM_HOME="$PNPM_HOME" SHELL=/bin/sh sh -
 fi
 prepend "$PNPM_HOME"
-have pnpm || die "pnpm is not on PATH after installing it"
+pnpm --version >/dev/null 2>&1 || die "pnpm cannot run from PATH; check PNPM_HOME=$PNPM_HOME"
 
 if ! have dsh; then
   say "installing dsh $DSH_VERSION"
@@ -120,8 +122,17 @@ fi
 
 say "installing booth"
 cargo install --path "$DEST" --locked --force
-prepend "$HOME/.cargo/bin"
+prepend "$CARGO_BIN"
 have booth || die "booth is not on PATH after installing it"
+
+# Booth launches OMP as its native terminal frontend. Install it on a fresh
+# machine instead of leaving the user with a backend command that cannot open.
+if ! have omp || ! omp --version >/dev/null 2>&1; then
+  say "installing OMP frontend"
+  curl -fsSL https://omp.sh/install | env PI_INSTALL_DIR="$CARGO_BIN" sh -
+fi
+prepend "$CARGO_BIN"
+have omp || die "OMP was not installed; install it with: curl -fsSL https://omp.sh/install | sh"
 
 if [ "${BOOTH_NO_UP:-}" = 1 ]; then
   say "installed. start it with: booth init && booth up && booth"
