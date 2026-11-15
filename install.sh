@@ -96,8 +96,9 @@ node_major=$(node -v | sed 's/^v//' | cut -d. -f1)
 
 if ! have pnpm || ! pnpm --version >/dev/null 2>&1; then
   say "installing pnpm"
-  curl -fsSL https://get.pnpm.io/install.sh | env PNPM_HOME="$PNPM_HOME" SHELL=/bin/sh sh -
+  curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=11.7.0 PNPM_HOME="$PNPM_HOME" SHELL=/bin/sh sh -
 fi
+prepend "$PNPM_HOME"
 prepend "$PNPM_HOME/bin"
 pnpm --version >/dev/null 2>&1 || die "pnpm cannot run from PATH; check PNPM_HOME=$PNPM_HOME"
 

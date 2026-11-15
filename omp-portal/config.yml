@@ -1,0 +1,4 @@
+# Booth uses OMP as a frontend; provider setup belongs to the DSH backend.
+startup:
+  setupWizard: false
+  showSplash: false

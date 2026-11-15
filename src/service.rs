@@ -875,7 +875,7 @@ fn report(cfg: &Config) -> Result<(), String> {
     );
     if let Some(problem) = &state.setup.problem {
         println!("setup pending: {}", problem.detail);
-        println!("hint: /setup owner/repo in the console, or `booth setup owner/repo`");
+        println!("hint: /booth-setup owner/repo in the console, or `booth setup owner/repo`");
     }
     if let Err(error) = crate::decider::install(&Api::new(&cfg.url())) {
         eprintln!("decider prompt not installed: {error}");

@@ -26,22 +26,89 @@ async function portalThread(): Promise<string> {
   return activeThread;
 }
 
-async function send(text: string): Promise<void> {
+async function send(text: string): Promise<string> {
   const record = { id: crypto.randomUUID(), text: text.trim(), sender: "operator", thread: await portalThread() };
   await appendFile(inbox, `${JSON.stringify(record)}\n`);
+  return record.id;
 }
 
 export default function boothPortal(pi: ExtensionAPI) {
   let offset = 0;
   let polling = false;
+  const pending = new Map<string, { sent: number; warned: boolean }>();
+  let ui: { setStatus(key: string, value: string | undefined): void } | undefined;
+
+  function status() {
+    ui?.setStatus("booth-portal", pending.size ? `团队正在处理 · ${pending.size} 条消息` : "团队服务已连接");
+  }
 
   void stat(outbox).then(s => { offset = s.size; }).catch(() => {});
+
+  async function readiness(): Promise<string | undefined> {
+    const base = process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`;
+    try {
+      const response = await fetch(`${base.replace(/\/$/, "")}/orchestrator/api/state`, {
+        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok) return `管理服务暂时不可用（HTTP ${response.status}），请检查 booth logs。`;
+      const state = await response.json() as { setup?: { problem?: { detail?: string } }; paused?: boolean; health?: Record<string, { state?: string; detail?: string }> };
+      if (state.setup?.problem) return `团队服务尚未完成配置：${state.setup.problem.detail || "配置不完整"}。请使用 /booth-setup owner/repo（需要已登录 gh）。`;
+      if (state.paused) return "团队服务已暂停，请先运行 booth resume。";
+      const local = state.health?.local;
+      if (local && local.state !== "ready") return `本地对话入口尚未就绪：${local.detail || local.state}。请检查 booth status 和 booth logs。`;
+      const runtime = state.health?.runtime;
+      if (runtime && runtime.state !== "ready") return `团队服务尚未就绪：${runtime.detail || runtime.state}。请检查 booth status 和 booth logs。`;
+      return undefined;
+    } catch (error) {
+      return `无法连接团队服务：${error instanceof Error ? error.message : String(error)}。请检查 booth status 和 booth logs。`;
+    }
+  }
+
+  pi.on("session_start", async (_event, ctx) => {
+    ui = ctx.ui;
+    const problem = await readiness();
+    if (problem) pi.sendMessage({ customType: "booth-portal-reply", content: problem, display: true, attribution: "agent" }, { triggerTurn: false });
+    else status();
+  });
+
+  pi.registerCommand("booth-setup", {
+    description: "Configure the repository and local portal",
+    handler: async (args, ctx) => {
+      const match = args.trim().match(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\s+(.+))?$/);
+      if (!match) {
+        ctx.ui.notify("用法：/booth-setup owner/repo [工作目录]；先运行 gh auth login。", "warning");
+        return;
+      }
+      ctx.ui.notify("正在配置团队服务，可能需要一点时间…", "info");
+      try {
+        const argv = ["--url", process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`, "setup", match[1]];
+        if (match[2]) argv.push(match[2]);
+        const result = await pi.exec(process.env.BOOTH_BINARY || "booth", argv, { timeout: 180000 });
+        const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+        pi.sendMessage({ customType: "booth-portal-reply", content: output || (result.code === 0 ? "配置已完成。" : "配置失败，请检查 booth logs。"), display: true, attribution: "agent" }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`配置失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
 
   pi.on("input", async (event) => {
     const text = event.text.trim();
     if (!text || text.startsWith("/")) return;
-    await send(text);
     pi.sendMessage({ customType: "booth-portal-user", content: text, display: true, attribution: "user" }, { triggerTurn: false });
+    const problem = await readiness();
+    if (problem) {
+      pi.sendMessage({ customType: "booth-portal-reply", content: `${problem}\n\n这条消息尚未发送，完成配置后请重新发送。`, display: true, attribution: "agent" }, { triggerTurn: false });
+      return { handled: true };
+    }
+    try {
+      const id = await send(text);
+      pending.set(id, { sent: Date.now(), warned: false });
+      status();
+    }
+    catch (error) {
+      pi.sendMessage({ customType: "booth-portal-reply", content: `发送失败：${error instanceof Error ? error.message : String(error)}。请检查后重新发送。`, display: true, attribution: "agent" }, { triggerTurn: false });
+    }
     return { handled: true };
   });
 
@@ -66,11 +133,20 @@ export default function boothPortal(pi: ExtensionAPI) {
             const reply = JSON.parse(line) as PortalReply;
             if (reply.text && (!reply.thread || reply.thread === activeThread)) {
               pi.sendMessage({ customType: "booth-portal-reply", content: reply.text, display: true, attribution: "agent" }, { triggerTurn: false });
+              pending.clear();
+              status();
             }
           } catch { /* source may be writing a malformed/partial record */ }
         }
       }
+      for (const item of pending.values()) {
+        if (!item.warned && Date.now() - item.sent >= 30000) {
+          item.warned = true;
+          pi.sendMessage({ customType: "booth-portal-reply", content: "团队暂时还没有回复。请检查 DSH 中的模型和凭证配置；消息仍在处理中。", display: true, attribution: "agent" }, { triggerTurn: false });
+        }
+      }
     } finally { polling = false; }
   };
-  setInterval(() => { void poll(); }, 500);
+  const interval = setInterval(() => { void poll(); }, 500);
+  pi.on("session_shutdown", () => clearInterval(interval));
 }

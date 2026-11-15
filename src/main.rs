@@ -234,13 +234,24 @@ enum FeishuCommand {
 
 fn main() {
     let cli = Cli::parse();
-    let api = Api::new(&cli.url);
+    let url = if cli.url == DEFAULT_URL && std::env::var_os("DSH_SUPERAGENT_URL").is_none() {
+        std::env::var("BOOTH_PORT")
+            .ok()
+            .and_then(|value| value.parse::<u16>().ok())
+            .map(|port| format!("http://127.0.0.1:{port}"))
+            .unwrap_or(cli.url)
+    } else {
+        cli.url
+    };
+    let api = Api::new(&url);
     let result = match cli.command {
         None => {
             // The interactive frontend is OMP itself. Booth only owns lifecycle and the portal
             // adapter; this keeps composer, palette, history, transcript and shortcuts native.
-            let startup = service::Config::from_env().and_then(|cfg| service::start(&cfg));
-            startup.and_then(|_| launch_omp())
+            service::Config::from_env().and_then(|cfg| {
+                service::start(&cfg)?;
+                launch_omp(&url, &cfg.state_dir)
+            })
         }
         Some(command) => run(api, command),
     };
@@ -253,7 +264,7 @@ fn main() {
     }
 }
 
-fn launch_omp() -> Result<(), String> {
+fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> {
     let extension = std::env::var_os("BOOTH_OMP_EXTENSION")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| {
@@ -265,9 +276,27 @@ fn launch_omp() -> Result<(), String> {
             extension.display()
         ));
     }
+    let config = extension
+        .parent()
+        .ok_or("cannot find OMP portal config directory")?
+        .join("config.yml");
+    if !config.is_file() {
+        return Err(format!(
+            "OMP portal config is missing: {}",
+            config.display()
+        ));
+    }
     let status = std::process::Command::new("omp")
+        .arg("--config")
+        .arg(config)
         .arg("--extension")
         .arg(extension)
+        .env("DSH_SUPERAGENT_URL", api_url)
+        .env("BOOTH_STATE_DIR", state_dir)
+        .env(
+            "BOOTH_BINARY",
+            std::env::current_exe().map_err(|error| format!("cannot locate booth: {error}"))?,
+        )
         .status()
         .map_err(|error| format!("cannot launch OMP (`omp`): {error}"))?;
     if status.success() {
