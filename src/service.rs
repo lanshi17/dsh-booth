@@ -1000,6 +1000,7 @@ fn install(cfg: &Config) -> Result<(), String> {
     // lists dsh-booth-local but its dependency is missing from node_modules.
     link(cfg, "dsh-booth-local", &console)?;
     link(cfg, "dsh-superagent", &cfg.bundle)?;
+    ensure_bundle(cfg, "dsh-superagent")?;
     ensure_bundle(cfg, "dsh-booth-local")
 }
 
