@@ -257,7 +257,25 @@ fn repair_profile(cfg: &Config) -> Result<(), String> {
     result
 }
 
+/// Starts the service and repairs a stale persisted orchestrator session once.
 pub fn start(cfg: &Config) -> Result<(), String> {
+    match start_once(cfg) {
+        Ok(()) => Ok(()),
+        Err(error) if stale_session_error(cfg) && read_pid(cfg).is_some() => {
+            println!("stale orchestrator session detected; moving old sessions aside and retrying");
+            stop(cfg)?;
+            let work = execution_root(&Api::new(&cfg.url()), cfg);
+            if let Some(path) = reset_sessions(cfg, &work)? {
+                println!("old sessions moved to {}", path.display());
+            }
+            start_once(cfg)
+                .map_err(|retry| format!("{error}; retry after session reset failed: {retry}"))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn start_once(cfg: &Config) -> Result<(), String> {
     if let Some(pid) = read_pid(cfg) {
         if alive(pid) && is_service(pid, &cfg.profile) {
             println!("already running (pid {pid}); waiting for its management API");
@@ -331,6 +349,16 @@ pub fn start(cfg: &Config) -> Result<(), String> {
     println!("starting dsh (pid {pid}); log {}", cfg.log().display());
 
     wait_ready(cfg, Some(pid))
+}
+
+fn stale_session_error(cfg: &Config) -> bool {
+    fs::read_to_string(cfg.log())
+        .map(|log| {
+            log.contains("resume failed for session")
+                && log.contains("SessionQueryError")
+                && log.contains("not found")
+        })
+        .unwrap_or(false)
 }
 
 /// Waits for a DSH management API to mount its runtime, whether booth started the process or
@@ -1301,6 +1329,21 @@ mod tests {
         fs::remove_file(bundle.join("package.json")).unwrap();
         assert_eq!(installed_bundle_dir(&Some(data)), None);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn stale_session_error_requires_the_missing_session_diagnostic() {
+        let cfg = config("stale-session-log");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        fs::write(
+            cfg.log(),
+            "resume failed for session x: SessionQueryError: session x not found\n",
+        )
+        .unwrap();
+        assert!(stale_session_error(&cfg));
+        fs::write(cfg.log(), "resume failed for session x: network error\n").unwrap();
+        assert!(!stale_session_error(&cfg));
+        let _ = fs::remove_dir_all(&cfg.dsh_home);
     }
 
     #[test]
