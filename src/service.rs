@@ -175,7 +175,7 @@ pub fn init(cfg: &Config) -> Result<(), String> {
 
     fs::create_dir_all(&cfg.state_dir)
         .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
-    println!("\nready — `booth up`, then `/setup owner/repo` in the console or in the panel");
+    println!("\nready — `booth up`, then `/booth-setup owner/repo` in the console");
     Ok(())
 }
 
