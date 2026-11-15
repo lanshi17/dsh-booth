@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.s
 ```
 
 That downloads the prebuilt booth and team bundle, installs Node, pnpm, dsh and OMP only when
-missing, prepares the profile, and starts the service. It does not install Rust, Git or compile
+missing, prepares the profile, and starts the service. Headless installs skip OMP. It does not install Rust, Git or compile
 projects on the user's machine. When the terminal is available, it opens OMP; set
 `BOOTH_NO_CONSOLE=1` to leave the service running without opening the console. Releases currently
 support Linux x86_64 and ARM64; the installer adds its command directory to the active shell's

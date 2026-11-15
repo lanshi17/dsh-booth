@@ -156,22 +156,21 @@ printf '%s\n' "$runtime_dir/superagent" > "$DATA_DIR/bundle-path.tmp"
 mv "$DATA_DIR/bundle-path.tmp" "$DATA_DIR/bundle-path"
 mv "$tmp/$ASSET" "$BIN_DIR/booth"
 
-if ! have omp || ! omp --version >/dev/null 2>&1; then
-  say 'installing OMP'
-  curl -fsSL https://omp.sh/install | env PI_INSTALL_DIR="$BIN_DIR" sh -
-fi
-have omp || die 'OMP installation failed'
-
 say 'preparing the team service'
 booth init
+say 'starting the team service'
+booth restart
 
 if [ "${BOOTH_NO_CONSOLE:-}" = 1 ] || [ ! -r /dev/tty ]; then
-  say 'starting the team service'
-  booth restart
   say 'installed booth. Open it with: booth'
   exit 0
 fi
 
-say 'starting booth'
-booth restart
+if ! have omp || ! omp --version >/dev/null 2>&1; then
+  say 'installing OMP'
+  curl -fsSL https://omp.sh/install | env PI_INSTALL_DIR="$BIN_DIR" sh -
+fi
+have omp || die 'OMP installation failed; booth is running, install OMP with: curl -fsSL https://omp.sh/install | sh'
+
+say 'opening the booth console'
 exec booth </dev/tty >/dev/tty
