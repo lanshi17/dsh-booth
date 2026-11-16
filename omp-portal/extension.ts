@@ -122,6 +122,34 @@ export default function boothPortal(pi: ExtensionAPI) {
     })].join("\n");
   }
 
+  async function taskDetail(taskId: string): Promise<string | undefined> {
+    const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
+      headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
+    const view = await response.json() as {
+      items?: Array<{ tasks?: Array<{
+        id?: string;
+        instruction?: string;
+        dependsOn?: string[];
+        depends_on?: string[];
+        ticket?: { title?: string; state?: string };
+      }> }>;
+    };
+    const task = (view.items || []).flatMap(item => item.tasks || []).find(item => item.id === taskId);
+    if (!task) return undefined;
+    const state = task.ticket?.state || "planned";
+    const dependencies = task.dependsOn || task.depends_on || [];
+    const lines = [
+      `team task [${task.id || taskId}]`,
+      `state: ${state}`,
+      `title: ${task.ticket?.title || "untitled task"}`,
+      `instruction: ${task.instruction || "(none)"}`,
+    ];
+    if (dependencies.length) lines.push(`depends on: ${dependencies.join(", ")}`);
+    return lines.join("\n");
+  }
+
   void stat(outbox).then(s => { offset = s.size; }).catch(() => {});
 
   async function readiness(): Promise<string | undefined> {
@@ -204,6 +232,27 @@ export default function boothPortal(pi: ExtensionAPI) {
         pi.sendMessage({ customType: "booth-task-card", content: await taskCards(), display: true, attribution: "agent" }, { triggerTurn: false });
       } catch (error) {
         ctx.ui.notify(`任务视图失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
+  pi.registerCommand("booth-task", {
+    description: "Show one delegated team task by id",
+    handler: async (args, ctx) => {
+      const taskId = args.trim();
+      if (!taskId) {
+        ctx.ui.notify("用法：/booth-task <任务 ID>；先运行 /booth-tasks 查看任务。", "warning");
+        return;
+      }
+      try {
+        const detail = await taskDetail(taskId);
+        if (!detail) {
+          ctx.ui.notify(`找不到任务 ${taskId}；请先运行 /booth-tasks 刷新任务列表。`, "warning");
+          return;
+        }
+        pi.sendMessage({ customType: "booth-task-card", content: detail, display: true, attribution: "agent" }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`任务详情失败：${error instanceof Error ? error.message : String(error)}`, "error");
       }
     },
   });
