@@ -163,6 +163,7 @@ Use `/booth-task <id>` to open one task's state, instruction, title, and depende
 Cards normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
 While messages are in flight, the status rail includes elapsed time so a long-running team task remains visibly active.
 Every accepted instruction also gets an immediate `booth › queued for team` line with a short message ID, before the portal or workers reply.
+Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.
 
 | Key | Does |
 | --- | --- |

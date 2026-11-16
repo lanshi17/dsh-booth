@@ -69,6 +69,16 @@ export default function boothPortal(pi: ExtensionAPI) {
     updatePendingRail();
   }
 
+  function settlePending(kind?: string) {
+    // Worker relays are progress events for the portal, not answers to a local
+    // message. Keep the queue active until the portal sends its reply. For a
+    // portal reply, settle one message in FIFO order so concurrent requests
+    // remain visible while the other ones are still running.
+    if (kind === "worker_report" || kind === "worker_attention") return;
+    const oldest = pending.keys().next();
+    if (!oldest.done && oldest.value) pending.delete(oldest.value);
+  }
+
   function updatePendingRail() {
     if (!pending.size) {
       ui?.setStatus("booth-portal", "团队服务已连接");
@@ -339,7 +349,7 @@ export default function boothPortal(pi: ExtensionAPI) {
             const reply = JSON.parse(line) as PortalReply;
             if (reply.text && (!reply.thread || reply.thread === activeThread)) {
               pi.sendMessage({ customType: "booth-portal-reply", content: reply.text, kind: reply.kind, display: true, attribution: "agent" }, { triggerTurn: false });
-              pending.clear();
+              settlePending(reply.kind);
               status();
             }
           } catch { /* source may be writing a malformed/partial record */ }
