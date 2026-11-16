@@ -79,7 +79,12 @@ type BoothTask = {
   instruction?: string;
   dependsOn?: string[];
   depends_on?: string[];
-  ticket?: { ticket_id?: string; title?: string; state?: string };
+  ticket?: {
+    ticket_id?: string;
+    title?: string;
+    state?: string;
+    attention?: { question?: string };
+  };
 };
 
 type TaskPulse = {
@@ -279,13 +284,16 @@ export default function boothPortal(pi: ExtensionAPI) {
       for (const task of group) {
         const title = task.ticket?.title || task.instruction || task.id || "task";
         lines.push(`  ${icon(state)}  [${task.id || "task"}]  ${title}`);
+        if (state === "waiting" && task.ticket?.attention?.question) {
+          lines.push(`       ? ${task.ticket.attention.question}`);
+        }
       }
     }
     return lines.join("\n");
   }
 
   async function taskDetail(taskId: string): Promise<string | undefined> {
-    const task = (await portalTasks()).find(item => item.id === taskId);
+    const task = (await portalTasks()).find(item => item.id === taskId || item.ticket?.ticket_id === taskId);
     if (!task) return undefined;
     const rawState = task.ticket?.state || "planned";
     const state = taskState(rawState);
@@ -297,6 +305,7 @@ export default function boothPortal(pi: ExtensionAPI) {
       `instruction: ${task.instruction || "(none)"}`,
     ];
     if (dependencies.length) lines.push(`depends on: ${dependencies.join(", ")}`);
+    if (task.ticket?.attention?.question) lines.push(`question: ${task.ticket.attention.question}`);
     return lines.join("\n");
   }
 

@@ -165,6 +165,7 @@ Use `/booth-tasks` to print delegated task cards grouped by booth state in the t
 Task views follow the portal's pagination, so older conversations remain available after the first 20.
 The live status rail samples recent pages; opening a task view performs the full paged read on demand.
 Use `/booth-task <id>` to open one task's state, instruction, title, and dependencies.
+`/booth-task` also accepts the worker ticket ID and prints the current human question when a task is waiting.
 Cards and task details normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
 While messages are in flight, the status rail includes elapsed time so a long-running team task remains visibly active.
 Every accepted instruction also gets an immediate `booth › queued for team` line with a short message ID, before the portal or workers reply.
