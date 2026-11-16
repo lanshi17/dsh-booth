@@ -15,7 +15,12 @@ type RelayPayload = {
   kind?: string;
   state?: string;
   summary?: string;
-  ticket?: { ticket_id?: string; title?: string; state?: string };
+  ticket?: {
+    ticket_id?: string;
+    title?: string;
+    state?: string;
+    attention?: { question?: string };
+  };
 };
 
 function relayOf(text: string): RelayPayload | undefined {
@@ -27,9 +32,27 @@ function relayOf(text: string): RelayPayload | undefined {
   }
 }
 
-function relayText(relay: RelayPayload): string {
+async function relayText(relay: RelayPayload): Promise<string> {
   const title = relay.ticket?.title || relay.ticket?.ticket_id || "team task";
-  if (relay.kind === "worker_attention") return `needs your decision\n${title}`;
+  if (relay.kind === "worker_attention") {
+    let question = relay.ticket?.attention?.question;
+    const ticketId = relay.ticket?.ticket_id;
+    if (!question && ticketId) {
+      try {
+        const response = await fetch(
+          `${apiBase()}/orchestrator/api/tickets/${encodeURIComponent(ticketId)}`,
+          { headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000) },
+        );
+        if (response.ok) {
+          const ticket = await response.json() as { attention?: { question?: string } };
+          question = ticket.attention?.question;
+        }
+      } catch {
+        // The relay remains useful without the optional detail; the next task poll retries it.
+      }
+    }
+    return `needs your decision\n${title}${question ? `\n${question}` : ""}`;
+  }
   if (relay.kind === "follow_up") {
     return `follow-up routed to the team\n${title}`;
   }
@@ -146,13 +169,13 @@ export default function boothPortal(pi: ExtensionAPI) {
   }
 
   function pulseText(): string {
+    if (taskPulse.waiting > 0) {
+      return `team · ${taskPulse.waiting} needs you`;
+    }
     if (pending.size) {
       const oldest = Math.min(...[...pending.values()].map(item => item.sent));
       const seconds = Math.max(0, Math.floor((Date.now() - oldest) / 1000));
       return `portal · ${pending.size} queued · ${seconds}s`;
-    }
-    if (taskPulse.waiting > 0) {
-      return `team · ${taskPulse.waiting} needs you`;
     }
     if (taskPulse.working > 0) {
       return `team · ${taskPulse.working} working${taskPulse.focus ? ` · ${taskPulse.focus}` : ""}`;
@@ -587,7 +610,7 @@ export default function boothPortal(pi: ExtensionAPI) {
             if (reply.text && (!reply.thread || reply.thread === activeThread)) {
               const relay = relayOf(reply.text);
               const kind = relay?.kind || reply.kind;
-              pi.sendMessage({ customType: "booth-portal-reply", content: relay ? relayText(relay) : reply.text, details: { kind }, display: true, attribution: "agent" }, { triggerTurn: false });
+              pi.sendMessage({ customType: "booth-portal-reply", content: relay ? await relayText(relay) : reply.text, details: { kind }, display: true, attribution: "agent" }, { triggerTurn: false });
               settlePending(kind);
               status();
             }
