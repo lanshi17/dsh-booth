@@ -20,6 +20,10 @@ create the DSH profile and link the team bundle with `local-source/`; `booth up`
 detached and waits for the management API. The submodule remains an MIT-licensed bundle with its
 own runtime.
 
+The release bundle keeps the portal adapter under `booth-portal/`, so the installed frontend and
+its configuration use booth's product name throughout. The underlying interaction kernel remains
+an implementation dependency and is not the product surface.
+
 The console itself talks only to the bundle's loopback management API (`/orchestrator/api/*`),
 so a DSH upgrade does not break it as long as the routes do.
 
@@ -142,6 +146,7 @@ still receives live @mentions, but `booth sources` reports the failed backfill.
 | `BOOTH_PROFILE` | `superagent` | DSH profile name |
 | `BOOTH_STATE_DIR` | `$DSH_HOME/state/superagent` | Database, `booth.pid`, `booth.log` |
 | `BOOTH_SUPERAGENT_DIR` | the repository's `superagent/` | Checkout to build and link |
+| `BOOTH_PORTAL_EXTENSION` | bundled `booth-portal/extension.ts` | Override the portal adapter during development |
 | `FEISHU_APP_ID`, `FEISHU_APP_SECRET` | — | The app `booth feishu login` configures |
 | `DSH_HOME` | `~/.dsh` | Where profiles and state live |
 

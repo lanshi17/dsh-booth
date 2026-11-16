@@ -250,7 +250,7 @@ fn main() {
             // and shortcuts while owning the lifecycle and portal adapter.
             service::Config::from_env().and_then(|cfg| {
                 service::start(&cfg)?;
-                launch_omp(&url, &cfg.state_dir)
+                launch_portal(&url, &cfg.state_dir)
             })
         }
         Some(command) => run(api, command),
@@ -264,19 +264,20 @@ fn main() {
     }
 }
 
-fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> {
+fn launch_portal(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> {
     let data_dir = service::install_data_dir();
-    let extension_override = std::env::var_os("BOOTH_OMP_EXTENSION").map(std::path::PathBuf::from);
+    let extension_override = std::env::var_os("BOOTH_PORTAL_EXTENSION")
+        .or_else(|| std::env::var_os("BOOTH_OMP_EXTENSION"))
+        .map(std::path::PathBuf::from);
     let extension = extension_override
         .clone()
         .or_else(|| {
             data_dir
                 .as_ref()
-                .map(|dir| dir.join("omp-portal/extension.ts"))
-                .filter(|path| path.is_file())
+                .and_then(|dir| installed_portal_extension(dir))
         })
         .unwrap_or_else(|| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("omp-portal/extension.ts")
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("booth-portal/extension.ts")
         });
     if !extension.is_file() {
         return Err(format!(
@@ -284,21 +285,16 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
             extension.display()
         ));
     }
-    let installed_config = data_dir.map(|dir| dir.join("omp-portal/config.yml"));
     let config = if extension_override.is_some() {
         extension
             .parent()
             .unwrap_or_else(|| std::path::Path::new("."))
             .join("config.yml")
     } else {
-        installed_config
-            .filter(|path| path.is_file())
-            .unwrap_or_else(|| {
-                extension
-                    .parent()
-                    .unwrap_or_else(|| std::path::Path::new("."))
-                    .join("config.yml")
-            })
+        extension
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("config.yml")
     };
     if !config.is_file() {
         return Err(format!(
@@ -327,6 +323,16 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
     } else {
         Err(format!("booth frontend exited with {status}"))
     }
+}
+
+/// The portal bundle was called `omp-portal` before booth took ownership of the frontend name.
+/// Keep reading that installed directory so replacing only the binary does not strand a working
+/// runtime; new installers always copy the booth-named directory.
+fn installed_portal_extension(data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    ["booth-portal", "omp-portal"].iter().find_map(|name| {
+        let path = data_dir.join(name).join("extension.ts");
+        path.is_file().then_some(path)
+    })
 }
 
 /// What `booth provider` prints: the service's own catalog, never a secret.

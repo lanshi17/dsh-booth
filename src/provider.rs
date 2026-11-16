@@ -696,7 +696,7 @@ fn holder_exited(record: &str) -> bool {
 }
 
 /// The endpoint presets `/login` offers before "custom". Base URLs, wire protocols and model ids
-/// are the vendors' own, taken from `omp`'s provider catalog
+/// are the vendors' own, taken from the interaction kernel's provider catalog
 /// (`packages/catalog/src/provider-models`); they are starting points, every field in the form
 /// stays editable, and what is saved is the profile entry.
 pub struct Preset {

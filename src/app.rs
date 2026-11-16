@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-// The omp palette: blue frame, white copy, muted hints, a pink-to-blue wordmark.
+// Booth palette: blue frame, white copy, muted hints, a pink-to-blue wordmark.
 const CYAN: Color = Color::Rgb(0x00, 0xaf, 0xff);
 const DIM: Color = Color::Rgb(0xa8, 0xa8, 0xa8);
 const MUTED: Color = Color::Rgb(0xa8, 0xa8, 0xa8);
@@ -433,7 +433,7 @@ pub struct App {
     polled: Instant,
     /// One poll at a time: a slow or unreachable service must not stack polling threads.
     polling: Arc<AtomicBool>,
-    /// The last killed text, for Ctrl+Y, as in omp's editor.
+    /// The last killed text, for Ctrl+Y, as in booth's editor.
     kill: String,
     /// Lines that arrived while the transcript was scrolled up.
     unread: usize,
@@ -2548,7 +2548,7 @@ impl App {
         ("team · ready".into(), GREEN)
     }
 
-    /// What the console is waiting on, in omp's working-row shape: spinner, elapsed, label.
+    /// What the console is waiting on, in booth's working-row shape: spinner, elapsed, label.
     fn activity(&mut self) -> Option<(String, Instant)> {
         let active = if self.busy {
             Some("working".to_owned())
@@ -2647,7 +2647,7 @@ impl App {
             let room = top.y.saturating_sub(area.y) as usize;
             let shown = matches.len().clamp(1, 8).min(room);
             let selected = self.selection.min(matches.len().saturating_sub(1));
-            // Keep the selection in view when the list is longer than its window (omp's list scrolls).
+            // Keep the selection in view when the list is longer than its window (booth's list scrolls).
             let offset = selected.saturating_sub(shown.saturating_sub(1));
             let margin = 2u16.min(area.width.saturating_sub(1));
             let width = area.width.saturating_sub(margin).min(82);
@@ -2867,7 +2867,7 @@ fn draw_providers(
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The shortcuts, as omp lists its hotkeys.
+/// The shortcuts, as booth lists its hotkeys.
 const KEYS: &[(&str, &str)] = &[
     ("Enter", "run the line; bare text goes to the agent"),
     ("Tab", "complete the selected command"),
@@ -3169,7 +3169,7 @@ fn draw_login_list(frame: &mut Frame, area: Rect, query: &str, selected: usize) 
         )));
     }
     let available = (inner.width as usize).saturating_sub(23).max(8);
-    // Keep the selection in view when the list is longer than its window (omp's lists scroll).
+    // Keep the selection in view when the list is longer than its window (booth's lists scroll).
     let offset = selected.saturating_sub(shown.saturating_sub(1));
     for (index, row) in rows.iter().enumerate().skip(offset).take(shown) {
         let active = index == selected;
@@ -3318,14 +3318,14 @@ fn clip_error(text: &str) -> String {
     format::clip(text, 70)
 }
 
-/// omp's working row: a braille spinner, the elapsed time, and what is being waited on.
+/// booth's working row: a braille spinner, the elapsed time, and what is being waited on.
 fn draw_working(frame: &mut Frame, area: Rect, label: &str, since: Instant) {
     if area.height == 0 {
         return;
     }
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let elapsed = since.elapsed();
-    // 80 ms a frame, the cadence omp's loader uses.
+    // 80 ms a frame, the cadence booth's loader uses.
     let frame_index = (elapsed.as_millis() / 80) as usize % FRAMES.len();
     let seconds = elapsed.as_secs();
     let line = Line::from(vec![

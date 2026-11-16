@@ -53,12 +53,12 @@ jobs:
         working-directory: superagent
       - name: Package the runtime bundle
         run: |
-          mkdir -p booth-runtime/superagent booth-runtime/local-source booth-runtime/omp-portal
+          mkdir -p booth-runtime/superagent booth-runtime/local-source booth-runtime/booth-portal
           cp -a superagent/lib superagent/locale superagent/prompts superagent/skills booth-runtime/superagent/
           cp superagent/package.json superagent/cordis.patch.yml superagent/LICENSE booth-runtime/superagent/
           cp -a superagent/node_modules booth-runtime/superagent/
           cp local-source/index.js local-source/package.json local-source/cordis.patch.yml booth-runtime/local-source/
-          cp omp-portal/extension.ts omp-portal/config.yml omp-portal/LICENSE booth-runtime/omp-portal/
+          cp booth-portal/extension.ts booth-portal/config.yml booth-portal/LICENSE booth-runtime/booth-portal/
           tar -czf booth-runtime.tar.gz -C booth-runtime .
           sha256sum booth-runtime.tar.gz > booth-runtime.tar.gz.sha256
       - uses: actions/upload-artifact@v4

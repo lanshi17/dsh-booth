@@ -1,4 +1,4 @@
-# Booth portal frontend
+# booth portal frontend
 
 This adapter uses the MIT-licensed [oh-my-pi](https://github.com/can1357/oh-my-pi)
 interaction kernel unchanged. It sends ordinary booth input to dsh-booth's local portal

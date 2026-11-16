@@ -1,5 +1,5 @@
 /**
- * OMP frontend adapter for dsh-booth.
+ * Booth portal adapter for the team service.
  *
  * The interaction kernel supplies the editor; booth owns the terminal product and the
  * local team-agent bridge. This extension only bridges the portal JSONL source
@@ -162,7 +162,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   })();
   let ui: Pick<ExtensionUIContext, "setStatus" | "setTitle" | "setHeader"> | undefined;
 
-  // OMP supplies the editor and terminal mechanics; booth owns the product
+  // The interaction kernel supplies editor and terminal mechanics; booth owns the product
   // identity shown in the terminal title.
   function renderHeader(theme: { fg: (name: string, text: string) => string }) {
     const state = teamState === "working" ? "working" : teamState === "waiting" ? "waiting" : "ready";
@@ -173,7 +173,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     ui?.setTitle("booth");
     ui?.setStatus("booth-brand", `booth  ·  team agents  ·  ${teamState}`);
     updatePulseStatus();
-    // OMP's built-in header carries its own product name. Replace it with the
+    // The kernel's built-in header carries its own product name. Replace it with the
     // booth identity while leaving the editor, palette, history and shortcuts
     // supplied by the interaction kernel intact.
     ui?.setHeader?.(((_tui: unknown, theme: { fg: (name: string, text: string) => string }) => renderHeader(theme)) as unknown);

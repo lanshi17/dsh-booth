@@ -137,8 +137,13 @@ if [ ! -f "$runtime_dir/.booth-runtime-installed" ]; then
   : > "$staged_runtime/.booth-runtime-installed"
   mv "$staged_runtime" "$runtime_dir"
 fi
-mkdir -p "$DATA_DIR/omp-portal"
-cp "$runtime_dir/omp-portal/extension.ts" "$runtime_dir/omp-portal/config.yml" "$runtime_dir/omp-portal/LICENSE" "$DATA_DIR/omp-portal/"
+mkdir -p "$DATA_DIR/booth-portal"
+portal_dir="$runtime_dir/booth-portal"
+# Releases before the booth-owned frontend name used omp-portal. Accept one of those bundles
+# during an upgrade, but always install the files under booth-portal for the next launch.
+[ -d "$portal_dir" ] || portal_dir="$runtime_dir/omp-portal"
+[ -f "$portal_dir/extension.ts" ] || die 'booth portal frontend is missing from the runtime bundle'
+cp "$portal_dir/extension.ts" "$portal_dir/config.yml" "$portal_dir/LICENSE" "$DATA_DIR/booth-portal/"
 printf '%s\n' "$runtime_dir/superagent" > "$DATA_DIR/bundle-path.tmp"
 mv "$DATA_DIR/bundle-path.tmp" "$DATA_DIR/bundle-path"
 mv "$tmp/$ASSET" "$BIN_DIR/booth"
