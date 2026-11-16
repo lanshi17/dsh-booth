@@ -17,9 +17,12 @@ use std::time::Duration;
 /// Pinned because a release URL is stable and the checksum below is checked against the same tag.
 pub const VERSION: &str = "2.63.2";
 const DOWNLOAD: Duration = Duration::from_secs(120);
-/// The pause before the one retry of a program the kernel refused to execute: a just-written
-/// script can still be held open for writing by another thread.
+/// The pause between retries of a program the kernel refused to execute: a just-written script
+/// can still be held open for writing by another thread.
 const RETRY_PAUSE: Duration = Duration::from_millis(50);
+/// A busy executable can stay open across a scheduler tick on a busy runner. Keep the retry
+/// bounded while giving an install enough time to release its writer handle.
+const BUSY_RETRIES: usize = 3;
 
 fn target() -> Result<&'static str, String> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
@@ -33,15 +36,21 @@ fn target() -> Result<&'static str, String> {
     }
 }
 
-/// Runs `program` and returns its full output, retrying once: a just-written script can fail
-/// with `ETXTBSY` while another thread still holds it open for writing.
+/// Runs `program` and returns its full output, retrying bounded `ETXTBSY` failures: a just-written
+/// script can fail while another thread still holds it open for writing.
 fn output(program: &Path, args: &[&str]) -> std::io::Result<std::process::Output> {
-    match Command::new(program).args(args).output() {
-        Err(error) if error.kind() == std::io::ErrorKind::ExecutableFileBusy => {
-            std::thread::sleep(RETRY_PAUSE);
-            Command::new(program).args(args).output()
+    let mut retries = 0;
+    loop {
+        match Command::new(program).args(args).output() {
+            Err(error)
+                if error.kind() == std::io::ErrorKind::ExecutableFileBusy
+                    && retries < BUSY_RETRIES =>
+            {
+                retries += 1;
+                std::thread::sleep(RETRY_PAUSE);
+            }
+            result => return result,
         }
-        result => result,
     }
 }
 
@@ -101,9 +110,9 @@ pub fn ensure(cfg: &service::Config, download: bool) -> Result<Option<String>, S
 
 /// Checks the CLI an install has just written and says why it cannot serve the reads.
 ///
-/// The verification runs through [`output`], so the one transient `ETXTBSY` a just-written
-/// executable can produce is retried instead of reported as a CLI that cannot run. The checksum
-/// already ties the file to the pinned release, so a remaining failure is about running it.
+/// The verification runs through [`output`], so transient `ETXTBSY` errors from a just-written
+/// executable are retried instead of reported as a CLI that cannot run. The checksum already
+/// ties the file to the pinned release, so a remaining failure is about running it.
 fn verify(program: &Path) -> Result<(), String> {
     let path = program.display().to_string();
     match output(program, &["api", "--help"]) {
