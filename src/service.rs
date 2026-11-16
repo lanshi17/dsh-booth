@@ -1601,8 +1601,14 @@ mod tests {
         (port, stop, handle)
     }
 
+    // Both tests below deliberately exercise the same real loopback-port probe. Keep their
+    // ephemeral listeners apart so one test cannot reclaim the other's port between join and
+    // the final `port_in_use` assertion.
+    static STARTING_SERVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn a_port_is_in_use_only_while_a_listener_owns_it() {
+        let _port_lock = STARTING_SERVICE_LOCK.lock().unwrap();
         let (port, stop, listener) = starting_service();
         assert!(port_in_use(port), "a bound port reads as in use");
         stop.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1622,6 +1628,7 @@ mod tests {
         // the first service as up while the pid file pointed at a dead process.
         use std::os::unix::fs::PermissionsExt;
 
+        let _port_lock = STARTING_SERVICE_LOCK.lock().unwrap();
         let _env = crate::testkit::env_lock();
         let mut cfg = config("start-starting");
         fs::create_dir_all(cfg.bundle.join("lib")).unwrap();
