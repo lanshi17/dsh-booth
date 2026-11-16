@@ -155,6 +155,7 @@ the operator, `booth ›` for the portal, and `team ›` for worker progress and
 names the product and the active team-agent kernel, while the status rail shows whether the team
 is connected, processing work, or waiting for a decision. This makes the portal conversation and
 the delegated team activity visible in one stream without exposing worker session mechanics.
+The header state changes with the conversation: `ready`, `working`, or `waiting`.
 
 | Key | Does |
 | --- | --- |

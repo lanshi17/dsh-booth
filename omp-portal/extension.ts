@@ -36,6 +36,7 @@ async function send(text: string): Promise<string> {
 export default function boothPortal(pi: ExtensionAPI) {
   let offset = 0;
   let polling = false;
+  let teamState: "ready" | "working" | "waiting" = "ready";
   const pending = new Map<string, { sent: number; warned: boolean }>();
   let ui: {
     setStatus(key: string, value: string | undefined): void;
@@ -45,17 +46,23 @@ export default function boothPortal(pi: ExtensionAPI) {
 
   // OMP supplies the editor and terminal mechanics; booth owns the product
   // identity shown in the terminal title.
+  function renderHeader(theme: { fg: (name: string, text: string) => string }) {
+    const state = teamState === "working" ? "working" : teamState === "waiting" ? "waiting" : "ready";
+    return new Text(theme.fg("accent", " booth ") + theme.fg("muted", `  team agents · ${state}`));
+  }
+
   function brandBooth() {
     ui?.setTitle("booth");
-    ui?.setStatus("booth-brand", "booth  ·  team agents");
+    ui?.setStatus("booth-brand", `booth  ·  team agents  ·  ${teamState}`);
     // OMP's built-in header carries its own product name. Replace it with the
     // booth identity while leaving the editor, palette, history and shortcuts
     // supplied by the interaction kernel intact.
-    ui?.setHeader?.(((_tui: unknown, theme: { fg: (name: string, text: string) => string }) =>
-      new Text(theme.fg("accent", " booth ") + theme.fg("muted", "  team agents"))) as unknown);
+    ui?.setHeader?.(((_tui: unknown, theme: { fg: (name: string, text: string) => string }) => renderHeader(theme)) as unknown);
   }
 
   function status() {
+    teamState = pending.size ? "working" : "ready";
+    brandBooth();
     ui?.setStatus("booth-portal", pending.size ? `团队正在处理 · ${pending.size} 条消息` : "团队服务已连接");
   }
 
@@ -102,8 +109,11 @@ export default function boothPortal(pi: ExtensionAPI) {
       await autoSetup();
       problem = await readiness();
     }
-    if (problem) pi.sendMessage({ customType: "booth-portal-reply", content: problem, display: true, attribution: "agent" }, { triggerTurn: false });
-    else status();
+    if (problem) {
+      teamState = "waiting";
+      brandBooth();
+      pi.sendMessage({ customType: "booth-portal-system", content: problem, display: true, attribution: "agent" }, { triggerTurn: false });
+    } else status();
   });
   pi.on("session_switch", () => brandBooth());
   pi.on("session_clear", () => brandBooth());
@@ -153,6 +163,8 @@ export default function boothPortal(pi: ExtensionAPI) {
 
   pi.registerMessageRenderer("booth-portal-user", (message, _options, theme) =>
     new Text(theme.fg("accent", `you  ›  ${String(message.content)}`)));
+  pi.registerMessageRenderer("booth-portal-system", (message, _options, theme) =>
+    new Text(theme.fg("muted", `booth  ·  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
     const kind = String((message as { kind?: unknown }).kind || "reply");
     const label = kind === "worker_report" || kind === "worker_attention" ? "team" : "booth";
