@@ -198,7 +198,7 @@ pub fn init(cfg: &Config) -> Result<(), String> {
 
     fs::create_dir_all(&cfg.state_dir)
         .map_err(|error| format!("cannot create {}: {error}", cfg.state_dir.display()))?;
-    println!("\nready — `booth up`, then `/booth-setup owner/repo` in the console");
+    println!("\nready — `booth up`; the console reads the current Git repository automatically");
     Ok(())
 }
 

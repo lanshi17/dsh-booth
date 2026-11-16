@@ -74,10 +74,27 @@ export default function boothPortal(pi: ExtensionAPI) {
     }
   }
 
+  async function autoSetup(): Promise<void> {
+    try {
+      await pi.exec(
+        process.env.BOOTH_BINARY || "booth",
+        ["--url", process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`, "setup"],
+        { timeout: 180000 },
+      );
+    } catch {
+      // Readiness below reports the actionable Git/GitHub error. Auto setup is
+      // best effort so a non-Git working directory still opens the console.
+    }
+  }
+
   pi.on("session_start", async (_event, ctx) => {
     ui = ctx.ui;
     brandBooth();
-    const problem = await readiness();
+    let problem = await readiness();
+    if (problem) {
+      await autoSetup();
+      problem = await readiness();
+    }
     if (problem) pi.sendMessage({ customType: "booth-portal-reply", content: problem, display: true, attribution: "agent" }, { triggerTurn: false });
     else status();
   });
@@ -86,16 +103,17 @@ export default function boothPortal(pi: ExtensionAPI) {
   pi.on("session_branch", () => brandBooth());
 
   pi.registerCommand("booth-setup", {
-    description: "Configure the repository and local portal",
+    description: "Configure the current Git repository and local portal",
     handler: async (args, ctx) => {
-      const match = args.trim().match(/^([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)(?:\s+(.+))?$/);
+      const match = args.trim().match(/^(?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+))?(?:\s+(.+))?$/);
       if (!match) {
-        ctx.ui.notify("用法：/booth-setup owner/repo [工作目录]；先运行 gh auth login。", "warning");
+        ctx.ui.notify("用法：/booth-setup [owner/repo] [工作目录]；默认读取当前 Git 项目。", "warning");
         return;
       }
       ctx.ui.notify("正在配置团队服务，可能需要一点时间…", "info");
       try {
-        const argv = ["--url", process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`, "setup", match[1]];
+        const argv = ["--url", process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`, "setup"];
+        if (match[1]) argv.push(match[1]);
         if (match[2]) argv.push(match[2]);
         const result = await pi.exec(process.env.BOOTH_BINARY || "booth", argv, { timeout: 180000 });
         const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
