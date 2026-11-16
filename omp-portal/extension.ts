@@ -40,12 +40,19 @@ export default function boothPortal(pi: ExtensionAPI) {
   let ui: {
     setStatus(key: string, value: string | undefined): void;
     setTitle(title: string): void;
+    setHeader?: (factory: unknown) => void;
   } | undefined;
 
   // OMP supplies the editor and terminal mechanics; booth owns the product
   // identity shown in the terminal title.
   function brandBooth() {
     ui?.setTitle("booth");
+    ui?.setStatus("booth-brand", "booth · dsh-superagent");
+    // OMP's built-in header carries its own product name. Replace it with the
+    // booth identity while leaving the editor, palette, history and shortcuts
+    // supplied by the interaction kernel intact.
+    ui?.setHeader?.(((_tui: unknown, theme: { fg: (name: string, text: string) => string }) =>
+      new Text(theme.fg("accent", "booth"))) as unknown);
   }
 
   function status() {
