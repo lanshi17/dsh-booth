@@ -168,7 +168,7 @@ Every accepted instruction also gets an immediate `booth › queued for team` li
 Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.
 Worker reports and follow-ups are rendered as readable `team ›` updates; the underlying relay JSON never replaces the portal conversation, and none of these progress relays settles the waiting message by itself.
 The portal outbox cursor is kept in the booth state directory, so replies produced while the console is closed appear when it is opened again.
-Use `/booth-now` for a compact board with the current message queue, task counts, and active team work.
+Use `/booth-now` for a compact board with the current message queue, full task counts, and active team work.
 Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the choice is kept across booth restarts, while the board and status rail continue updating.
 Use `/booth-stop <task-id>` to stop a delegated worker from the booth console; the command also accepts the worker ticket ID.
 Use `/booth-retry <task-id>` to start a fresh assignment for a stopped or failed worker.

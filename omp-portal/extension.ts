@@ -270,7 +270,7 @@ export default function boothPortal(pi: ExtensionAPI) {
         const state = taskState(task.ticket?.state || "planned");
         counts.set(state, (counts.get(state) || 0) + 1);
       }
-      lines.push(`tasks: ${tasks.length} · ${counts.get("working") || 0} working · ${counts.get("waiting") || 0} waiting · ${counts.get("done") || 0} done`);
+      lines.push(`tasks: ${tasks.length} · ${counts.get("working") || 0} working · ${counts.get("waiting") || 0} waiting · ${counts.get("blocked") || 0} blocked · ${counts.get("planned") || 0} planned · ${counts.get("done") || 0} done`);
       const focus = tasks.filter(task => ["working", "waiting", "blocked"].includes(taskState(task.ticket?.state || "planned"))).slice(0, 4);
       if (focus.length) {
         lines.push("focus:");
