@@ -7,7 +7,7 @@
  */
 import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionUIContext } from "@oh-my-pi/pi-coding-agent";
 import { Text } from "@oh-my-pi/pi-tui";
 
 type PortalReply = { id?: string; text?: string; kind?: string; thread?: string };
@@ -29,12 +29,17 @@ function relayOf(text: string): RelayPayload | undefined {
 
 function relayText(relay: RelayPayload): string {
   const title = relay.ticket?.title || relay.ticket?.ticket_id || "team task";
-  if (relay.kind === "worker_attention") return `waiting for a decision · ${title}`;
+  if (relay.kind === "worker_attention") return `needs your decision\n${title}`;
   if (relay.kind === "follow_up") {
-    const delivered = relay.ticket?.title || "worker task";
-    return `team follow-up · ${delivered}`;
+    return `follow-up routed to the team\n${title}`;
   }
-  return `team update · ${title} · ${relay.state || relay.ticket?.state || "reported"}\n${relay.summary || "The team sent an update."}`;
+  const state = relay.state || relay.ticket?.state || "reported";
+  const label = ["completed", "merged", "ready", "done"].includes(state)
+    ? "finished"
+    : ["blocked", "failed"].includes(state)
+      ? state
+      : "working update";
+  return `${label}\n${title}\n${relay.summary || "The team sent an update."}`;
 }
 
 const stateDir = process.env.BOOTH_STATE_DIR || join(process.env.HOME || ".", ".dsh", "state", process.env.BOOTH_PROFILE || "superagent");
@@ -52,6 +57,14 @@ type BoothTask = {
   dependsOn?: string[];
   depends_on?: string[];
   ticket?: { ticket_id?: string; title?: string; state?: string };
+};
+
+type TaskPulse = {
+  total: number;
+  working: number;
+  waiting: number;
+  blocked: number;
+  focus?: string;
 };
 
 async function portalTasks(maxPages = 20): Promise<BoothTask[]> {
@@ -101,6 +114,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   let polling = false;
   let teamState: "ready" | "working" | "waiting" = "ready";
   const pending = new Map<string, { sent: number; warned: boolean }>();
+  let taskPulse: TaskPulse = { total: 0, working: 0, waiting: 0, blocked: 0 };
   const taskSnapshot = new Map<string, { state: string; title: string }>();
   let taskSnapshotReady = false;
   let watchMode = true;
@@ -108,11 +122,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     try { watchMode = (await readFile(watchFile, "utf8")).trim() !== "off"; }
     catch { /* first launch defaults to live team events */ }
   })();
-  let ui: {
-    setStatus(key: string, value: string | undefined): void;
-    setTitle(title: string): void;
-    setHeader?: (factory: unknown) => void;
-  } | undefined;
+  let ui: Pick<ExtensionUIContext, "setStatus" | "setTitle" | "setHeader"> | undefined;
 
   // OMP supplies the editor and terminal mechanics; booth owns the product
   // identity shown in the terminal title.
@@ -124,6 +134,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   function brandBooth() {
     ui?.setTitle("booth");
     ui?.setStatus("booth-brand", `booth  ·  team agents  ·  ${teamState}`);
+    updatePulseStatus();
     // OMP's built-in header carries its own product name. Replace it with the
     // booth identity while leaving the editor, palette, history and shortcuts
     // supplied by the interaction kernel intact.
@@ -132,6 +143,26 @@ export default function boothPortal(pi: ExtensionAPI) {
 
   function updateWatchStatus() {
     ui?.setStatus("booth-watch", watchMode ? "watch · live team events" : undefined);
+  }
+
+  function pulseText(): string {
+    if (pending.size) {
+      const oldest = Math.min(...[...pending.values()].map(item => item.sent));
+      const seconds = Math.max(0, Math.floor((Date.now() - oldest) / 1000));
+      return `portal · ${pending.size} queued · ${seconds}s`;
+    }
+    if (taskPulse.waiting > 0) {
+      return `team · ${taskPulse.waiting} needs you`;
+    }
+    if (taskPulse.working > 0) {
+      return `team · ${taskPulse.working} working${taskPulse.focus ? ` · ${taskPulse.focus}` : ""}`;
+    }
+    if (teamState === "waiting") return "team · waiting for you";
+    return "team · ready";
+  }
+
+  function updatePulseStatus() {
+    ui?.setStatus("booth-pulse", pulseText());
   }
 
   function status() {
@@ -152,13 +183,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   }
 
   function updatePendingRail() {
-    if (!pending.size) {
-      ui?.setStatus("booth-portal", "团队服务已连接");
-      return;
-    }
-    const oldest = Math.min(...[...pending.values()].map(item => item.sent));
-    const seconds = Math.max(0, Math.floor((Date.now() - oldest) / 1000));
-    ui?.setStatus("booth-portal", `team · working · ${pending.size} messages · ${seconds}s`);
+    updatePulseStatus();
   }
 
   const taskState = (state: string) => state.includes("person") || state.includes("waiting") ? "waiting"
@@ -199,13 +224,13 @@ export default function boothPortal(pi: ExtensionAPI) {
       const waiting = tasks.filter(task => taskState(task.ticket?.state || "planned") === "waiting").length;
       const active = tasks.filter(task => taskState(task.ticket?.state || "planned") === "working").length;
       const activeTitle = tasks.find(task => taskState(task.ticket?.state || "planned") === "working")?.ticket?.title;
+      const blocked = tasks.filter(task => taskState(task.ticket?.state || "planned") === "blocked").length;
+      taskPulse = { total: tasks.length, working: active, waiting, blocked, focus: activeTitle };
       if (pending.size) teamState = "working";
       else if (waiting) teamState = "waiting";
       else teamState = "ready";
       brandBooth();
-      ui?.setStatus("booth-tasks", tasks.length
-        ? `team · ${tasks.length} tasks · ${active} working · ${waiting} waiting${activeTitle ? ` · ${activeTitle}` : ""}`
-        : "team · no delegated tasks");
+      updatePulseStatus();
     } catch {
       // The local transcript remains usable while the optional task summary is unavailable.
     }
@@ -341,7 +366,6 @@ export default function boothPortal(pi: ExtensionAPI) {
     } else status();
   });
   pi.on("session_switch", () => brandBooth());
-  pi.on("session_clear", () => brandBooth());
   pi.on("session_branch", () => brandBooth());
 
   pi.registerCommand("booth-setup", {
@@ -538,7 +562,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   pi.registerMessageRenderer("booth-task-control", (message, _options, theme) =>
     new Text(theme.fg("accent", `booth  ›  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
-    const kind = String((message as { kind?: unknown }).kind || "reply");
+    const kind = String((message as { details?: { kind?: unknown } }).details?.kind || "reply");
     const label = kind === "worker_report" || kind === "worker_attention" ? "team" : "booth";
     return new Text(theme.fg(label === "team" ? "accent" : "text", `${label}  ›  ${String(message.content)}`));
   });
@@ -563,7 +587,7 @@ export default function boothPortal(pi: ExtensionAPI) {
             if (reply.text && (!reply.thread || reply.thread === activeThread)) {
               const relay = relayOf(reply.text);
               const kind = relay?.kind || reply.kind;
-              pi.sendMessage({ customType: "booth-portal-reply", content: relay ? relayText(relay) : reply.text, kind, display: true, attribution: "agent" }, { triggerTurn: false });
+              pi.sendMessage({ customType: "booth-portal-reply", content: relay ? relayText(relay) : reply.text, details: { kind }, display: true, attribution: "agent" }, { triggerTurn: false });
               settlePending(kind);
               status();
             }
