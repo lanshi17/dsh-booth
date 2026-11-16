@@ -318,7 +318,7 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
             std::env::current_exe().map_err(|error| format!("cannot locate booth: {error}"))?,
         )
         .status()
-        .map_err(|error| format!("cannot launch the booth frontend (`omp`): {error}"))?;
+        .map_err(|error| format!("cannot launch the booth interaction frontend: {error}"))?;
     if status.success() {
         Ok(())
     } else {

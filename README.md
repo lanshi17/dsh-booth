@@ -367,7 +367,7 @@ the default, then renamed to `provider.json.migrated` and the stale `provider.ym
   ignored. A new view field does not break the console, only a renamed route does.
 - **Two-second poll.** The header refreshes on start and after each command, and a light timer
   rereads `/state` and the outbox every two seconds so acknowledgements and replies arrive
-  while you watch. A future `booth watch` can push instead.
+  while you watch. `/booth-watch` controls whether task state changes are added to the transcript.
 - **Work enters through a Source, never a hidden route.** The management API has no "submit a
   request" route, and booth does not invent one: `local-source/` is a real Source kind, loaded
   by the profile next to `dsh-superagent/github-watch`, so instructions pass the same Policy
