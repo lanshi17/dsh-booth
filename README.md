@@ -168,6 +168,7 @@ The portal outbox cursor is kept in the booth state directory, so replies produc
 Use `/booth-now` for a compact board with the current message queue, task counts, and active team work.
 Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the board and status rail continue updating.
 Use `/booth-stop <task-id>` to stop a delegated worker from the booth console; the command also accepts the worker ticket ID.
+Use `/booth-retry <task-id>` to start a fresh assignment for a stopped or failed worker.
 
 | Key | Does |
 | --- | --- |

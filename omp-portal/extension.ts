@@ -421,6 +421,38 @@ export default function boothPortal(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("booth-retry", {
+    description: "Retry a delegated team task or ticket",
+    handler: async (args, ctx) => {
+      const requestedId = args.trim();
+      if (!requestedId) {
+        ctx.ui.notify("用法：/booth-retry <任务 ID>；先运行 /booth-tasks 查看任务。", "warning");
+        return;
+      }
+      try {
+        const task = await taskTicket(requestedId);
+        if (!task) {
+          ctx.ui.notify(`找不到任务或 ticket ${requestedId}；请先运行 /booth-tasks 刷新列表。`, "warning");
+          return;
+        }
+        if (!task.ticketId) {
+          ctx.ui.notify(`任务 ${task.taskId} 还没有启动 worker，无法重试。`, "warning");
+          return;
+        }
+        const result = await pi.exec(process.env.BOOTH_BINARY || "booth", ["--url", apiBase(), "retry", task.ticketId], { timeout: 30000 });
+        if (result.code !== 0) throw new Error([result.stdout, result.stderr].filter(Boolean).join("\n").trim() || `booth retry exited with ${result.code}`);
+        pi.sendMessage({
+          customType: "booth-task-control",
+          content: `retrying · task [${task.taskId}] · ticket ${task.ticketId}`,
+          display: true,
+          attribution: "agent",
+        }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`重试任务失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
   pi.on("input", async (event) => {
     const text = event.text.trim();
     if (!text || text.startsWith("/")) return;
