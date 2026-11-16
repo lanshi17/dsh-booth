@@ -39,6 +39,8 @@ export default function boothPortal(pi: ExtensionAPI) {
   let polling = false;
   let teamState: "ready" | "working" | "waiting" = "ready";
   const pending = new Map<string, { sent: number; warned: boolean }>();
+  const taskSnapshot = new Map<string, { state: string; title: string }>();
+  let taskSnapshotReady = false;
   let ui: {
     setStatus(key: string, value: string | undefined): void;
     setTitle(title: string): void;
@@ -77,25 +79,51 @@ export default function boothPortal(pi: ExtensionAPI) {
     ui?.setStatus("booth-portal", `team · working · ${pending.size} messages · ${seconds}s`);
   }
 
+  const taskState = (state: string) => state.includes("person") || state.includes("waiting") ? "waiting"
+    : state.includes("failed") || state.includes("blocked") ? "blocked"
+    : state.includes("completed") || state.includes("merged") || state.includes("ended") ? "done"
+    : state.includes("working") || state.includes("evaluating") || state.includes("accepted") ? "working" : "planned";
+
+  function emitTaskEvents(tasks: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }>) {
+    const current = new Map<string, { state: string; title: string }>();
+    for (const task of tasks) {
+      if (!task.id) continue;
+      const state = taskState(task.ticket?.state || "planned");
+      const title = task.ticket?.title || task.instruction || task.id;
+      current.set(task.id, { state, title });
+      const previous = taskSnapshot.get(task.id);
+      if (taskSnapshotReady && previous && previous.state !== state) {
+        pi.sendMessage({
+          customType: "booth-task-event",
+          content: `team · ${task.id}\n${previous.state} → ${state}\n${title}`,
+          display: true,
+          attribution: "agent",
+        }, { triggerTurn: false });
+      }
+    }
+    taskSnapshot.clear();
+    for (const [id, value] of current) taskSnapshot.set(id, value);
+    taskSnapshotReady = true;
+  }
+
   async function refreshTaskStatus(): Promise<void> {
     try {
       const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
         headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
       });
       if (!response.ok) return;
-      const view = await response.json() as { items?: Array<{ tasks?: Array<{ ticket?: { state?: string } }> }> };
+      const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
       const tasks = (view.items || []).flatMap(item => item.tasks || []);
-      const waiting = tasks.filter(task => (task.ticket?.state || "").includes("person") || (task.ticket?.state || "").includes("waiting")).length;
-      const active = tasks.filter(task => {
-        const state = task.ticket?.state || "";
-        return state.includes("working") || state.includes("evaluating") || state.includes("accepted");
-      }).length;
+      emitTaskEvents(tasks);
+      const waiting = tasks.filter(task => taskState(task.ticket?.state || "planned") === "waiting").length;
+      const active = tasks.filter(task => taskState(task.ticket?.state || "planned") === "working").length;
+      const activeTitle = tasks.find(task => taskState(task.ticket?.state || "planned") === "working")?.ticket?.title;
       if (pending.size) teamState = "working";
       else if (waiting) teamState = "waiting";
       else teamState = "ready";
       brandBooth();
       ui?.setStatus("booth-tasks", tasks.length
-        ? `team · ${tasks.length} tasks · ${active} working · ${waiting} waiting`
+        ? `team · ${tasks.length} tasks · ${active} working · ${waiting} waiting${activeTitle ? ` · ${activeTitle}` : ""}`
         : "team · no delegated tasks");
     } catch {
       // The local transcript remains usable while the optional task summary is unavailable.
@@ -110,13 +138,9 @@ export default function boothPortal(pi: ExtensionAPI) {
     const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
     const tasks = (view.items || []).flatMap(item => item.tasks || []);
     if (!tasks.length) return "team tasks\n  no delegated tasks";
-    const cardState = (state: string) => state.includes("person") || state.includes("waiting") ? "waiting"
-      : state.includes("failed") || state.includes("blocked") ? "blocked"
-      : state.includes("completed") || state.includes("merged") || state.includes("ended") ? "done"
-      : state.includes("working") || state.includes("evaluating") || state.includes("accepted") ? "working" : "planned";
     const icon = (state: string) => state === "waiting" ? "◌" : state === "working" ? "●" : state === "blocked" ? "!" : state === "done" ? "✓" : "○";
     return ["team tasks", ...tasks.map(task => {
-      const state = cardState(task.ticket?.state || "planned");
+      const state = taskState(task.ticket?.state || "planned");
       const title = task.ticket?.title || task.instruction || task.id || "task";
       return `${icon(state)}  ${state.padEnd(8)}  [${task.id || "task"}]  ${title}`;
     })].join("\n");
@@ -282,6 +306,8 @@ export default function boothPortal(pi: ExtensionAPI) {
   pi.registerMessageRenderer("booth-portal-system", (message, _options, theme) =>
     new Text(theme.fg("muted", `booth  ·  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-task-card", (message, _options, theme) =>
+    new Text(theme.fg("accent", String(message.content))));
+  pi.registerMessageRenderer("booth-task-event", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
     const kind = String((message as { kind?: unknown }).kind || "reply");

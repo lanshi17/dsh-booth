@@ -157,6 +157,7 @@ is connected, processing work, or waiting for a decision. This makes the portal 
 the delegated team activity visible in one stream without exposing worker session mechanics.
 The header state changes with the conversation: `ready`, `working`, or `waiting`.
 The status rail also summarizes delegated work from the portal API, for example `3 tasks · 2 working · 1 waiting`, without opening a separate task screen.
+When a task changes state, booth adds a team event to the transcript automatically; the active task title also appears in the status rail.
 Use `/booth-tasks` to print the current delegated task cards in the transcript.
 Use `/booth-task <id>` to open one task's state, instruction, title, and dependencies.
 Cards normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
