@@ -160,7 +160,7 @@ The status rail also summarizes delegated work from the portal API, for example 
 When a task changes state, booth adds a team event to the transcript automatically; the active task title also appears in the status rail.
 Use `/booth-tasks` to print the current delegated task cards in the transcript.
 Use `/booth-task <id>` to open one task's state, instruction, title, and dependencies.
-Cards normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
+Cards and task details normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
 While messages are in flight, the status rail includes elapsed time so a long-running team task remains visibly active.
 Every accepted instruction also gets an immediate `booth › queued for team` line with a short message ID, before the portal or workers reply.
 Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.

@@ -221,7 +221,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     };
     const task = (view.items || []).flatMap(item => item.tasks || []).find(item => item.id === taskId);
     if (!task) return undefined;
-    const state = task.ticket?.state || "planned";
+    const rawState = task.ticket?.state || "planned";
+    const state = taskState(rawState);
     const dependencies = task.dependsOn || task.depends_on || [];
     const lines = [
       `team task [${task.id || taskId}]`,
