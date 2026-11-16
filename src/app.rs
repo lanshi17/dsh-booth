@@ -767,7 +767,14 @@ impl App {
             self.show_tickets(poll);
         } else {
             self.open = poll.open_total;
-            self.person = poll.person.unwrap_or(0);
+            self.person = poll.person.unwrap_or_else(|| {
+                poll.rows
+                    .iter()
+                    .filter(|row| row.state == "open" && row.stage == "person")
+                    .count()
+                    .try_into()
+                    .unwrap_or(u32::MAX)
+            });
         }
     }
 
@@ -2427,7 +2434,15 @@ impl App {
                 Style::default().fg(TIP),
             ));
         }
-        frame.render_widget(Paragraph::new(compose_top(segments, None, top.width)), top);
+        let (pulse, pulse_color) = self.team_pulse();
+        frame.render_widget(
+            Paragraph::new(compose_top(
+                segments,
+                Some(Span::styled(pulse, Style::default().fg(pulse_color))),
+                top.width,
+            )),
+            top,
+        );
 
         let hint = if self.busy {
             Some(Span::styled("working…", Style::default().fg(Color::Yellow)))
@@ -2509,6 +2524,28 @@ impl App {
                 frame.set_cursor_position(Position::new(x, rect.y));
             }
         }
+    }
+
+    /// The right side of the header is booth's compact team pulse. It answers the question the
+    /// operator has before opening a task board: is the portal queued, does a worker need me, or
+    /// is the team simply available? The longer task cards remain available on demand.
+    fn team_pulse(&self) -> (String, Color) {
+        if !self.pending.is_empty() {
+            return (format!("portal · {} queued", self.pending.len()), TIP);
+        }
+        if self.status.runtime == "connecting" {
+            return ("team · syncing".into(), DIM);
+        }
+        if self.status.runtime == "down" {
+            return ("team · offline".into(), RED);
+        }
+        if self.person > 0 {
+            return (format!("team · {} needs you", self.person), TIP);
+        }
+        if self.open > 0 {
+            return (format!("team · {} active", self.open), CYAN);
+        }
+        ("team · ready".into(), GREEN)
     }
 
     /// What the console is waiting on, in omp's working-row shape: spinner, elapsed, label.
@@ -4033,7 +4070,7 @@ mod transcript_tests {
 #[cfg(test)]
 mod editor_tests {
     use super::*;
-    use crate::model::Decision;
+    use crate::model::{Decision, TicketRow};
     use crate::testkit::FakeApi;
     use serde_json::json;
 
@@ -5179,6 +5216,68 @@ mod editor_tests {
             app.person, 2,
             "the person count comes from the overview, not the window"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_team_pulse_prioritizes_the_next_action() {
+        let (mut app, dir, _api, _env) = editor_with_api("team-pulse");
+        app.status.runtime = "ready".into();
+        assert_eq!(app.team_pulse().0, "team · ready");
+
+        app.open = 4;
+        assert_eq!(app.team_pulse().0, "team · 4 active");
+
+        app.person = 1;
+        assert_eq!(app.team_pulse().0, "team · 1 needs you");
+
+        app.pending.insert(
+            "local-message".into(),
+            Awaiting {
+                sent: Instant::now(),
+                warned: false,
+                stale: false,
+            },
+        );
+        assert_eq!(app.team_pulse().0, "portal · 1 queued");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_team_pulse_explains_startup_and_outage_states() {
+        let (mut app, dir, _api, _env) = editor_with_api("team-pulse-health");
+        assert_eq!(app.team_pulse().0, "team · syncing");
+        app.status.runtime = "down".into();
+        assert_eq!(app.team_pulse().0, "team · offline");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_team_pulse_counts_person_tasks_when_the_page_is_complete() {
+        let (mut app, dir, _api, _env) = editor_with_api("team-pulse-person");
+        app.status.runtime = "ready".into();
+        app.show_worker_details = false;
+        app.show_tickets_if_enabled(TicketPoll {
+            rows: vec![
+                TicketRow {
+                    id: "t-working".into(),
+                    state: "open".into(),
+                    stage: "working".into(),
+                    ..TicketRow::default()
+                },
+                TicketRow {
+                    id: "t-person".into(),
+                    state: "open".into(),
+                    stage: "person".into(),
+                    ..TicketRow::default()
+                },
+            ],
+            open_total: 2,
+            person: None,
+        });
+        assert_eq!(app.open, 2);
+        assert_eq!(app.person, 1);
+        assert_eq!(app.team_pulse().0, "team · 1 needs you");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
