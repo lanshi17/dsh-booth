@@ -1,0 +1,167 @@
+diff --git a/src/app/runtime.ts b/src/app/runtime.ts
+index ce4ff11..94cf5d8 100644
+--- a/src/app/runtime.ts
++++ b/src/app/runtime.ts
+@@ -75,7 +75,8 @@ export class Runtime extends Service implements SourceHost {
+   readonly ready: Promise<void>
+   private readonly board = new HealthBoard()
+   private readonly runtimeHealth = this.board.claim('runtime', { state: 'starting', detail: '' })
+-  readonly masterId: string
++  private currentMasterId = ''
++  get masterId(): string { return this.currentMasterId }
+   private readonly sourceLinks = new TextCache(200_000)
+   private readonly stopped = new AbortController()
+   private readonly disposers: (() => void)[] = []
+@@ -104,7 +105,7 @@ export class Runtime extends Service implements SourceHost {
+         ? environmentOf({ deployment: setup.deployment, sources: this.sources, settings: store.settings() }) : undefined
+       const feishu = () => setup.configured() && !!setup.deployment.feishu
+       const prompts = this.prompts = new Prompts(store, () => machine.promptMaxChars.get(), deployed, feishu)
+-      const masterId = this.masterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
++      const masterId = this.currentMasterId = store.get(KV.runtime.masterId) ?? `orchestrator-${key(machine.stateDir)}`
+       store.set(KV.runtime.masterId, masterId)
+       const commands = this.commands = new Commands(() => setup.deployment, setup.commandEnvironment, this.lifetime)
+       const board = this.board
+@@ -118,10 +119,12 @@ export class Runtime extends Service implements SourceHost {
+       const links: LinkHost = { store, links: this.sourceLinks, commands, sources, lifetime: this.lifetime }
+       const link = (trigger: Trigger, signal?: AbortSignal) => sourceLink(links, trigger, signal)
+       const environment = (ticket: Ticket) => this.ticketEnvironment(ticket)
+-      const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands, masterId, context: ctx,
++      const resources: ResourceHost = { store, pages: new TextCache(4_000_000), prompts, commands,
++        get masterId() { return runtime.masterId }, context: ctx,
+         promptVersion: id => this.sessions.promptVersion(id), mayRead: (id, revision) => this.sessions.mayRead(id, revision),
+         feishuPageSize: () => feishuSettings(sources).readPageSize, sourceLink: link }
+-      const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'), masterId,
++      const sessions = this.sessions = new Sessions({ context: ctx, store, prompts, effects, health: board.claim('models'),
++        get masterId() { return runtime.masterId }, replaceMasterId: id => runtime.replaceMasterId(id),
+         lifetime: this.lifetime,
+         closing: () => this.closing(), environment,
+         tools: (agent, ticket) => ticket ? executorTools(this.toolHost, ticket) : mainTools(this.toolHost, agent) })
+@@ -133,7 +136,7 @@ export class Runtime extends Service implements SourceHost {
+         repliedTo: trigger => repliedTo({ store, sources }, trigger) })
+       this.assessor = new MasterAssessor({ get engine() { return runtime.engine }, commands, get deployment() { return setup.deployment }, effects,
+         settings: () => store.settings(), paused: () => this.paused(), threadContext: trigger => sources.threadContext(trigger),
+-        deliver: (id, text) => sessions.prompt(masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
++        deliver: (id, text) => sessions.prompt(runtime.masterId, id, text, 'steer'), candidateCard: candidate => candidateCard(links, candidate) })
+       const outbox = this.outbox = new Outbox({ store, effects, sources, commands, paused: () => this.paused() })
+       const { assessor, executor } = this
+       const policy = () => settingsPolicy(store.settings(), sources)
+@@ -199,6 +202,10 @@ export class Runtime extends Service implements SourceHost {
+   pump(): Promise<void> { return this.passes.pump() }
+   sendReplies(): Promise<void> { return this.outbox.sent() }
+   private closing(): boolean { return this.closingFlag }
++  private replaceMasterId(id: string): void {
++    this.currentMasterId = id
++    this.store.set(KV.runtime.masterId, id)
++  }
+   /** Hold evaluation, dispatch, and outbound delivery while paused or awaiting setup; sources still record incoming triggers. */
+   private paused(): boolean { return !this.setup.configured() || this.store.settings().paused }
+   private async initialize(): Promise<void> {
+@@ -221,8 +228,9 @@ export class Runtime extends Service implements SourceHost {
+   }
+   private httpHost(): HttpHost {
+     const runtime = this
+-    const { store, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks, setup, passes } = this
+-    return { store, portal: this.portal, sources, prompts, sessions, settings, engine, executor, health, machine, masterId, ready, sourceLinks,
++    const { store, sources, prompts, sessions, settings, engine, executor, health, machine, ready, sourceLinks, setup, passes } = this
++    return { store, portal: this.portal, sources, prompts, sessions, settings, engine, executor, health, machine,
++      get masterId() { return runtime.masterId }, ready, sourceLinks,
+       get deployment() { return setup.deployment },
+       get setupProblem() { return setup.problem }, get feishuProblem() { return setup.feishuProblem },
+       configured: () => setup.configured(), links: () => runtime.links(), ticketEnvironment: ticket => runtime.ticketEnvironment(ticket),
+diff --git a/src/app/sessions.ts b/src/app/sessions.ts
+index 1a22388..d56e77f 100644
+--- a/src/app/sessions.ts
++++ b/src/app/sessions.ts
+@@ -30,6 +30,8 @@ export interface SessionsHost {
+   /** The `models` health entry, which reports managed sessions waiting on a model-budget retry. */
+   readonly health: HealthEntry
+   readonly masterId: string
++  /** Persist a replacement main Session ID after DSH returns a missing session as an internal query error. */
++  replaceMasterId(id: string): void
+   readonly lifetime: AbortSignal
+   closing(): boolean
+   /** Execution environment variables for `ticket`, rendered into its worker's system prompt. */
+@@ -144,6 +146,14 @@ export class Sessions {
+       await ctx.sessionController.create({ sessionId: id as SessionId, workspaceId: workspace.id,
+         agentPreset: role === 'worker' ? WORKER_PRESET : ROUTER_PRESET })
+       result = await ctx.sessionController.resolveAgent(id as SessionId)
++    } else if ('error' in result && role === 'orchestrator' && missingSessionQuery(result.error, id)) {
++      // Some DSH installations surface the missing query as gateway/internal instead of
++      // session/not-found. A nameless create avoids querying the missing ID; persist the
++      // returned ID before using it.
++      const created = await ctx.sessionController.create({ cwd, agentPreset: ROUTER_PRESET })
++      id = created.sessionId
++      this.host.replaceMasterId(id)
++      result = await ctx.sessionController.resolveAgent(id as SessionId)
+     }
+     if ('error' in result) throw result.error
+     const settings = this.host.store.settings()
+@@ -350,3 +360,11 @@ export class Sessions {
+   /** Releases prompt sections, skills, and tools registered by `Sessions` across all decorated agents. */
+   dispose(): void { for (const agent of [...this.bindings.keys()]) this.release(agent) }
+ }
++
++function missingSessionQuery(error: unknown, sessionId: string): boolean {
++  if (!error || typeof error !== 'object') return false
++  const remote = error as { code?: unknown; message?: unknown }
++  return remote.code === 'gateway/internal' && typeof remote.message === 'string'
++    && remote.message.includes(`resume failed for session "${sessionId}"`)
++    && remote.message.includes(`SessionQueryError: session "${sessionId}" not found`)
++}
+diff --git a/tests/runtime.spec.ts b/tests/runtime.spec.ts
+index fd737f2..ee4c8c4 100644
+--- a/tests/runtime.spec.ts
++++ b/tests/runtime.spec.ts
+@@ -160,8 +160,9 @@ beforeEach(async () => {
+   restricts = new Map()
+   deliveries = vi.fn()
+   controller = {
+-    create: vi.fn(async ({ sessionId, agentPreset }) => {
+-      if (agents.has(sessionId)) return
++    create: vi.fn(async ({ sessionId: requestedId, agentPreset }: { sessionId?: string; agentPreset?: string }) => {
++      const sessionId = requestedId ?? `orchestrator-created-${agents.size + 1}`
++      if (agents.has(sessionId)) return { sessionId }
+       const agentCtx = new Context()
+       const preset = {}
+       const inherited = ['bash', 'read', 'read_image', 'skill', 'job_output', 'job_list', 'job_kill', 'grep', 'web_search',
+@@ -197,6 +198,7 @@ beforeEach(async () => {
+       })
+       agents.set(sessionId, { id: sessionId, ctx: agentCtx, inbox, followup: deliver('queue'), steer: deliver('steer'), status: 'idle', inject: vi.fn(), session: { id: sessionId, header: { agentPreset }, snapshotEvents: () => modelEvents, requestHeader: () => undefined, append: vi.fn((type: string, data: unknown) => { modelEvents.push({ type, data }) }) }, cancel: vi.fn(), whenIdle: async () => {} } as never)
+       bindScopeParent(agents.get(sessionId)!, preset)
++      return { sessionId }
+     }),
+     selectModel: vi.fn(async () => {}), resolveAgent: vi.fn(async id => agents.has(id) ? { agent: agents.get(id) } : { error: { code: 'session/not-found' } }), rename: vi.fn(async () => {}),
+     prompt: vi.fn(() => { throw new Error('Plugin delivery must not use user RPC') }),
+@@ -216,6 +218,31 @@ beforeEach(async () => {
+ })
+ afterEach(async () => { expect(controller.prompt).not.toHaveBeenCalled(); await runtime?.stop(); vi.restoreAllMocks(); rmSync(directory, { recursive: true, force: true }) })
+-
++
++it('creates and persists a fresh main Session when DSH misreports a missing persisted session', async () => {
++  const staleId = 'orchestrator-stale-query'
++  await runtime.stop()
++  const seeded = new Store(join(directory, 'orchestrator.sqlite'))
++  seeded.set(KV.runtime.masterId, staleId)
++  seeded.close()
++
++  controller.resolveAgent.mockImplementation(async id => {
++    if (id === staleId) return { error: { code: 'gateway/internal', message: `resume failed for session "${staleId}": SessionQueryError: session "${staleId}" not found` } }
++    const agent = agents.get(id)
++    return agent ? { agent } : { error: { code: 'session/not-found' } }
++  })
++  const ctx = new Context()
++  for (const [name, service] of Object.entries(services)) ctx.reflect.provide(name, service)
++  runtime = new Runtime(ctx, testMachine({ stateDir: directory }), restarts)
++  await runtime.ready
++
++  expect(runtime.masterId).toMatch(/^orchestrator-created-/)
++  expect(runtime.masterId).not.toBe(staleId)
++  expect(runtime.store.get(KV.runtime.masterId)).toBe(runtime.masterId)
++  expect(agents.has(runtime.masterId)).toBe(true)
++  expect(controller.create).toHaveBeenCalledWith({ cwd: directory, agentPreset: 'dsh-superagent-router' })
++  expect((await api('GET', 'state')).body).toMatchObject({ masterId: runtime.masterId })
++})
++
+ it('relays an explicit member mention as a candidate and creates the ticket, acknowledgement, subscription and worker on accept', async () => {
+   const { trigger, ticket, sessionId } = await acceptedTicket()
+   const candidate = relays(runtime.masterId).find(item => item.kind === 'candidate')!

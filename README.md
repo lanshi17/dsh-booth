@@ -45,7 +45,7 @@ For development from source:
 git clone --recursive git@github.com:lanshi17/dsh-booth.git
 cd dsh-booth
 cargo install --path .          # installs `booth`; or cargo build --release
-booth init                      # install dependencies, build the bundle, and link the profile
+booth init                      # apply booth compatibility fixes, build the bundle, and link the profile
 booth up                        # dsh --profile superagent --no-open
 booth                           # the console
 ```
