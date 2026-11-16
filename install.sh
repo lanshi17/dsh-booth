@@ -159,5 +159,33 @@ if ! have omp || ! omp --version >/dev/null 2>&1; then
 fi
 have omp || die 'OMP installation failed; booth is running, install OMP with: curl -fsSL https://omp.sh/install | sh'
 
+# Bun's global installer can leave OMP's platform package out when an existing
+# source install is reused. OMP itself still answers `--version`, but the first
+# real console start then fails when pi-natives tries to load its .node addon.
+# Repair only that source-install shape; the standalone OMP binary carries its
+# native addon and has no @oh-my-pi/pi-natives package to repair.
+ensure_omp_native() {
+  native_package="@oh-my-pi/pi-natives-$node_os_arch"
+  global_bin=$(bun pm bin -g 2>/dev/null || true)
+  [ -n "$global_bin" ] || return 0
+  global_modules="$(dirname "$global_bin")/install/global/node_modules"
+  wrapper="$global_modules/@oh-my-pi/pi-natives"
+  [ -f "$wrapper/package.json" ] || return 0
+
+  version=$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$wrapper/package.json" 2>/dev/null || true)
+  [ -n "$version" ] || die "cannot determine the installed OMP native package version"
+  leaf="$global_modules/$native_package"
+  if find "$leaf" -maxdepth 2 -type f -name "pi_natives.${node_os_arch}*.node" -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+
+  say "repairing OMP native addon ($native_package@$version)"
+  bun add --global --exact "$native_package@$version"
+  find "$leaf" -maxdepth 2 -type f -name "pi_natives.${node_os_arch}*.node" -print -quit 2>/dev/null | grep -q . \
+    || die "OMP native addon installation failed; run: bun add --global --exact $native_package@$version"
+}
+
+ensure_omp_native
+
 say 'opening the booth console'
 exec booth </dev/tty >/dev/tty
