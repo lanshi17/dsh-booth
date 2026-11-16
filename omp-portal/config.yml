@@ -9,6 +9,10 @@ tui:
   # The team pulse in the booth footer carries run state; do not duplicate it in
   # the upstream terminal title while the portal extension owns the title.
   titleState: false
+terminal:
+  # Keep the upstream OSC 7501 `app=omp` marker out of terminal status integrations;
+  # booth's own pulse is the source of truth for portal and worker activity.
+  programStatus: false
 startup:
   setupWizard: false
   showSplash: false
