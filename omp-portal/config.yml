@@ -2,3 +2,4 @@
 startup:
   setupWizard: false
   showSplash: false
+  quiet: true

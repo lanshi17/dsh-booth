@@ -6,6 +6,11 @@
 and shortcuts, then routes the conversation to the team's portal agent. The terminal is branded
 `booth`; the team backend is `dsh-superagent`.
 
+The visible product name is always `booth`. oh-my-pi is retained as the implementation source for
+the terminal interaction layer and under its MIT license; its upstream command and package names
+remain internal compatibility details. This separation lets booth keep the familiar editor and
+keybindings while the team-agent runtime, portal routing, setup and lifecycle remain booth-owned.
+
 ## What is in the repository
 
 `superagent/` is a git submodule pinned to one commit of
