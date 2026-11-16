@@ -92,6 +92,22 @@ export default function boothPortal(pi: ExtensionAPI) {
     }
   }
 
+  async function taskCards(): Promise<string> {
+    const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
+      headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
+    const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
+    const tasks = (view.items || []).flatMap(item => item.tasks || []);
+    if (!tasks.length) return "team tasks\n  no delegated tasks";
+    const icon = (state: string) => state.includes("person") || state.includes("waiting") ? "◌" : state.includes("working") || state.includes("evaluating") || state.includes("accepted") ? "●" : "○";
+    return ["team tasks", ...tasks.map(task => {
+      const state = task.ticket?.state || "planned";
+      const title = task.ticket?.title || task.instruction || task.id || "task";
+      return `${icon(state)}  ${state.padEnd(16)} ${title}`;
+    })].join("\n");
+  }
+
   void stat(outbox).then(s => { offset = s.size; }).catch(() => {});
 
   async function readiness(): Promise<string | undefined> {
@@ -167,6 +183,17 @@ export default function boothPortal(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("booth-tasks", {
+    description: "Show delegated team tasks in the booth transcript",
+    handler: async (_args, ctx) => {
+      try {
+        pi.sendMessage({ customType: "booth-task-card", content: await taskCards(), display: true, attribution: "agent" }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`任务视图失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
   pi.on("input", async (event) => {
     const text = event.text.trim();
     if (!text || text.startsWith("/")) return;
@@ -191,6 +218,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     new Text(theme.fg("accent", `you  ›  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-portal-system", (message, _options, theme) =>
     new Text(theme.fg("muted", `booth  ·  ${String(message.content)}`)));
+  pi.registerMessageRenderer("booth-task-card", (message, _options, theme) =>
+    new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
     const kind = String((message as { kind?: unknown }).kind || "reply");
     const label = kind === "worker_report" || kind === "worker_attention" ? "team" : "booth";
