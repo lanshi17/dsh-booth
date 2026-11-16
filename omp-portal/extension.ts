@@ -18,6 +18,7 @@ const outbox = join(stateDir, "booth-outbox.jsonl");
 const conversationFile = join(stateDir, "booth-conversation");
 const thread = `portal-${crypto.randomUUID()}`;
 let activeThread = thread;
+const apiBase = () => (process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`).replace(/\/$/, "");
 
 async function portalThread(): Promise<string> {
 
@@ -66,10 +67,35 @@ export default function boothPortal(pi: ExtensionAPI) {
     ui?.setStatus("booth-portal", pending.size ? `团队正在处理 · ${pending.size} 条消息` : "团队服务已连接");
   }
 
+  async function refreshTaskStatus(): Promise<void> {
+    try {
+      const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
+        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok) return;
+      const view = await response.json() as { items?: Array<{ tasks?: Array<{ ticket?: { state?: string } }> }> };
+      const tasks = (view.items || []).flatMap(item => item.tasks || []);
+      const waiting = tasks.filter(task => (task.ticket?.state || "").includes("person") || (task.ticket?.state || "").includes("waiting")).length;
+      const active = tasks.filter(task => {
+        const state = task.ticket?.state || "";
+        return state.includes("working") || state.includes("evaluating") || state.includes("accepted");
+      }).length;
+      if (pending.size) teamState = "working";
+      else if (waiting) teamState = "waiting";
+      else teamState = "ready";
+      brandBooth();
+      ui?.setStatus("booth-tasks", tasks.length
+        ? `team · ${tasks.length} tasks · ${active} working · ${waiting} waiting`
+        : "team · no delegated tasks");
+    } catch {
+      // The local transcript remains usable while the optional task summary is unavailable.
+    }
+  }
+
   void stat(outbox).then(s => { offset = s.size; }).catch(() => {});
 
   async function readiness(): Promise<string | undefined> {
-    const base = process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`;
+    const base = apiBase();
     try {
       const response = await fetch(`${base.replace(/\/$/, "")}/orchestrator/api/state`, {
         headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
@@ -92,7 +118,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     try {
       await pi.exec(
         process.env.BOOTH_BINARY || "booth",
-        ["--url", process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`, "setup"],
+        ["--url", apiBase(), "setup"],
         { timeout: 180000 },
       );
     } catch {
@@ -201,6 +227,6 @@ export default function boothPortal(pi: ExtensionAPI) {
       }
     } finally { polling = false; }
   };
-  const interval = setInterval(() => { void poll(); }, 500);
+  const interval = setInterval(() => { void poll(); void refreshTaskStatus(); }, 2000);
   pi.on("session_shutdown", () => clearInterval(interval));
 }
