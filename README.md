@@ -165,6 +165,7 @@ While messages are in flight, the status rail includes elapsed time so a long-ru
 Every accepted instruction also gets an immediate `booth › queued for team` line with a short message ID, before the portal or workers reply.
 Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.
 The portal outbox cursor is kept in the booth state directory, so replies produced while the console is closed appear when it is opened again.
+Use `/booth-now` for a compact board with the current message queue, task counts, and active team work.
 
 | Key | Does |
 | --- | --- |

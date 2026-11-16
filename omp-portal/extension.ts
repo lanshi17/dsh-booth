@@ -196,6 +196,39 @@ export default function boothPortal(pi: ExtensionAPI) {
     return lines.join("\n");
   }
 
+  async function boothNow(): Promise<string> {
+    const lines = ["booth now", `team: ${teamState}`, `messages: ${pending.size}`];
+    if (pending.size) {
+      const oldest = Math.min(...[...pending.values()].map(item => item.sent));
+      lines[2] += ` · oldest ${Math.max(0, Math.floor((Date.now() - oldest) / 1000))}s`;
+    }
+    try {
+      const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
+        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
+      const tasks = (view.items || []).flatMap(item => item.tasks || []);
+      const counts = new Map<string, number>();
+      for (const task of tasks) {
+        const state = taskState(task.ticket?.state || "planned");
+        counts.set(state, (counts.get(state) || 0) + 1);
+      }
+      lines.push(`tasks: ${tasks.length} · ${counts.get("working") || 0} working · ${counts.get("waiting") || 0} waiting · ${counts.get("done") || 0} done`);
+      const focus = tasks.filter(task => ["working", "waiting", "blocked"].includes(taskState(task.ticket?.state || "planned"))).slice(0, 4);
+      if (focus.length) {
+        lines.push("focus:");
+        for (const task of focus) {
+          const state = taskState(task.ticket?.state || "planned");
+          lines.push(`  ${state} · [${task.id || "task"}] ${task.ticket?.title || task.instruction || "untitled task"}`);
+        }
+      } else lines.push("focus: no active team tasks");
+    } catch (error) {
+      lines.push(`tasks: unavailable · ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return lines.join("\n");
+  }
+
   async function saveOffset(): Promise<void> {
     await offsetReady;
     await writeFile(outboxCursor, `${offset}\n`);
@@ -307,6 +340,17 @@ export default function boothPortal(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("booth-now", {
+    description: "Show the current booth team board",
+    handler: async (_args, ctx) => {
+      try {
+        pi.sendMessage({ customType: "booth-now-card", content: await boothNow(), display: true, attribution: "agent" }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`booth 总览失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
   pi.on("input", async (event) => {
     const text = event.text.trim();
     if (!text || text.startsWith("/")) return;
@@ -342,6 +386,8 @@ export default function boothPortal(pi: ExtensionAPI) {
   pi.registerMessageRenderer("booth-task-card", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-task-event", (message, _options, theme) =>
+    new Text(theme.fg("accent", String(message.content))));
+  pi.registerMessageRenderer("booth-now-card", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
     const kind = String((message as { kind?: unknown }).kind || "reply");
