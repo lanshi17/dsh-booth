@@ -166,6 +166,7 @@ Every accepted instruction also gets an immediate `booth › queued for team` li
 Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.
 The portal outbox cursor is kept in the booth state directory, so replies produced while the console is closed appear when it is opened again.
 Use `/booth-now` for a compact board with the current message queue, task counts, and active team work.
+Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the board and status rail continue updating.
 
 | Key | Does |
 | --- | --- |

@@ -53,6 +53,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   const pending = new Map<string, { sent: number; warned: boolean }>();
   const taskSnapshot = new Map<string, { state: string; title: string }>();
   let taskSnapshotReady = false;
+  let watchMode = true;
   let ui: {
     setStatus(key: string, value: string | undefined): void;
     setTitle(title: string): void;
@@ -75,9 +76,14 @@ export default function boothPortal(pi: ExtensionAPI) {
     ui?.setHeader?.(((_tui: unknown, theme: { fg: (name: string, text: string) => string }) => renderHeader(theme)) as unknown);
   }
 
+  function updateWatchStatus() {
+    ui?.setStatus("booth-watch", watchMode ? "watch · live team events" : undefined);
+  }
+
   function status() {
     teamState = pending.size ? "working" : "ready";
     brandBooth();
+    updateWatchStatus();
     updatePendingRail();
   }
 
@@ -114,7 +120,7 @@ export default function boothPortal(pi: ExtensionAPI) {
       const title = task.ticket?.title || task.instruction || task.id;
       current.set(task.id, { state, title });
       const previous = taskSnapshot.get(task.id);
-      if (taskSnapshotReady && previous && previous.state !== state) {
+      if (watchMode && taskSnapshotReady && previous && previous.state !== state) {
         pi.sendMessage({
           customType: "booth-task-event",
           content: `team · ${task.id}\n${previous.state} → ${state}\n${title}`,
@@ -271,6 +277,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     await portalThread();
     ui = ctx.ui;
     brandBooth();
+    updateWatchStatus();
     let problem = await readiness();
     if (problem) {
       await autoSetup();
@@ -351,6 +358,25 @@ export default function boothPortal(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("booth-watch", {
+    description: "Toggle automatic team activity events",
+    handler: async (args, ctx) => {
+      const choice = args.trim().toLowerCase();
+      if (choice && !["on", "off", "true", "false", "live", "mute"].includes(choice)) {
+        ctx.ui.notify("用法：/booth-watch [on|off]；默认实时显示团队状态变化。", "warning");
+        return;
+      }
+      watchMode = choice ? ["on", "true", "live"].includes(choice) : !watchMode;
+      updateWatchStatus();
+      pi.sendMessage({
+        customType: "booth-watch-card",
+        content: watchMode ? "watch · on\nteam state changes will appear automatically" : "watch · off\nteam state changes remain available in /booth-now and /booth-tasks",
+        display: true,
+        attribution: "agent",
+      }, { triggerTurn: false });
+    },
+  });
+
   pi.on("input", async (event) => {
     const text = event.text.trim();
     if (!text || text.startsWith("/")) return;
@@ -389,6 +415,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-now-card", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
+  pi.registerMessageRenderer("booth-watch-card", (message, _options, theme) =>
+    new Text(theme.fg("muted", String(message.content))));
   pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
     const kind = String((message as { kind?: unknown }).kind || "reply");
     const label = kind === "worker_report" || kind === "worker_attention" ? "team" : "booth";
