@@ -1,8 +1,8 @@
-# OMP portal frontend
+# Booth portal frontend
 
 This adapter uses the MIT-licensed [oh-my-pi](https://github.com/can1357/oh-my-pi)
 interaction kernel unchanged. It sends ordinary booth input to dsh-booth's local portal
-source and renders portal replies in the native OMP transcript. Team workers,
+source and renders portal replies in the booth transcript. Team workers,
 tickets, polling, and executor state remain backend details.
 
 The backend currently requires a GitHub account and a repository it can push to.

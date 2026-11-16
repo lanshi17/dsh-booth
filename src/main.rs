@@ -246,8 +246,8 @@ fn main() {
     let api = Api::new(&url);
     let result = match cli.command {
         None => {
-            // The interactive frontend is OMP itself. Booth only owns lifecycle and the portal
-            // adapter; this keeps composer, palette, history, transcript and shortcuts native.
+            // Booth uses the MIT interaction kernel for its composer, palette, history, transcript
+            // and shortcuts while owning the lifecycle and portal adapter.
             service::Config::from_env().and_then(|cfg| {
                 service::start(&cfg)?;
                 launch_omp(&url, &cfg.state_dir)
@@ -280,7 +280,7 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
         });
     if !extension.is_file() {
         return Err(format!(
-            "OMP portal extension is missing: {}",
+            "booth portal extension is missing: {}",
             extension.display()
         ));
     }
@@ -302,7 +302,7 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
     };
     if !config.is_file() {
         return Err(format!(
-            "OMP portal config is missing: {}",
+            "booth portal config is missing: {}",
             config.display()
         ));
     }
@@ -318,11 +318,11 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
             std::env::current_exe().map_err(|error| format!("cannot locate booth: {error}"))?,
         )
         .status()
-        .map_err(|error| format!("cannot launch OMP (`omp`): {error}"))?;
+        .map_err(|error| format!("cannot launch the booth frontend (`omp`): {error}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("OMP exited with {status}"))
+        Err(format!("booth frontend exited with {status}"))
     }
 }
 

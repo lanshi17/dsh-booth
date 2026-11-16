@@ -154,10 +154,10 @@ if [ "${BOOTH_NO_CONSOLE:-}" = 1 ] || [ ! -r /dev/tty ]; then
 fi
 
 if ! have omp || ! omp --version >/dev/null 2>&1; then
-  say 'installing OMP'
+  say 'installing booth frontend'
   curl -fsSL https://omp.sh/install | env PI_INSTALL_DIR="$BIN_DIR" sh -
 fi
-have omp || die 'OMP installation failed; booth is running, install OMP with: curl -fsSL https://omp.sh/install | sh'
+have omp || die 'booth frontend installation failed; booth is running, install it with: curl -fsSL https://omp.sh/install | sh'
 
 # Bun's global installer can leave OMP's platform package out when an existing
 # source install is reused. OMP itself still answers `--version`, but the first

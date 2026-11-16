@@ -28,9 +28,9 @@ The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header mus
 curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
 ```
 
-That downloads the prebuilt booth and team bundle, installs Node, Bun, dsh and OMP only when
-missing, prepares the profile, and starts the service. Headless installs skip OMP. It does not install Rust, Git or compile
-projects on the user's machine. When the terminal is available, it opens OMP; set
+That downloads the prebuilt booth and team bundle, installs Node, Bun, dsh and the booth frontend only when
+missing, prepares the profile, and starts the service. Headless installs skip the frontend. It does not install Rust, Git or compile
+projects on the user's machine. When the terminal is available, it opens booth; set
 `BOOTH_NO_CONSOLE=1` to leave the service running without opening the console. Releases currently
 support Linux x86_64 and ARM64; the installer adds its command directory to the active shell's
 login profile.
@@ -329,7 +329,7 @@ the default, then renamed to `provider.json.migrated` and the stale `provider.ym
 - **One source for models.** booth reads the catalog the service reports and writes changes into
   the profile layer DSH composes, so there is no second configuration to keep in step: no
   `provider.json`, no generated `--patch` overlay, no injected key variables.
-- **The console borrows `omp`'s habits, not just its colours.** Palette entries are fuzzy and
+- **The console keeps booth's interaction model.** Palette entries are fuzzy and
   the picker keeps the selection in view; the editor has readline motion and a kill ring
   (`Ctrl+W`, `Ctrl+U`, `Ctrl+K`, `Ctrl+Y`, `Alt+B`/`F`); `Ctrl+R` searches history; `Ctrl+P`
   opens the palette; the working row is a braille spinner, elapsed time and one label; `/keys`
