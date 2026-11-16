@@ -54,10 +54,10 @@ type BoothTask = {
   ticket?: { ticket_id?: string; title?: string; state?: string };
 };
 
-async function portalTasks(): Promise<BoothTask[]> {
+async function portalTasks(maxPages = 20): Promise<BoothTask[]> {
   const tasks: BoothTask[] = [];
   let offset = 0;
-  for (let page = 0; page < 20; page++) {
+  for (let page = 0; page < maxPages; page++) {
     const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=${offset}&limit=20`, {
       headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
     });
@@ -191,7 +191,10 @@ export default function boothPortal(pi: ExtensionAPI) {
   async function refreshTaskStatus(): Promise<void> {
     await watchReady;
     try {
-      const tasks = await portalTasks();
+      // The rail refreshes every two seconds; recent pages capture active work
+      // without turning a large history into a background request storm. The
+      // explicit task commands still walk every page.
+      const tasks = await portalTasks(2);
       emitTaskEvents(tasks);
       const waiting = tasks.filter(task => taskState(task.ticket?.state || "planned") === "waiting").length;
       const active = tasks.filter(task => taskState(task.ticket?.state || "planned") === "working").length;
