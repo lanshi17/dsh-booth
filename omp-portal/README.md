@@ -16,6 +16,10 @@ When a worker needs a human decision, the relay includes the current question an
 `/booth-answer <text>` remains available for direct replies. Answers use the same portal thread
 as ordinary instructions, so the portal can route the decision back to the waiting worker.
 
+`/booth-focus` is the compact action view: it chooses the next useful move from the live team
+state. It opens the waiting question, points to the board while a portal message is queued, or
+names the active task to watch. No task ID is needed.
+
 The console opens with a booth orientation line (`one portal · many agents`) instead of the
 upstream frontend splash; the editor and keyboard mechanics remain supplied by the MIT kernel.
 

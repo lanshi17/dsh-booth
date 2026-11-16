@@ -159,7 +159,7 @@ The header state changes with the conversation: `ready`, `working`, or `waiting`
 The status rail also summarizes delegated work from the portal API, for example `3 tasks · 2 working · 1 waiting`, without opening a separate task screen.
 The header's right edge keeps a compact team pulse in view: `portal · 2 queued`, `team · 1 needs you`, `team · 3 active`, or `team · ready`; startup and outage states say `syncing` or `offline` directly.
 In the booth interaction surface, the footer uses the same single pulse so portal queue time, human decisions, and worker activity do not compete as separate status rows.
-Each session opens with a small booth orientation line — `one portal · many agents` — plus the two commands that reveal the current team board.
+Each session opens with a small booth orientation line — `one portal · many agents` — plus `/booth-focus`, the command that turns the current team state into one next action.
 The bundled frontend pins booth's ASCII symbol and status-line presets, so the default header does not inherit a machine's Nerd Font `pi`/powerline branding.
 When a task changes state, booth adds a team event to the transcript automatically; the active task title also appears in the status rail.
 Use `/booth-tasks` to print delegated task cards grouped by booth state in the transcript.
@@ -179,6 +179,9 @@ Worker reports and follow-ups are rendered as readable `team ›` updates; the u
 When a worker asks for a decision, booth enriches the relay from the ticket view and prints the current question under `needs your decision`, so the portal can answer without making the person hunt through a task detail screen.
 The portal outbox cursor is kept in the booth state directory, so replies produced while the console is closed appear when it is opened again.
 Use `/booth-now` for a compact board with the current message queue, full task counts, and active team work.
+Use `/booth-focus` when you want a single next move: it opens the team's waiting question, points to
+the live board while a portal message is queued, or shows the active task to watch. It is the shortest
+path through booth's states and does not require a task ID.
 Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the choice is kept across booth restarts, while the board and status rail continue updating.
 Use `/booth-stop <task-id>` to stop a delegated worker from the booth console; the command also accepts the worker ticket ID.
 Use `/booth-retry <task-id>` to start a fresh assignment for a stopped or failed worker.
@@ -208,8 +211,9 @@ line breaks are retained and long lines wrap. The composer shows up to five rows
 Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/portal`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/pause`, `/resume`, `/send`, `/setup`, `/agents`, `/eval` and `/provider`.
-The console adds `/requeue`, `/dismiss`, `/unsubscribe`, `/new`, `/model`, `/login`, `/keys`,
-`/history`, `/refresh`, `/clear` and `/quit`.
+The console adds `/booth-focus`, `/booth-now`, `/booth-tasks`, `/booth-task`, `/booth-answer`,
+`/booth-watch`, `/booth-stop`, `/booth-retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/new`,
+`/model`, `/login`, `/keys`, `/history`, `/refresh`, `/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
 highlighted, and a selection past the eighth entry scrolls the window the way booth's lists do.

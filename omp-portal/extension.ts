@@ -1,7 +1,7 @@
 /**
  * OMP frontend adapter for dsh-booth.
  *
- * OMP supplies the interaction kernel; booth owns the terminal product and the
+ * The interaction kernel supplies the editor; booth owns the terminal product and the
  * local team-agent bridge. This extension only bridges the portal JSONL source
  * and hides worker bookkeeping.
  */
@@ -99,6 +99,7 @@ type TaskPulse = {
   waiting: number;
   blocked: number;
   focus?: string;
+  focusId?: string;
 };
 
 type PortalMessageKind = "instruction" | "answer";
@@ -187,7 +188,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     welcomeShown = true;
     pi.sendMessage({
       customType: "booth-welcome",
-      content: "booth · team console\none portal · many agents\ntry /booth-now or /booth-tasks",
+      content: "booth · team console\none portal · many agents\ntry /booth-focus when you want the next move",
       display: true,
       attribution: "agent",
     }, { triggerTurn: false });
@@ -195,12 +196,12 @@ export default function boothPortal(pi: ExtensionAPI) {
 
   function pulseText(): string {
     if (taskPulse.waiting > 0) {
-      return `team · ${taskPulse.waiting} needs you`;
+      return `team · ${taskPulse.waiting} needs you · /booth-focus`;
     }
     if (pending.size) {
       const oldest = Math.min(...[...pending.values()].map(item => item.sent));
       const seconds = Math.max(0, Math.floor((Date.now() - oldest) / 1000));
-      return `portal · ${pending.size} queued · ${seconds}s`;
+      return `portal · ${pending.size} queued · ${seconds}s · /booth-focus`;
     }
     if (taskPulse.working > 0) {
       return `team · ${taskPulse.working} working${taskPulse.focus ? ` · ${taskPulse.focus}` : ""}`;
@@ -271,9 +272,17 @@ export default function boothPortal(pi: ExtensionAPI) {
       emitTaskEvents(tasks);
       const waiting = tasks.filter(task => taskState(task.ticket?.state || "planned") === "waiting").length;
       const active = tasks.filter(task => taskState(task.ticket?.state || "planned") === "working").length;
-      const activeTitle = tasks.find(task => taskState(task.ticket?.state || "planned") === "working")?.ticket?.title;
+      const activeTask = tasks.find(task => taskState(task.ticket?.state || "planned") === "working");
+      const activeTitle = activeTask?.ticket?.title;
       const blocked = tasks.filter(task => taskState(task.ticket?.state || "planned") === "blocked").length;
-      taskPulse = { total: tasks.length, working: active, waiting, blocked, focus: activeTitle };
+      taskPulse = {
+        total: tasks.length,
+        working: active,
+        waiting,
+        blocked,
+        focus: activeTitle,
+        focusId: activeTask?.id,
+      };
       if (pending.size) teamState = "working";
       else if (waiting) teamState = "waiting";
       else teamState = "ready";
@@ -364,6 +373,58 @@ export default function boothPortal(pi: ExtensionAPI) {
       lines.push(`tasks: unavailable · ${error instanceof Error ? error.message : String(error)}`);
     }
     return lines.join("\n");
+  }
+
+  /**
+   * Turn the team's current state into one small, actionable card. The board is useful when a
+   * person wants inventory; focus is for the much more common question: "what should I do now?"
+   */
+  async function boothFocus(): Promise<string> {
+    await refreshTaskStatus();
+    if (taskPulse.waiting > 0) {
+      const tasks = await portalTasks();
+      const task = tasks.find(item => taskState(item.ticket?.state || "planned") === "waiting");
+      const title = task?.ticket?.title || task?.instruction || task?.id || "team task";
+      const question = task?.ticket?.attention?.question || "The team is waiting for your direction.";
+      return [
+        "booth focus",
+        "next · answer the team",
+        title,
+        `? ${question}`,
+        "run · /booth-answer",
+      ].join("\n");
+    }
+    if (pending.size) {
+      const oldest = Math.min(...[...pending.values()].map(item => item.sent));
+      const seconds = Math.max(0, Math.floor((Date.now() - oldest) / 1000));
+      return [
+        "booth focus",
+        "next · let the portal work",
+        `${pending.size} message${pending.size === 1 ? "" : "s"} queued · oldest ${seconds}s`,
+        "run · /booth-now for the live board",
+      ].join("\n");
+    }
+    if (taskPulse.working > 0) {
+      return [
+        "booth focus",
+        "next · keep an eye on the team",
+        taskPulse.focusId ? `[${taskPulse.focusId}] ${taskPulse.focus || "active team task"}` : "active team work",
+        "run · /booth-tasks for task cards",
+      ].join("\n");
+    }
+    if (taskPulse.blocked > 0) {
+      return [
+        "booth focus",
+        "next · inspect a blocked task",
+        `${taskPulse.blocked} blocked task${taskPulse.blocked === 1 ? "" : "s"}`,
+        "run · /booth-tasks",
+      ].join("\n");
+    }
+    return [
+      "booth focus",
+      "next · give the team a direction",
+      "type an instruction, or / for commands",
+    ].join("\n");
   }
 
   async function saveOffset(): Promise<void> {
@@ -565,6 +626,17 @@ export default function boothPortal(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("booth-focus", {
+    description: "Show the single next action for the booth team",
+    handler: async (_args, ctx) => {
+      try {
+        pi.sendMessage({ customType: "booth-focus-card", content: await boothFocus(), display: true, attribution: "agent" }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`booth focus 失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("booth-watch", {
     description: "Toggle automatic team activity events",
     handler: async (args, ctx) => {
@@ -679,6 +751,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-now-card", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
+  pi.registerMessageRenderer("booth-focus-card", (message, _options, theme) =>
+    new Text(theme.fg("warning", String(message.content))));
   pi.registerMessageRenderer("booth-watch-card", (message, _options, theme) =>
     new Text(theme.fg("muted", String(message.content))));
   pi.registerMessageRenderer("booth-task-control", (message, _options, theme) =>
