@@ -46,6 +46,30 @@ const conversationFile = join(stateDir, "booth-conversation");
 const thread = `portal-${crypto.randomUUID()}`;
 let activeThread = thread;
 const apiBase = () => (process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`).replace(/\/$/, "");
+type BoothTask = {
+  id?: string;
+  instruction?: string;
+  dependsOn?: string[];
+  depends_on?: string[];
+  ticket?: { ticket_id?: string; title?: string; state?: string };
+};
+
+async function portalTasks(): Promise<BoothTask[]> {
+  const tasks: BoothTask[] = [];
+  let offset = 0;
+  for (let page = 0; page < 20; page++) {
+    const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=${offset}&limit=20`, {
+      headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
+    const view = await response.json() as { items?: Array<{ tasks?: BoothTask[] }>; next_offset?: number | null };
+    tasks.push(...(view.items || []).flatMap(item => item.tasks || []));
+    const next = view.next_offset;
+    if (typeof next !== "number" || next <= offset) break;
+    offset = next;
+  }
+  return tasks;
+}
 
 async function portalThread(): Promise<string> {
 
@@ -167,12 +191,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   async function refreshTaskStatus(): Promise<void> {
     await watchReady;
     try {
-      const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
-        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
-      });
-      if (!response.ok) return;
-      const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
-      const tasks = (view.items || []).flatMap(item => item.tasks || []);
+      const tasks = await portalTasks();
       emitTaskEvents(tasks);
       const waiting = tasks.filter(task => taskState(task.ticket?.state || "planned") === "waiting").length;
       const active = tasks.filter(task => taskState(task.ticket?.state || "planned") === "working").length;
@@ -190,12 +209,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   }
 
   async function taskCards(): Promise<string> {
-    const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
-      headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
-    });
-    if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
-    const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
-    const tasks = (view.items || []).flatMap(item => item.tasks || []);
+    const tasks = await portalTasks();
     if (!tasks.length) return "team tasks\n  no delegated tasks";
     const icon = (state: string) => state === "waiting" ? "◌" : state === "working" ? "●" : state === "blocked" ? "!" : state === "done" ? "✓" : "○";
     return ["team tasks", ...tasks.map(task => {
@@ -206,20 +220,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   }
 
   async function taskDetail(taskId: string): Promise<string | undefined> {
-    const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
-      headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
-    });
-    if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
-    const view = await response.json() as {
-      items?: Array<{ tasks?: Array<{
-        id?: string;
-        instruction?: string;
-        dependsOn?: string[];
-        depends_on?: string[];
-        ticket?: { title?: string; state?: string };
-      }> }>;
-    };
-    const task = (view.items || []).flatMap(item => item.tasks || []).find(item => item.id === taskId);
+    const task = (await portalTasks()).find(item => item.id === taskId);
     if (!task) return undefined;
     const rawState = task.ticket?.state || "planned";
     const state = taskState(rawState);
@@ -235,14 +236,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   }
 
   async function taskTicket(taskId: string): Promise<{ taskId: string; ticketId?: string } | undefined> {
-    const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
-      headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
-    });
-    if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
-    const view = await response.json() as {
-      items?: Array<{ tasks?: Array<{ id?: string; ticket?: { ticket_id?: string } }> }>;
-    };
-    const task = (view.items || []).flatMap(item => item.tasks || []).find(item => item.id === taskId || item.ticket?.ticket_id === taskId);
+    const task = (await portalTasks()).find(item => item.id === taskId || item.ticket?.ticket_id === taskId);
     return task?.id ? { taskId: task.id, ticketId: task.ticket?.ticket_id } : undefined;
   }
 
@@ -253,12 +247,7 @@ export default function boothPortal(pi: ExtensionAPI) {
       lines[2] += ` · oldest ${Math.max(0, Math.floor((Date.now() - oldest) / 1000))}s`;
     }
     try {
-      const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
-        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
-      const tasks = (view.items || []).flatMap(item => item.tasks || []);
+      const tasks = await portalTasks();
       const counts = new Map<string, number>();
       for (const task of tasks) {
         const state = taskState(task.ticket?.state || "planned");
