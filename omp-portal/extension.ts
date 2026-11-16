@@ -41,6 +41,7 @@ const stateDir = process.env.BOOTH_STATE_DIR || join(process.env.HOME || ".", ".
 const inbox = join(stateDir, "booth-inbox.jsonl");
 const outbox = join(stateDir, "booth-outbox.jsonl");
 const outboxCursor = join(stateDir, "booth-outbox.cursor");
+const watchFile = join(stateDir, "booth-watch");
 const conversationFile = join(stateDir, "booth-conversation");
 const thread = `portal-${crypto.randomUUID()}`;
 let activeThread = thread;
@@ -79,6 +80,10 @@ export default function boothPortal(pi: ExtensionAPI) {
   const taskSnapshot = new Map<string, { state: string; title: string }>();
   let taskSnapshotReady = false;
   let watchMode = true;
+  const watchReady = (async () => {
+    try { watchMode = (await readFile(watchFile, "utf8")).trim() !== "off"; }
+    catch { /* first launch defaults to live team events */ }
+  })();
   let ui: {
     setStatus(key: string, value: string | undefined): void;
     setTitle(title: string): void;
@@ -160,6 +165,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   }
 
   async function refreshTaskStatus(): Promise<void> {
+    await watchReady;
     try {
       const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
         headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
@@ -312,6 +318,7 @@ export default function boothPortal(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     await portalThread();
+    await watchReady;
     ui = ctx.ui;
     brandBooth();
     updateWatchStatus();
@@ -398,12 +405,15 @@ export default function boothPortal(pi: ExtensionAPI) {
   pi.registerCommand("booth-watch", {
     description: "Toggle automatic team activity events",
     handler: async (args, ctx) => {
+      await watchReady;
       const choice = args.trim().toLowerCase();
       if (choice && !["on", "off", "true", "false", "live", "mute"].includes(choice)) {
         ctx.ui.notify("用法：/booth-watch [on|off]；默认实时显示团队状态变化。", "warning");
         return;
       }
       watchMode = choice ? ["on", "true", "live"].includes(choice) : !watchMode;
+      await mkdir(stateDir, { recursive: true });
+      await writeFile(watchFile, `${watchMode ? "on" : "off"}\n`).catch(() => {});
       updateWatchStatus();
       pi.sendMessage({
         customType: "booth-watch-card",
