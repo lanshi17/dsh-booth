@@ -467,6 +467,11 @@ fn stop_with_timeout(cfg: &Config, timeout: Duration) -> Result<(), String> {
 pub fn restart(cfg: &Config) -> Result<(), String> {
     if cfg.pid().exists() {
         stop(cfg)?;
+    } else if Api::new(&cfg.url()).state().is_ok() {
+        return Err(format!(
+            "a service already listens on {} but was not started by booth; run `booth down && booth up` for that service, then retry the upgrade",
+            cfg.url()
+        ));
     }
     start(cfg)
 }
@@ -1531,6 +1536,18 @@ mod tests {
         assert!(start(&cfg).is_ok());
         // The stale pid file is cleared first, then the answering service is reported.
         assert!(!cfg.pid().exists(), "a stale pid file is removed");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn restart_explains_when_a_foreign_service_blocks_an_upgrade() {
+        let mut cfg = config("restart-foreign");
+        let api = crate::testkit::FakeApi::start();
+        cfg.port = api.base.rsplit(':').next().unwrap().parse().unwrap();
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let error = restart(&cfg).unwrap_err();
+        assert!(error.contains("was not started by booth"), "{error}");
+        assert!(error.contains("booth down && booth up"), "{error}");
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
     }
 
