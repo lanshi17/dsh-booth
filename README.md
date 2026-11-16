@@ -159,6 +159,7 @@ The header state changes with the conversation: `ready`, `working`, or `waiting`
 The status rail also summarizes delegated work from the portal API, for example `3 tasks · 2 working · 1 waiting`, without opening a separate task screen.
 The header's right edge keeps a compact team pulse in view: `portal · 2 queued`, `team · 1 needs you`, `team · 3 active`, or `team · ready`; startup and outage states say `syncing` or `offline` directly.
 In the OMP interaction surface, the footer uses the same single pulse so portal queue time, human decisions, and worker activity do not compete as separate status rows.
+The bundled frontend pins booth's ASCII symbol and status-line presets, so the default header does not inherit a machine's Nerd Font `pi`/powerline branding.
 When a task changes state, booth adds a team event to the transcript automatically; the active task title also appears in the status rail.
 Use `/booth-tasks` to print delegated task cards grouped by booth state in the transcript.
 Task views follow the portal's pagination, so older conversations remain available after the first 20.

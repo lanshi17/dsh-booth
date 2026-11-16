@@ -1,4 +1,10 @@
 # Booth uses its interaction kernel; provider setup belongs to the DSH backend.
+symbolPreset: ascii
+composer:
+  shape: box
+statusLine:
+  preset: ascii
+  separator: ascii
 startup:
   setupWizard: false
   showSplash: false
