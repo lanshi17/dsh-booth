@@ -150,7 +150,7 @@ check the deployment guide asks for.
 
 ## Inside the console
 
-booth keeps OMP's fast editor and keyboard model, then adds its own surface language: `you ›` for
+booth keeps its fast editor and keyboard model, then adds its own surface language: `you ›` for
 the operator, `booth ›` for the portal, and `team ›` for worker progress and results. The header
 names the product and the active team-agent kernel, while the status rail shows whether the team
 is connected, processing work, or waiting for a decision. This makes the portal conversation and
@@ -200,7 +200,7 @@ The console adds `/requeue`, `/dismiss`, `/unsubscribe`, `/new`, `/model`, `/log
 `/history`, `/refresh`, `/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
-highlighted, and a selection past the eighth entry scrolls the window the way `omp`'s lists do.
+highlighted, and a selection past the eighth entry scrolls the window the way booth's lists do.
 `/keys` lists every shortcut on one screen.
 
 ## What the console keeps
@@ -405,7 +405,7 @@ In the console, a line starting with `@omp`, `@claude`, `@codex`, or `@cursor-ag
 
 ## Providers
 
-`/provider` opens one screen for every provider the team uses. The rows are grouped the way omp groups them: Language, Typesafe, Search, and Documents. Each row lists providers already configured, then the common presets (DeepSeek, Command Code, OpenAI, Groq, TypeSafe, Tavily, and the rest). A preset asks for its key. `a` opens the full list. The language row is the model the team runs with. Typesafe is the decision model. Search and documents remember their own provider and model in the same profile.
+`/provider` opens one screen for every provider the team uses. The rows use booth's grouping: Language, Typesafe, Search, and Documents. Each row lists providers already configured, then the common presets (DeepSeek, Command Code, OpenAI, Groq, TypeSafe, Tavily, and the rest). A preset asks for its key. `a` opens the full list. The language row is the model the team runs with. Typesafe is the decision model. Search and documents remember their own provider and model in the same profile.
 
 ## Decision
 
