@@ -177,7 +177,7 @@ pub fn init(cfg: &Config) -> Result<(), String> {
 
     if !cfg.profile_dir().exists() {
         println!("\ncreating profile `{}` from the web template", cfg.profile);
-        run(
+        run_quiet(
             "dsh",
             &[
                 cfg.profile.as_str(),
@@ -225,6 +225,7 @@ fn repair_profile(cfg: &Config) -> Result<(), String> {
             ])
             .env("DSH_HOME", &temp)
             .current_dir(&temp)
+            .stdout(Stdio::null())
             .status()
             .map_err(|e| format!("cannot run dsh: {e}"))?;
         if !status.success() {
@@ -1108,6 +1109,22 @@ fn run(program: &str, args: &[&str], cwd: &Path) -> Result<(), String> {
     let status = Command::new(program)
         .args(args)
         .current_dir(cwd)
+        .status()
+        .map_err(|error| format!("cannot run {program}: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("{program} {} failed ({status})", args.join(" ")))
+    }
+}
+
+/// Runs a setup command whose stdout is generated configuration rather than user-facing output.
+/// Keep stderr visible so a failed profile creation still explains itself.
+fn run_quiet(program: &str, args: &[&str], cwd: &Path) -> Result<(), String> {
+    let status = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdout(Stdio::null())
         .status()
         .map_err(|error| format!("cannot run {program}: {error}"))?;
     if status.success() {
