@@ -293,6 +293,12 @@ export default function boothPortal(pi: ExtensionAPI) {
     try {
       const id = await send(text);
       pending.set(id, { sent: Date.now(), warned: false });
+      pi.sendMessage({
+        customType: "booth-portal-ack",
+        content: `queued for team · ${id.slice(0, 8)}`,
+        display: true,
+        attribution: "agent",
+      }, { triggerTurn: false });
       status();
     }
     catch (error) {
@@ -305,6 +311,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     new Text(theme.fg("accent", `you  ›  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-portal-system", (message, _options, theme) =>
     new Text(theme.fg("muted", `booth  ·  ${String(message.content)}`)));
+  pi.registerMessageRenderer("booth-portal-ack", (message, _options, theme) =>
+    new Text(theme.fg("muted", `booth  ›  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-task-card", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-task-event", (message, _options, theme) =>
