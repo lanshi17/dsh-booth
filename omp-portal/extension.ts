@@ -215,11 +215,25 @@ export default function boothPortal(pi: ExtensionAPI) {
     const tasks = await portalTasks();
     if (!tasks.length) return "team tasks\n  no delegated tasks";
     const icon = (state: string) => state === "waiting" ? "◌" : state === "working" ? "●" : state === "blocked" ? "!" : state === "done" ? "✓" : "○";
-    return ["team tasks", ...tasks.map(task => {
+    const order = ["working", "waiting", "blocked", "planned", "done"];
+    const groups = new Map<string, BoothTask[]>();
+    for (const task of tasks) {
       const state = taskState(task.ticket?.state || "planned");
-      const title = task.ticket?.title || task.instruction || task.id || "task";
-      return `${icon(state)}  ${state.padEnd(8)}  [${task.id || "task"}]  ${title}`;
-    })].join("\n");
+      const group = groups.get(state) || [];
+      group.push(task);
+      groups.set(state, group);
+    }
+    const lines = ["team tasks"];
+    for (const state of order) {
+      const group = groups.get(state);
+      if (!group?.length) continue;
+      lines.push(`${state} · ${group.length}`);
+      for (const task of group) {
+        const title = task.ticket?.title || task.instruction || task.id || "task";
+        lines.push(`  ${icon(state)}  [${task.id || "task"}]  ${title}`);
+      }
+    }
+    return lines.join("\n");
   }
 
   async function taskDetail(taskId: string): Promise<string | undefined> {
