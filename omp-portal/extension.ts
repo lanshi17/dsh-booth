@@ -5,7 +5,7 @@
  * local team-agent bridge. This extension only bridges the portal JSONL source
  * and hides worker bookkeeping.
  */
-import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { Text } from "@oh-my-pi/pi-tui";
@@ -15,6 +15,7 @@ type PortalReply = { id?: string; text?: string; kind?: string; thread?: string 
 const stateDir = process.env.BOOTH_STATE_DIR || join(process.env.HOME || ".", ".dsh", "state", process.env.BOOTH_PROFILE || "superagent");
 const inbox = join(stateDir, "booth-inbox.jsonl");
 const outbox = join(stateDir, "booth-outbox.jsonl");
+const outboxCursor = join(stateDir, "booth-outbox.cursor");
 const conversationFile = join(stateDir, "booth-conversation");
 const thread = `portal-${crypto.randomUUID()}`;
 let activeThread = thread;
@@ -36,6 +37,17 @@ async function send(text: string): Promise<string> {
 
 export default function boothPortal(pi: ExtensionAPI) {
   let offset = 0;
+  const offsetReady = (async () => {
+    await mkdir(stateDir, { recursive: true });
+    try {
+      const saved = Number.parseInt((await readFile(outboxCursor, "utf8")).trim(), 10);
+      if (Number.isSafeInteger(saved) && saved >= 0) {
+        offset = saved;
+        return;
+      }
+    } catch { /* first launch has no cursor yet */ }
+    try { offset = (await stat(outbox)).size; } catch { /* outbox is created on first reply */ }
+  })();
   let polling = false;
   let teamState: "ready" | "working" | "waiting" = "ready";
   const pending = new Map<string, { sent: number; warned: boolean }>();
@@ -184,7 +196,10 @@ export default function boothPortal(pi: ExtensionAPI) {
     return lines.join("\n");
   }
 
-  void stat(outbox).then(s => { offset = s.size; }).catch(() => {});
+  async function saveOffset(): Promise<void> {
+    await offsetReady;
+    await writeFile(outboxCursor, `${offset}\n`);
+  }
 
   async function readiness(): Promise<string | undefined> {
     const base = apiBase();
@@ -220,6 +235,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
+    await portalThread();
     ui = ctx.ui;
     brandBooth();
     let problem = await readiness();
@@ -337,13 +353,16 @@ export default function boothPortal(pi: ExtensionAPI) {
     if (polling) return;
     polling = true;
     try {
+      await offsetReady;
       const data = await readFile(outbox, "utf8").catch(() => "");
       if (Buffer.byteLength(data) < offset) offset = 0;
       const bytes = Buffer.from(data);
       const fresh = bytes.subarray(offset).toString("utf8");
       const complete = fresh.lastIndexOf("\n");
+      let advanced = false;
       if (complete >= 0) {
         offset += Buffer.byteLength(fresh.slice(0, complete + 1));
+        advanced = true;
         for (const line of fresh.slice(0, complete).split("\n")) {
           try {
             const reply = JSON.parse(line) as PortalReply;
@@ -355,6 +374,7 @@ export default function boothPortal(pi: ExtensionAPI) {
           } catch { /* source may be writing a malformed/partial record */ }
         }
       }
+      if (advanced) void saveOffset().catch(() => {});
       for (const item of pending.values()) {
         if (!item.warned && Date.now() - item.sent >= 30000) {
           item.warned = true;
@@ -369,5 +389,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     updatePendingRail();
     if (++taskTick % 2 === 0) void refreshTaskStatus();
   }, 1000);
-  pi.on("session_shutdown", () => clearInterval(interval));
+  pi.on("session_shutdown", () => {
+    clearInterval(interval);
+    void saveOffset().catch(() => {});
+  });
 }
