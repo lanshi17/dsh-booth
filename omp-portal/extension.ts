@@ -529,7 +529,25 @@ export default function boothPortal(pi: ExtensionAPI) {
     handler: async (args, ctx) => {
       const answer = args.trim();
       if (!answer) {
-        ctx.ui.notify("用法：/booth-answer <回答>；先运行 /booth-tasks 查看待决问题。", "warning");
+        try {
+          const task = (await portalTasks()).find(item => taskState(item.ticket?.state || "planned") === "waiting");
+          if (!task) {
+            ctx.ui.notify("当前没有等待你的团队问题。运行 /booth-tasks 查看任务。", "info");
+            return;
+          }
+          const title = task.ticket?.title || task.instruction || task.id || "team task";
+          const question = task.ticket?.attention?.question || "The team is waiting for your direction.";
+          pi.sendMessage({
+            customType: "booth-answer-prompt",
+            content: `needs your decision\n${title}\n${question}`,
+            display: true,
+            attribution: "agent",
+          }, { triggerTurn: false });
+          const prompted = await ctx.ui.input("booth answer", "type the decision for the team");
+          if (prompted?.trim()) await queuePortalMessage(prompted, "answer");
+        } catch (error) {
+          ctx.ui.notify(`回答窗口失败：${error instanceof Error ? error.message : String(error)}`, "error");
+        }
         return;
       }
       await queuePortalMessage(answer, "answer");
@@ -650,6 +668,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     new Text(theme.fg("muted", `booth  ·  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-welcome", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
+  pi.registerMessageRenderer("booth-answer-prompt", (message, _options, theme) =>
+    new Text(theme.fg("warning", `${String(message.content)}\nreply in the booth answer window`)));
   pi.registerMessageRenderer("booth-portal-ack", (message, _options, theme) => {
     return new Text(theme.fg("muted", `booth  ›  ${String(message.content)}`));
   });
