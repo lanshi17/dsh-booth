@@ -1,8 +1,9 @@
 /**
  * OMP frontend adapter for dsh-booth.
  *
- * OMP remains the terminal UI; booth remains the local team-agent kernel. This
- * extension only bridges the portal JSONL source and hides worker bookkeeping.
+ * OMP supplies the interaction kernel; booth owns the terminal product and the
+ * local team-agent bridge. This extension only bridges the portal JSONL source
+ * and hides worker bookkeeping.
  */
 import { appendFile, mkdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,7 +37,16 @@ export default function boothPortal(pi: ExtensionAPI) {
   let offset = 0;
   let polling = false;
   const pending = new Map<string, { sent: number; warned: boolean }>();
-  let ui: { setStatus(key: string, value: string | undefined): void } | undefined;
+  let ui: {
+    setStatus(key: string, value: string | undefined): void;
+    setTitle(title: string): void;
+  } | undefined;
+
+  // OMP supplies the editor and terminal mechanics; booth owns the product
+  // identity shown in the terminal title.
+  function brandBooth() {
+    ui?.setTitle("booth");
+  }
 
   function status() {
     ui?.setStatus("booth-portal", pending.size ? `团队正在处理 · ${pending.size} 条消息` : "团队服务已连接");
@@ -66,10 +76,14 @@ export default function boothPortal(pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     ui = ctx.ui;
+    brandBooth();
     const problem = await readiness();
     if (problem) pi.sendMessage({ customType: "booth-portal-reply", content: problem, display: true, attribution: "agent" }, { triggerTurn: false });
     else status();
   });
+  pi.on("session_switch", () => brandBooth());
+  pi.on("session_clear", () => brandBooth());
+  pi.on("session_branch", () => brandBooth());
 
   pi.registerCommand("booth-setup", {
     description: "Configure the repository and local portal",

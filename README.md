@@ -1,8 +1,10 @@
 # dsh-booth
 
-A terminal console for [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype).
-`booth` launches the real OMP terminal frontend and routes its conversation to the team's
-portal agent. OMP provides the composer, history, palette and shortcuts; the team runs behind it.
+`booth` is the terminal console and product surface for
+[dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). It uses the MIT-licensed
+[oh-my-pi](https://github.com/can1357/oh-my-pi) interaction kernel for the composer, history, palette
+and shortcuts, then routes the conversation to the team's portal agent. The terminal is branded
+`booth`; the team backend is `dsh-superagent`.
 
 ## What is in the repository
 
