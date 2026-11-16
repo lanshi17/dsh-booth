@@ -1007,6 +1007,28 @@ mod tests {
     }
 
     #[test]
+    fn the_installed_portal_prefers_booth_and_reads_the_legacy_name() {
+        let root =
+            std::env::temp_dir().join(format!("booth-portal-path-{}", crate::oauth::uuid_v4()));
+        let old = root.join("omp-portal").join("extension.ts");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, "legacy").unwrap();
+        assert_eq!(
+            installed_portal_extension(&root).as_deref(),
+            Some(old.as_path())
+        );
+
+        let current = root.join("booth-portal").join("extension.ts");
+        std::fs::create_dir_all(current.parent().unwrap()).unwrap();
+        std::fs::write(&current, "current").unwrap();
+        assert_eq!(
+            installed_portal_extension(&root).as_deref(),
+            Some(current.as_path())
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn the_provider_command_prints_the_service_catalog() {
         // The fake serves /models, so this exercises the real request and rendering path.
         let api = crate::testkit::FakeApi::start();
