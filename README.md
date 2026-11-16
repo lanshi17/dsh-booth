@@ -407,13 +407,13 @@ The default worker is dsh. Name another coding agent when you want that one to d
 
 ```sh
 booth send "fix the readme"            # portal agent
-booth send --agent omp "fix the readme"
+booth send --agent booth "fix the readme"
 booth send --agent claude "fix the readme"
 booth send --agent codex "fix the readme"
 booth send --agent cursor-agent "fix the readme"
 ```
 
-In the console, a line starting with `@omp`, `@claude`, `@codex`, or `@cursor-agent` runs that named tool directly; an unprefixed line goes through the portal. The direct form runs outside the portal task board.
+In the console, a line starting with `@booth`, `@claude`, `@codex`, or `@cursor-agent` runs that named tool directly; an unprefixed line goes through the portal. The direct form runs outside the portal task board.
 
 ## Providers
 

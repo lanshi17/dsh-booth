@@ -17,21 +17,22 @@ impl Who {
     pub fn parse(name: &str) -> Result<Self, String> {
         match name.trim().to_ascii_lowercase().as_str() {
             "dsh" => Ok(Self::Dsh),
-            "omp" | "pi" => Ok(Self::Omp),
+            "booth" | "omp" | "pi" => Ok(Self::Omp),
             "claude" | "claude-code" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
             "cursor" | "cursor-agent" => Ok(Self::Cursor),
             other => Err(format!(
-                "unknown worker {other}; choose dsh, omp, claude, codex, or cursor-agent"
+                "unknown worker {other}; choose dsh, booth, claude, codex, or cursor-agent"
             )),
         }
     }
 }
 
-/// `@omp ...` names the worker. Anything else, including no prefix, is dsh.
+/// `@booth ...` names the worker. Anything else, including no prefix, is dsh.
 pub fn split(text: &str) -> (Who, String) {
     let text = text.trim();
     for (prefix, who) in [
+        ("@booth ", Who::Omp),
         ("@omp ", Who::Omp),
         ("@pi ", Who::Omp),
         ("@claude ", Who::Claude),
@@ -53,17 +54,21 @@ pub fn run(who: Who, text: &str) -> Result<String, String> {
     if text.is_empty() {
         return Err("an instruction needs text".into());
     }
-    let (bin, mut args) = match who {
+    let (bin, label, mut args) = match who {
         Who::Dsh => return Err("dsh is the desk's own team".into()),
-        Who::Omp => ("omp", vec!["-p".into()]),
-        Who::Claude => ("claude", vec!["-p".into()]),
-        Who::Codex => ("codex", vec!["exec".into()]),
+        Who::Omp => ("omp", "booth", vec!["-p".into()]),
+        Who::Claude => ("claude", "claude", vec!["-p".into()]),
+        Who::Codex => ("codex", "codex", vec!["exec".into()]),
         // --trust skips the workspace prompt; otherwise a background handoff waits forever.
-        Who::Cursor => ("cursor-agent", vec!["-p".into(), "--trust".into()]),
+        Who::Cursor => (
+            "cursor-agent",
+            "cursor-agent",
+            vec!["-p".into(), "--trust".into()],
+        ),
     };
     args.push(text.to_owned());
     let output = Command::new(bin).args(&args).output().map_err(|error| {
-        format!("cannot start {bin}: {error}. Install it, or leave the worker as dsh.")
+        format!("cannot start {label}: {error}. Install it, or leave the worker as dsh.")
     })?;
     let mut shown = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if shown.is_empty() {
@@ -71,13 +76,13 @@ pub fn run(who: Who, text: &str) -> Result<String, String> {
     }
     if output.status.success() {
         Ok(if shown.is_empty() {
-            format!("{bin} finished")
+            format!("{label} finished")
         } else {
             shown
         })
     } else {
         Err(if shown.is_empty() {
-            format!("{bin} failed")
+            format!("{label} failed")
         } else {
             shown
         })
@@ -107,9 +112,13 @@ mod tests {
 
     #[test]
     fn a_prefix_names_the_worker() {
+        let (who, text) = split("@booth change the prompt");
+        assert_eq!(who, Who::Omp);
+        assert_eq!(text, "change the prompt");
         let (who, text) = split("@omp change the prompt");
         assert_eq!(who, Who::Omp);
         assert_eq!(text, "change the prompt");
+        assert_eq!(Who::parse("booth").unwrap(), Who::Omp);
         assert_eq!(Who::parse("claude-code").unwrap(), Who::Claude);
         assert_eq!(Who::parse("cursor-agent").unwrap(), Who::Cursor);
         let (who, text) = split("@cursor-agent fix the prompt");

@@ -100,7 +100,7 @@ enum Command {
     },
     /// Hand one instruction to a worker. The default worker is dsh.
     Send {
-        /// Who does the work: dsh, omp, claude, codex, or cursor-agent.
+        /// Who does the work: dsh, booth, claude, codex, or cursor-agent.
         #[arg(long, default_value = "dsh")]
         agent: String,
         #[arg(required = true, trailing_var_arg = true)]
