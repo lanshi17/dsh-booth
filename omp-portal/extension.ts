@@ -11,6 +11,31 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
 import { Text } from "@oh-my-pi/pi-tui";
 
 type PortalReply = { id?: string; text?: string; kind?: string; thread?: string };
+type RelayPayload = {
+  kind?: string;
+  state?: string;
+  summary?: string;
+  ticket?: { ticket_id?: string; title?: string; state?: string };
+};
+
+function relayOf(text: string): RelayPayload | undefined {
+  try {
+    const value = JSON.parse(text) as RelayPayload;
+    return value && ["worker_report", "worker_attention", "follow_up"].includes(value.kind || "") ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function relayText(relay: RelayPayload): string {
+  const title = relay.ticket?.title || relay.ticket?.ticket_id || "team task";
+  if (relay.kind === "worker_attention") return `waiting for a decision · ${title}`;
+  if (relay.kind === "follow_up") {
+    const delivered = relay.ticket?.title || "worker task";
+    return `team follow-up · ${delivered}`;
+  }
+  return `team update · ${title} · ${relay.state || relay.ticket?.state || "reported"}\n${relay.summary || "The team sent an update."}`;
+}
 
 const stateDir = process.env.BOOTH_STATE_DIR || join(process.env.HOME || ".", ".dsh", "state", process.env.BOOTH_PROFILE || "superagent");
 const inbox = join(stateDir, "booth-inbox.jsonl");
@@ -519,8 +544,10 @@ export default function boothPortal(pi: ExtensionAPI) {
           try {
             const reply = JSON.parse(line) as PortalReply;
             if (reply.text && (!reply.thread || reply.thread === activeThread)) {
-              pi.sendMessage({ customType: "booth-portal-reply", content: reply.text, kind: reply.kind, display: true, attribution: "agent" }, { triggerTurn: false });
-              settlePending(reply.kind);
+              const relay = relayOf(reply.text);
+              const kind = relay?.kind || reply.kind;
+              pi.sendMessage({ customType: "booth-portal-reply", content: relay ? relayText(relay) : reply.text, kind, display: true, attribution: "agent" }, { triggerTurn: false });
+              settlePending(kind);
               status();
             }
           } catch { /* source may be writing a malformed/partial record */ }
