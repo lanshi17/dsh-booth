@@ -56,7 +56,7 @@ async function relayText(relay: RelayPayload): Promise<string> {
       title,
       ticketId && ticketId !== title ? `task · ${ticketId}` : "",
       question || "The team is waiting for your direction.",
-      "reply · /booth-answer <text>",
+      "reply · /booth-answer",
     ].filter(Boolean).join("\n");
   }
   if (relay.kind === "follow_up") {
@@ -306,7 +306,7 @@ export default function boothPortal(pi: ExtensionAPI) {
         lines.push(`  ${icon(state)}  [${task.id || "task"}]  ${title}`);
         if (state === "waiting") {
           if (task.ticket?.attention?.question) lines.push(`       ? ${task.ticket.attention.question}`);
-          lines.push("       ↳ /booth-answer <text>");
+          lines.push("       ↳ /booth-answer");
         }
       }
     }
@@ -328,7 +328,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     if (dependencies.length) lines.push(`depends on: ${dependencies.join(", ")}`);
     if (task.ticket?.attention?.question) {
       lines.push(`question: ${task.ticket.attention.question}`);
-      lines.push("answer with: /booth-answer <text>");
+      lines.push("answer with: /booth-answer");
     }
     return lines.join("\n");
   }
