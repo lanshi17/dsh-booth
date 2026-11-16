@@ -167,6 +167,9 @@ The live status rail samples recent pages; opening a task view performs the full
 Use `/booth-task <id>` to open one task's state, instruction, title, and dependencies.
 `/booth-task` also accepts the worker ticket ID and prints the current human question when a task is waiting.
 Cards and task details normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
+When a worker needs a decision, answer it with `/booth-answer <text>`. The answer stays in the
+same portal conversation, gets its own `answer queued for team` acknowledgement, and wakes the
+portal to forward it to the waiting worker.
 While messages are in flight, the status rail includes elapsed time so a long-running team task remains visibly active.
 Every accepted instruction also gets an immediate `booth › queued for team` line with a short message ID, before the portal or workers reply.
 Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.

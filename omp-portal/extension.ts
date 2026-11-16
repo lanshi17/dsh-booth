@@ -95,6 +95,8 @@ type TaskPulse = {
   focus?: string;
 };
 
+type PortalMessageKind = "instruction" | "answer";
+
 async function portalTasks(maxPages = 20): Promise<BoothTask[]> {
   const tasks: BoothTask[] = [];
   let offset = 0;
@@ -367,6 +369,51 @@ export default function boothPortal(pi: ExtensionAPI) {
     }
   }
 
+  async function queuePortalMessage(text: string, kind: PortalMessageKind): Promise<boolean> {
+    const message = text.trim();
+    if (!message) return false;
+    pi.sendMessage({
+      customType: "booth-portal-user",
+      content: message,
+      details: { kind },
+      display: true,
+      attribution: "user",
+    }, { triggerTurn: false });
+    const problem = await readiness();
+    if (problem) {
+      const noun = kind === "answer" ? "回答" : "消息";
+      pi.sendMessage({
+        customType: "booth-portal-reply",
+        content: `${problem}\n\n这条${noun}尚未发送，完成配置后请重新发送。`,
+        display: true,
+        attribution: "agent",
+      }, { triggerTurn: false });
+      return false;
+    }
+    try {
+      const id = await send(message);
+      pending.set(id, { sent: Date.now(), warned: false });
+      const queued = kind === "answer" ? "answer queued for team" : "queued for team";
+      pi.sendMessage({
+        customType: "booth-portal-ack",
+        content: `${queued} · ${id.slice(0, 8)}`,
+        details: { kind },
+        display: true,
+        attribution: "agent",
+      }, { triggerTurn: false });
+      status();
+      return true;
+    } catch (error) {
+      pi.sendMessage({
+        customType: "booth-portal-reply",
+        content: `发送失败：${error instanceof Error ? error.message : String(error)}。请检查后重新发送。`,
+        display: true,
+        attribution: "agent",
+      }, { triggerTurn: false });
+      return false;
+    }
+  }
+
   async function autoSetup(): Promise<void> {
     try {
       await pi.exec(
@@ -451,6 +498,18 @@ export default function boothPortal(pi: ExtensionAPI) {
       } catch (error) {
         ctx.ui.notify(`任务详情失败：${error instanceof Error ? error.message : String(error)}`, "error");
       }
+    },
+  });
+
+  pi.registerCommand("booth-answer", {
+    description: "Answer the team's current human question",
+    handler: async (args, ctx) => {
+      const answer = args.trim();
+      if (!answer) {
+        ctx.ui.notify("用法：/booth-answer <回答>；先运行 /booth-tasks 查看待决问题。", "warning");
+        return;
+      }
+      await queuePortalMessage(answer, "answer");
     },
   });
 
@@ -554,35 +613,21 @@ export default function boothPortal(pi: ExtensionAPI) {
   pi.on("input", async (event) => {
     const text = event.text.trim();
     if (!text || text.startsWith("/")) return;
-    pi.sendMessage({ customType: "booth-portal-user", content: text, display: true, attribution: "user" }, { triggerTurn: false });
-    const problem = await readiness();
-    if (problem) {
-      pi.sendMessage({ customType: "booth-portal-reply", content: `${problem}\n\n这条消息尚未发送，完成配置后请重新发送。`, display: true, attribution: "agent" }, { triggerTurn: false });
-      return { handled: true };
-    }
-    try {
-      const id = await send(text);
-      pending.set(id, { sent: Date.now(), warned: false });
-      pi.sendMessage({
-        customType: "booth-portal-ack",
-        content: `queued for team · ${id.slice(0, 8)}`,
-        display: true,
-        attribution: "agent",
-      }, { triggerTurn: false });
-      status();
-    }
-    catch (error) {
-      pi.sendMessage({ customType: "booth-portal-reply", content: `发送失败：${error instanceof Error ? error.message : String(error)}。请检查后重新发送。`, display: true, attribution: "agent" }, { triggerTurn: false });
-    }
+    await queuePortalMessage(text, "instruction");
     return { handled: true };
   });
 
-  pi.registerMessageRenderer("booth-portal-user", (message, _options, theme) =>
-    new Text(theme.fg("accent", `you  ›  ${String(message.content)}`)));
+  pi.registerMessageRenderer("booth-portal-user", (message, _options, theme) => {
+    const kind = String((message as { details?: { kind?: unknown } }).details?.kind || "instruction");
+    const label = kind === "answer" ? "answer" : String(message.content);
+    const content = kind === "answer" ? `you  ›  answer\n${String(message.content)}` : `you  ›  ${label}`;
+    return new Text(theme.fg("accent", content));
+  });
   pi.registerMessageRenderer("booth-portal-system", (message, _options, theme) =>
     new Text(theme.fg("muted", `booth  ·  ${String(message.content)}`)));
-  pi.registerMessageRenderer("booth-portal-ack", (message, _options, theme) =>
-    new Text(theme.fg("muted", `booth  ›  ${String(message.content)}`)));
+  pi.registerMessageRenderer("booth-portal-ack", (message, _options, theme) => {
+    return new Text(theme.fg("muted", `booth  ›  ${String(message.content)}`));
+  });
   pi.registerMessageRenderer("booth-task-card", (message, _options, theme) =>
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-task-event", (message, _options, theme) =>

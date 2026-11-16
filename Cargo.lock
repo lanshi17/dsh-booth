@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-booth"
-version = "0.3.52"
+version = "0.3.53"
 dependencies = [
  "base64",
  "clap",
