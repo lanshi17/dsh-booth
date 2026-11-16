@@ -159,6 +159,7 @@ The header state changes with the conversation: `ready`, `working`, or `waiting`
 The status rail also summarizes delegated work from the portal API, for example `3 tasks · 2 working · 1 waiting`, without opening a separate task screen.
 When a task changes state, booth adds a team event to the transcript automatically; the active task title also appears in the status rail.
 Use `/booth-tasks` to print the current delegated task cards in the transcript.
+Task views follow the portal's pagination, so older conversations remain available after the first 20.
 Use `/booth-task <id>` to open one task's state, instruction, title, and dependencies.
 Cards and task details normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
 While messages are in flight, the status rail includes elapsed time so a long-running team task remains visibly active.
