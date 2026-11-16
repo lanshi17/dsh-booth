@@ -306,7 +306,7 @@ web panel.
 | --- | --- |
 | The portal answers but starts no worker | Conversation and simple questions do not require a worker |
 | `⋯ no decision yet` | The Source has not produced a judgement after 20 s; `/sources` shows whether it is polling and `/status` shows health |
-| `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and a follow-up message answers it |
+| `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and `/booth-answer <text>` sends the decision back through the portal |
 | `↑ queued …` and no further line | The console wrote the instruction but the service may be down or still starting; check `booth status` and `booth logs` |
 | `◇ agent · could not judge  timeout` | The assessment ran past the Eval timeout; the panel's Eval block raises `timeoutSeconds`, and `/requeue <id>` puts the instruction back |
 | `no adapter registered for provider …` in a session | The profile layer no longer registers that provider; `/login` adds it back, or `booth reset-sessions` starts fresh sessions — the second costs the conversation history, so prefer the first |

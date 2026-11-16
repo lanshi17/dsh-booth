@@ -51,7 +51,13 @@ async function relayText(relay: RelayPayload): Promise<string> {
         // The relay remains useful without the optional detail; the next task poll retries it.
       }
     }
-    return `needs your decision\n${title}${question ? `\n${question}` : ""}`;
+    return [
+      "needs your decision",
+      title,
+      ticketId && ticketId !== title ? `task · ${ticketId}` : "",
+      question || "The team is waiting for your direction.",
+      "reply · /booth-answer <text>",
+    ].filter(Boolean).join("\n");
   }
   if (relay.kind === "follow_up") {
     return `follow-up routed to the team\n${title}`;
@@ -286,8 +292,9 @@ export default function boothPortal(pi: ExtensionAPI) {
       for (const task of group) {
         const title = task.ticket?.title || task.instruction || task.id || "task";
         lines.push(`  ${icon(state)}  [${task.id || "task"}]  ${title}`);
-        if (state === "waiting" && task.ticket?.attention?.question) {
-          lines.push(`       ? ${task.ticket.attention.question}`);
+        if (state === "waiting") {
+          if (task.ticket?.attention?.question) lines.push(`       ? ${task.ticket.attention.question}`);
+          lines.push("       ↳ /booth-answer <text>");
         }
       }
     }
@@ -307,7 +314,10 @@ export default function boothPortal(pi: ExtensionAPI) {
       `instruction: ${task.instruction || "(none)"}`,
     ];
     if (dependencies.length) lines.push(`depends on: ${dependencies.join(", ")}`);
-    if (task.ticket?.attention?.question) lines.push(`question: ${task.ticket.attention.question}`);
+    if (task.ticket?.attention?.question) {
+      lines.push(`question: ${task.ticket.attention.question}`);
+      lines.push("answer with: /booth-answer <text>");
+    }
     return lines.join("\n");
   }
 

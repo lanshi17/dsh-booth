@@ -11,4 +11,8 @@ setup automatically. Use `/booth-setup` to retry, or `/booth-setup owner/repo`
 to override it. Until GitHub access succeeds, the console explains why it cannot
 send instead of silently queueing messages. The model used by the team is configured in DSH.
 
+When a worker needs a human decision, the relay includes the current question and the exact
+`/booth-answer <text>` action. Answers use the same portal thread as ordinary instructions, so
+the portal can route the decision back to the waiting worker.
+
 The upstream MIT notice is preserved in [`LICENSE`](LICENSE).
