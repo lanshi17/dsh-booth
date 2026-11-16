@@ -100,11 +100,15 @@ export default function boothPortal(pi: ExtensionAPI) {
     const view = await response.json() as { items?: Array<{ tasks?: Array<{ id?: string; instruction?: string; ticket?: { title?: string; state?: string } }> }> };
     const tasks = (view.items || []).flatMap(item => item.tasks || []);
     if (!tasks.length) return "team tasks\n  no delegated tasks";
-    const icon = (state: string) => state.includes("person") || state.includes("waiting") ? "◌" : state.includes("working") || state.includes("evaluating") || state.includes("accepted") ? "●" : "○";
+    const cardState = (state: string) => state.includes("person") || state.includes("waiting") ? "waiting"
+      : state.includes("failed") || state.includes("blocked") ? "blocked"
+      : state.includes("completed") || state.includes("merged") || state.includes("ended") ? "done"
+      : state.includes("working") || state.includes("evaluating") || state.includes("accepted") ? "working" : "planned";
+    const icon = (state: string) => state === "waiting" ? "◌" : state === "working" ? "●" : state === "blocked" ? "!" : state === "done" ? "✓" : "○";
     return ["team tasks", ...tasks.map(task => {
-      const state = task.ticket?.state || "planned";
+      const state = cardState(task.ticket?.state || "planned");
       const title = task.ticket?.title || task.instruction || task.id || "task";
-      return `${icon(state)}  ${state.padEnd(16)} ${title}`;
+      return `${icon(state)}  ${state.padEnd(8)}  [${task.id || "task"}]  ${title}`;
     })].join("\n");
   }
 
