@@ -5,6 +5,10 @@ composer:
 statusLine:
   preset: ascii
   separator: ascii
+tui:
+  # The team pulse in the booth footer carries run state; do not duplicate it in
+  # the upstream terminal title while the portal extension owns the title.
+  titleState: false
 startup:
   setupWizard: false
   showSplash: false

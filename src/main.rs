@@ -307,6 +307,9 @@ fn launch_omp(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> 
         ));
     }
     let status = std::process::Command::new("omp")
+        // Keep the session title generator from reclaiming the terminal after the booth
+        // extension mounts; the extension owns the title and status language.
+        .arg("--no-title")
         .arg("--config")
         .arg(config)
         .arg("--extension")

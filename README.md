@@ -6,7 +6,7 @@
 and shortcuts, then routes the conversation to the team's portal agent. The terminal is branded
 `booth`; the team backend is `dsh-superagent`.
 
-The visible product name is always `booth`. oh-my-pi is retained as the implementation source for
+The visible product name is always `booth` in the console and its owned terminal title. oh-my-pi is retained as the implementation source for
 the terminal interaction layer and under its MIT license; its upstream command and package names
 remain internal compatibility details. This separation lets booth keep the familiar editor and
 keybindings while the team-agent runtime, portal routing, setup and lifecycle remain booth-owned.
@@ -158,7 +158,8 @@ the delegated team activity visible in one stream without exposing worker sessio
 The header state changes with the conversation: `ready`, `working`, or `waiting`.
 The status rail also summarizes delegated work from the portal API, for example `3 tasks · 2 working · 1 waiting`, without opening a separate task screen.
 The header's right edge keeps a compact team pulse in view: `portal · 2 queued`, `team · 1 needs you`, `team · 3 active`, or `team · ready`; startup and outage states say `syncing` or `offline` directly.
-In the OMP interaction surface, the footer uses the same single pulse so portal queue time, human decisions, and worker activity do not compete as separate status rows.
+In the booth interaction surface, the footer uses the same single pulse so portal queue time, human decisions, and worker activity do not compete as separate status rows.
+Each session opens with a small booth orientation line — `one portal · many agents` — plus the two commands that reveal the current team board.
 The bundled frontend pins booth's ASCII symbol and status-line presets, so the default header does not inherit a machine's Nerd Font `pi`/powerline branding.
 When a task changes state, booth adds a team event to the transcript automatically; the active task title also appears in the status rail.
 Use `/booth-tasks` to print delegated task cards grouped by booth state in the transcript.

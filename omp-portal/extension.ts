@@ -154,6 +154,7 @@ export default function boothPortal(pi: ExtensionAPI) {
   const taskSnapshot = new Map<string, { state: string; title: string }>();
   let taskSnapshotReady = false;
   let watchMode = true;
+  let welcomeShown = false;
   const watchReady = (async () => {
     try { watchMode = (await readFile(watchFile, "utf8")).trim() !== "off"; }
     catch { /* first launch defaults to live team events */ }
@@ -179,6 +180,17 @@ export default function boothPortal(pi: ExtensionAPI) {
 
   function updateWatchStatus() {
     ui?.setStatus("booth-watch", watchMode ? "watch · live team events" : undefined);
+  }
+
+  function showWelcome() {
+    if (welcomeShown) return;
+    welcomeShown = true;
+    pi.sendMessage({
+      customType: "booth-welcome",
+      content: "booth · team console\none portal · many agents\ntry /booth-now or /booth-tasks",
+      display: true,
+      attribution: "agent",
+    }, { triggerTurn: false });
   }
 
   function pulseText(): string {
@@ -442,6 +454,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     await watchReady;
     ui = ctx.ui;
     brandBooth();
+    showWelcome();
     updateWatchStatus();
     let problem = await readiness();
     if (problem) {
@@ -635,6 +648,8 @@ export default function boothPortal(pi: ExtensionAPI) {
   });
   pi.registerMessageRenderer("booth-portal-system", (message, _options, theme) =>
     new Text(theme.fg("muted", `booth  ·  ${String(message.content)}`)));
+  pi.registerMessageRenderer("booth-welcome", (message, _options, theme) =>
+    new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-portal-ack", (message, _options, theme) => {
     return new Text(theme.fg("muted", `booth  ›  ${String(message.content)}`));
   });

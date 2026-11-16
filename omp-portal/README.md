@@ -15,4 +15,7 @@ When a worker needs a human decision, the relay includes the current question an
 `/booth-answer <text>` action. Answers use the same portal thread as ordinary instructions, so
 the portal can route the decision back to the waiting worker.
 
+The console opens with a booth orientation line (`one portal · many agents`) instead of the
+upstream frontend splash; the editor and keyboard mechanics remain supplied by the MIT kernel.
+
 The upstream MIT notice is preserved in [`LICENSE`](LICENSE).
