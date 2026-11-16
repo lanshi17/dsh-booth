@@ -156,6 +156,92 @@ fn installed_bundle_dir(data_dir: &Option<PathBuf>) -> Option<PathBuf> {
     (bundle.is_absolute() && bundle.join("package.json").is_file()).then_some(bundle)
 }
 
+fn log_offset(cfg: &Config) -> u64 {
+    fs::metadata(cfg.log())
+        .map(|metadata| metadata.len())
+        .unwrap_or(0)
+}
+
+fn stale_session_id_since(cfg: &Config, offset: u64) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    const MAX_NEW_LOG_BYTES: u64 = 1024 * 1024;
+    const MARKER: &str = "resume failed for session \"";
+
+    let mut file = fs::File::open(cfg.log()).ok()?;
+    let length = file.metadata().ok()?.len();
+    if length <= offset {
+        return None;
+    }
+    file.seek(SeekFrom::Start(offset)).ok()?;
+    let mut bytes = Vec::new();
+    file.take((length - offset).min(MAX_NEW_LOG_BYTES))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    let log = String::from_utf8_lossy(&bytes);
+    let line = log.lines().rev().find(|line| {
+        line.contains(MARKER) && line.contains("SessionQueryError") && line.contains("not found")
+    })?;
+    let tail = line.rsplit_once(MARKER)?.1;
+    let id = tail.split_once('\"')?.0;
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+    {
+        return None;
+    }
+    Some(id.to_owned())
+}
+
+fn rotate_master_id_if_matches(cfg: &Config, stale_id: &str, next_id: &str) -> Result<(), String> {
+    const SCRIPT: &str = r#"
+      import { Database } from 'bun:sqlite';
+      const db = new Database(process.env.BOOTH_STATE_DB);
+      try {
+        db.exec('PRAGMA busy_timeout=5000; BEGIN IMMEDIATE');
+        const current = db.query('SELECT value FROM kv WHERE key=?').get('master-id');
+        if (!current) throw new Error('the orchestrator database has no master-id');
+        if (JSON.parse(current.value) !== process.env.BOOTH_STALE_SESSION_ID)
+          throw new Error('the stored master-id changed; refusing to overwrite it');
+        const result = db.query('UPDATE kv SET value=? WHERE key=? AND value=?')
+          .run(JSON.stringify(process.env.BOOTH_NEXT_SESSION_ID), 'master-id', JSON.stringify(process.env.BOOTH_STALE_SESSION_ID));
+        if (result.changes !== 1) throw new Error('the master-id row was not updated');
+        db.exec('COMMIT');
+      } catch (error) {
+        try { db.exec('ROLLBACK'); } catch {}
+        throw error;
+      } finally {
+        db.close();
+      }
+    "#;
+    let database = cfg.state_dir.join("orchestrator.sqlite");
+    if !database.is_file() {
+        return Err(format!(
+            "orchestrator database is missing: {}",
+            database.display()
+        ));
+    }
+    let output = Command::new("bun")
+        .args(["-e", SCRIPT])
+        .env("BOOTH_STATE_DB", &database)
+        .env("BOOTH_STALE_SESSION_ID", stale_id)
+        .env("BOOTH_NEXT_SESSION_ID", next_id)
+        .output()
+        .map_err(|error| {
+            format!("cannot run Bun to repair the orchestrator session ID: {error}")
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        Err(format!(
+            "cannot repair the orchestrator session ID: {detail}"
+        ))
+    }
+}
+
 pub fn init(cfg: &Config) -> Result<(), String> {
     println!("profile  {}", cfg.profile_dir().display());
     println!("bundle   {}", cfg.bundle.display());
@@ -259,19 +345,31 @@ fn repair_profile(cfg: &Config) -> Result<(), String> {
 
 /// Starts the service and repairs a stale persisted orchestrator session once.
 pub fn start(cfg: &Config) -> Result<(), String> {
+    let offset = log_offset(cfg);
     match start_once(cfg) {
         Ok(()) => Ok(()),
-        Err(error) if stale_session_error(cfg) && read_pid(cfg).is_some() => {
-            println!("stale orchestrator session detected; moving old sessions aside and retrying");
-            stop(cfg)?;
-            let work = execution_root(&Api::new(&cfg.url()), cfg);
-            if let Some(path) = reset_sessions(cfg, &work)? {
-                println!("old sessions moved to {}", path.display());
+        Err(error) => {
+            let Some(stale_id) = stale_session_id_since(cfg, offset) else {
+                return Err(error);
+            };
+            if read_pid(cfg).is_none() {
+                return Err(error);
             }
-            start_once(cfg)
-                .map_err(|retry| format!("{error}; retry after session reset failed: {retry}"))
+            println!(
+                "stale orchestrator session `{stale_id}` detected; creating a fresh session ID"
+            );
+            stop(cfg)?;
+            let stamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+            let next_id = format!("orchestrator-recovered-{}-{stamp}", std::process::id());
+            rotate_master_id_if_matches(cfg, &stale_id, &next_id)?;
+            println!("preserved the old session data; retrying with `{next_id}`");
+            start_once(cfg).map_err(|retry| {
+                format!("{error}; retry with the fresh orchestrator session failed: {retry}")
+            })
         }
-        Err(error) => Err(error),
     }
 }
 
@@ -349,16 +447,6 @@ fn start_once(cfg: &Config) -> Result<(), String> {
     println!("starting dsh (pid {pid}); log {}", cfg.log().display());
 
     wait_ready(cfg, Some(pid))
-}
-
-fn stale_session_error(cfg: &Config) -> bool {
-    fs::read_to_string(cfg.log())
-        .map(|log| {
-            log.contains("resume failed for session")
-                && log.contains("SessionQueryError")
-                && log.contains("not found")
-        })
-        .unwrap_or(false)
 }
 
 /// Waits for a DSH management API to mount its runtime, whether booth started the process or
@@ -1332,17 +1420,91 @@ mod tests {
     }
 
     #[test]
-    fn stale_session_error_requires_the_missing_session_diagnostic() {
+    fn stale_session_detection_ignores_old_log_entries_and_extracts_the_new_missing_id() {
         let cfg = config("stale-session-log");
         fs::create_dir_all(&cfg.state_dir).unwrap();
         fs::write(
             cfg.log(),
-            "resume failed for session x: SessionQueryError: session x not found\n",
+            "resume failed for session \"orchestrator-old\": SessionQueryError: session not found\n",
         )
         .unwrap();
-        assert!(stale_session_error(&cfg));
-        fs::write(cfg.log(), "resume failed for session x: network error\n").unwrap();
-        assert!(!stale_session_error(&cfg));
+        let offset = log_offset(&cfg);
+        fs::write(
+            cfg.log(),
+            "resume failed for session \"orchestrator-old\": SessionQueryError: session not found\n\
+             resume failed for session \"orchestrator-live\": SessionQueryError: session not found\n\
+             resume failed for session \"not-stale\": network error\n",
+        )
+        .unwrap();
+        assert_eq!(
+            stale_session_id_since(&cfg, offset).as_deref(),
+            Some("orchestrator-live")
+        );
+        let offset = log_offset(&cfg);
+        fs::write(
+            cfg.log(),
+            "resume failed for session \"other\": network error\n",
+        )
+        .unwrap();
+        assert_eq!(stale_session_id_since(&cfg, offset), None);
+        let _ = fs::remove_dir_all(&cfg.dsh_home);
+    }
+
+    #[test]
+    fn stale_session_recovery_rotates_only_the_matching_master_id() {
+        let cfg = config("stale-session-db");
+        fs::create_dir_all(&cfg.state_dir).unwrap();
+        let database = cfg.state_dir.join("orchestrator.sqlite");
+        let create = r#"
+          import { Database } from 'bun:sqlite';
+          const db = new Database(process.env.BOOTH_TEST_DB);
+          db.exec('CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+          db.query('INSERT INTO kv VALUES (?, ?)').run('master-id', JSON.stringify(process.env.BOOTH_TEST_OLD));
+          db.query('INSERT INTO kv VALUES (?, ?)').run('keep-me', JSON.stringify('still here'));
+          db.close();
+        "#;
+        let created = Command::new("bun")
+            .args(["-e", create])
+            .env("BOOTH_TEST_DB", &database)
+            .env("BOOTH_TEST_OLD", "orchestrator-missing")
+            .output()
+            .expect("Bun is installed for the runtime tests");
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stderr)
+        );
+
+        assert!(
+            rotate_master_id_if_matches(&cfg, "orchestrator-missing", "orchestrator-fresh").is_ok()
+        );
+        assert!(rotate_master_id_if_matches(
+            &cfg,
+            "orchestrator-missing",
+            "orchestrator-should-not-write"
+        )
+        .is_err());
+
+        let read = r#"
+          import { Database } from 'bun:sqlite';
+          const db = new Database(process.env.BOOTH_TEST_DB, { readonly: true });
+          console.log(JSON.stringify(Object.fromEntries(db.query('SELECT key,value FROM kv ORDER BY key').all()
+            .map(({ key, value }) => [key, JSON.parse(value)]))));
+          db.close();
+        "#;
+        let result = Command::new("bun")
+            .args(["-e", read])
+            .env("BOOTH_TEST_DB", &database)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let values: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(values["master-id"], "orchestrator-fresh");
+        assert_eq!(values["keep-me"], "still here");
         let _ = fs::remove_dir_all(&cfg.dsh_home);
     }
 

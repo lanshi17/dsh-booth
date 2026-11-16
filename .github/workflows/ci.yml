@@ -37,6 +37,9 @@ jobs:
           # `Config::from_env` resolves the bundle the service runs from, and the tests build a
           # console with it, so the pinned submodule is part of the test fixture.
           submodules: recursive
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
       - name: Read the toolchain the repository records
         id: toolchain
         # The hosted image ships its own stable, newer than the version `tools/versions.txt`
