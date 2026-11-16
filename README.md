@@ -150,6 +150,12 @@ check the deployment guide asks for.
 
 ## Inside the console
 
+booth keeps OMP's fast editor and keyboard model, then adds its own surface language: `you ›` for
+the operator, `booth ›` for the portal, and `team ›` for worker progress and results. The header
+names the product and the active team-agent kernel, while the status rail shows whether the team
+is connected, processing work, or waiting for a decision. This makes the portal conversation and
+the delegated team activity visible in one stream without exposing worker session mechanics.
+
 | Key | Does |
 | --- | --- |
 | `Enter` | Send the line; bare text sends the agent an instruction |

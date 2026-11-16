@@ -47,12 +47,12 @@ export default function boothPortal(pi: ExtensionAPI) {
   // identity shown in the terminal title.
   function brandBooth() {
     ui?.setTitle("booth");
-    ui?.setStatus("booth-brand", "booth · dsh-superagent");
+    ui?.setStatus("booth-brand", "booth  ·  team agents");
     // OMP's built-in header carries its own product name. Replace it with the
     // booth identity while leaving the editor, palette, history and shortcuts
     // supplied by the interaction kernel intact.
     ui?.setHeader?.(((_tui: unknown, theme: { fg: (name: string, text: string) => string }) =>
-      new Text(theme.fg("accent", "booth"))) as unknown);
+      new Text(theme.fg("accent", " booth ") + theme.fg("muted", "  team agents"))) as unknown);
   }
 
   function status() {
@@ -152,9 +152,12 @@ export default function boothPortal(pi: ExtensionAPI) {
   });
 
   pi.registerMessageRenderer("booth-portal-user", (message, _options, theme) =>
-    new Text(theme.fg("accent", `you  ${String(message.content)}`)));
-  pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) =>
-    new Text(theme.fg("text", String(message.content))));
+    new Text(theme.fg("accent", `you  ›  ${String(message.content)}`)));
+  pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
+    const kind = String((message as { kind?: unknown }).kind || "reply");
+    const label = kind === "worker_report" || kind === "worker_attention" ? "team" : "booth";
+    return new Text(theme.fg(label === "team" ? "accent" : "text", `${label}  ›  ${String(message.content)}`));
+  });
 
   const poll = async () => {
     if (polling) return;
@@ -171,7 +174,7 @@ export default function boothPortal(pi: ExtensionAPI) {
           try {
             const reply = JSON.parse(line) as PortalReply;
             if (reply.text && (!reply.thread || reply.thread === activeThread)) {
-              pi.sendMessage({ customType: "booth-portal-reply", content: reply.text, display: true, attribution: "agent" }, { triggerTurn: false });
+              pi.sendMessage({ customType: "booth-portal-reply", content: reply.text, kind: reply.kind, display: true, attribution: "agent" }, { triggerTurn: false });
               pending.clear();
               status();
             }
