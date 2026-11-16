@@ -64,7 +64,17 @@ export default function boothPortal(pi: ExtensionAPI) {
   function status() {
     teamState = pending.size ? "working" : "ready";
     brandBooth();
-    ui?.setStatus("booth-portal", pending.size ? `团队正在处理 · ${pending.size} 条消息` : "团队服务已连接");
+    updatePendingRail();
+  }
+
+  function updatePendingRail() {
+    if (!pending.size) {
+      ui?.setStatus("booth-portal", "团队服务已连接");
+      return;
+    }
+    const oldest = Math.min(...[...pending.values()].map(item => item.sent));
+    const seconds = Math.max(0, Math.floor((Date.now() - oldest) / 1000));
+    ui?.setStatus("booth-portal", `team · working · ${pending.size} messages · ${seconds}s`);
   }
 
   async function refreshTaskStatus(): Promise<void> {
@@ -260,6 +270,11 @@ export default function boothPortal(pi: ExtensionAPI) {
       }
     } finally { polling = false; }
   };
-  const interval = setInterval(() => { void poll(); void refreshTaskStatus(); }, 2000);
+  let taskTick = 0;
+  const interval = setInterval(() => {
+    void poll();
+    updatePendingRail();
+    if (++taskTick % 2 === 0) void refreshTaskStatus();
+  }, 1000);
   pi.on("session_shutdown", () => clearInterval(interval));
 }
