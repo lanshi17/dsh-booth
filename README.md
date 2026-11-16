@@ -166,7 +166,7 @@ Cards and task details normalize backend states into booth language: `working`, 
 While messages are in flight, the status rail includes elapsed time so a long-running team task remains visibly active.
 Every accepted instruction also gets an immediate `booth › queued for team` line with a short message ID, before the portal or workers reply.
 Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.
-Worker reports are rendered as readable `team ›` updates; the underlying relay JSON never replaces the portal conversation, and it does not settle the waiting message by itself.
+Worker reports and follow-ups are rendered as readable `team ›` updates; the underlying relay JSON never replaces the portal conversation, and none of these progress relays settles the waiting message by itself.
 The portal outbox cursor is kept in the booth state directory, so replies produced while the console is closed appear when it is opened again.
 Use `/booth-now` for a compact board with the current message queue, task counts, and active team work.
 Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the choice is kept across booth restarts, while the board and status rail continue updating.

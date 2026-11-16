@@ -146,7 +146,7 @@ export default function boothPortal(pi: ExtensionAPI) {
     // message. Keep the queue active until the portal sends its reply. For a
     // portal reply, settle one message in FIFO order so concurrent requests
     // remain visible while the other ones are still running.
-    if (kind === "worker_report" || kind === "worker_attention") return;
+    if (kind === "worker_report" || kind === "worker_attention" || kind === "follow_up") return;
     const oldest = pending.keys().next();
     if (!oldest.done && oldest.value) pending.delete(oldest.value);
   }
