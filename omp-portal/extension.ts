@@ -202,6 +202,18 @@ export default function boothPortal(pi: ExtensionAPI) {
     return lines.join("\n");
   }
 
+  async function taskTicket(taskId: string): Promise<{ taskId: string; ticketId?: string } | undefined> {
+    const response = await fetch(`${apiBase()}/orchestrator/api/portal?offset=0&limit=20`, {
+      headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+    });
+    if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
+    const view = await response.json() as {
+      items?: Array<{ tasks?: Array<{ id?: string; ticket?: { ticket_id?: string } }> }>;
+    };
+    const task = (view.items || []).flatMap(item => item.tasks || []).find(item => item.id === taskId || item.ticket?.ticket_id === taskId);
+    return task?.id ? { taskId: task.id, ticketId: task.ticket?.ticket_id } : undefined;
+  }
+
   async function boothNow(): Promise<string> {
     const lines = ["booth now", `team: ${teamState}`, `messages: ${pending.size}`];
     if (pending.size) {
@@ -377,6 +389,38 @@ export default function boothPortal(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("booth-stop", {
+    description: "Stop a delegated team task or ticket",
+    handler: async (args, ctx) => {
+      const requestedId = args.trim();
+      if (!requestedId) {
+        ctx.ui.notify("用法：/booth-stop <任务 ID>；先运行 /booth-tasks 查看任务。", "warning");
+        return;
+      }
+      try {
+        const task = await taskTicket(requestedId);
+        if (!task) {
+          ctx.ui.notify(`找不到任务或 ticket ${requestedId}；请先运行 /booth-tasks 刷新列表。`, "warning");
+          return;
+        }
+        if (!task.ticketId) {
+          ctx.ui.notify(`任务 ${task.taskId} 还没有启动 worker，无法停止。`, "warning");
+          return;
+        }
+        const result = await pi.exec(process.env.BOOTH_BINARY || "booth", ["--url", apiBase(), "stop", task.ticketId], { timeout: 30000 });
+        if (result.code !== 0) throw new Error([result.stdout, result.stderr].filter(Boolean).join("\n").trim() || `booth stop exited with ${result.code}`);
+        pi.sendMessage({
+          customType: "booth-task-control",
+          content: `stopped · task [${task.taskId}] · ticket ${task.ticketId}`,
+          display: true,
+          attribution: "agent",
+        }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`停止任务失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
   pi.on("input", async (event) => {
     const text = event.text.trim();
     if (!text || text.startsWith("/")) return;
@@ -417,6 +461,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-watch-card", (message, _options, theme) =>
     new Text(theme.fg("muted", String(message.content))));
+  pi.registerMessageRenderer("booth-task-control", (message, _options, theme) =>
+    new Text(theme.fg("accent", `booth  ›  ${String(message.content)}`)));
   pi.registerMessageRenderer("booth-portal-reply", (message, _options, theme) => {
     const kind = String((message as { kind?: unknown }).kind || "reply");
     const label = kind === "worker_report" || kind === "worker_attention" ? "team" : "booth";

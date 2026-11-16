@@ -167,6 +167,7 @@ Concurrent instructions keep their own queue time; worker progress does not mark
 The portal outbox cursor is kept in the booth state directory, so replies produced while the console is closed appear when it is opened again.
 Use `/booth-now` for a compact board with the current message queue, task counts, and active team work.
 Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the board and status rail continue updating.
+Use `/booth-stop <task-id>` to stop a delegated worker from the booth console; the command also accepts the worker ticket ID.
 
 | Key | Does |
 | --- | --- |
