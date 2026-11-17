@@ -7,7 +7,6 @@ use std::process::Command;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Who {
     Dsh,
-    Omp,
     Claude,
     Codex,
     Cursor,
@@ -16,8 +15,7 @@ pub enum Who {
 impl Who {
     pub fn parse(name: &str) -> Result<Self, String> {
         match name.trim().to_ascii_lowercase().as_str() {
-            "dsh" => Ok(Self::Dsh),
-            "booth" | "omp" | "pi" => Ok(Self::Omp),
+            "dsh" | "booth" => Ok(Self::Dsh),
             "claude" | "claude-code" => Ok(Self::Claude),
             "codex" => Ok(Self::Codex),
             "cursor" | "cursor-agent" => Ok(Self::Cursor),
@@ -32,9 +30,7 @@ impl Who {
 pub fn split(text: &str) -> (Who, String) {
     let text = text.trim();
     for (prefix, who) in [
-        ("@booth ", Who::Omp),
-        ("@omp ", Who::Omp),
-        ("@pi ", Who::Omp),
+        ("@booth ", Who::Dsh),
         ("@claude ", Who::Claude),
         ("@codex ", Who::Codex),
         ("@cursor-agent ", Who::Cursor),
@@ -56,7 +52,6 @@ pub fn run(who: Who, text: &str) -> Result<String, String> {
     }
     let (bin, label, mut args) = match who {
         Who::Dsh => return Err("dsh is the desk's own team".into()),
-        Who::Omp => ("omp", "booth", vec!["-p".into()]),
         Who::Claude => ("claude", "claude", vec!["-p".into()]),
         Who::Codex => ("codex", "codex", vec!["exec".into()]),
         // --trust skips the workspace prompt; otherwise a background handoff waits forever.
@@ -113,12 +108,10 @@ mod tests {
     #[test]
     fn a_prefix_names_the_worker() {
         let (who, text) = split("@booth change the prompt");
-        assert_eq!(who, Who::Omp);
+        assert_eq!(who, Who::Dsh);
         assert_eq!(text, "change the prompt");
-        let (who, text) = split("@omp change the prompt");
-        assert_eq!(who, Who::Omp);
-        assert_eq!(text, "change the prompt");
-        assert_eq!(Who::parse("booth").unwrap(), Who::Omp);
+        assert_eq!(Who::parse("booth").unwrap(), Who::Dsh);
+        assert!(Who::parse("omp").is_err());
         assert_eq!(Who::parse("claude-code").unwrap(), Who::Claude);
         assert_eq!(Who::parse("cursor-agent").unwrap(), Who::Cursor);
         let (who, text) = split("@cursor-agent fix the prompt");

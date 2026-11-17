@@ -5,7 +5,6 @@
 //! calls without a terminal, for scripts and the hourly check the deployment guide asks for.
 
 mod api;
-#[allow(dead_code)]
 mod app;
 mod commands;
 mod decider;
@@ -234,6 +233,7 @@ enum FeishuCommand {
 
 fn main() {
     let cli = Cli::parse();
+    let remote = cli.url != DEFAULT_URL || std::env::var_os("DSH_SUPERAGENT_URL").is_some();
     let url = if cli.url == DEFAULT_URL && std::env::var_os("DSH_SUPERAGENT_URL").is_none() {
         std::env::var("BOOTH_PORT")
             .ok()
@@ -246,12 +246,14 @@ fn main() {
     let api = Api::new(&url);
     let result = match cli.command {
         None => {
-            // Booth uses the MIT interaction kernel for its composer, palette, history, transcript
-            // and shortcuts while owning the lifecycle and portal adapter.
-            service::Config::from_env().and_then(|cfg| {
-                service::start(&cfg)?;
-                launch_portal(&url, &cfg.state_dir)
-            })
+            if remote {
+                app::run(Api::new(&url))
+            } else {
+                service::Config::from_env().and_then(|cfg| {
+                    service::start(&cfg)?;
+                    app::run(Api::new(&url))
+                })
+            }
         }
         Some(command) => run(api, command),
     };
@@ -262,77 +264,6 @@ fn main() {
         }
         std::process::exit(1);
     }
-}
-
-fn launch_portal(api_url: &str, state_dir: &std::path::Path) -> Result<(), String> {
-    let data_dir = service::install_data_dir();
-    let extension_override = std::env::var_os("BOOTH_PORTAL_EXTENSION")
-        .or_else(|| std::env::var_os("BOOTH_OMP_EXTENSION"))
-        .map(std::path::PathBuf::from);
-    let extension = extension_override
-        .clone()
-        .or_else(|| {
-            data_dir
-                .as_ref()
-                .and_then(|dir| installed_portal_extension(dir))
-        })
-        .unwrap_or_else(|| {
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("booth-portal/extension.ts")
-        });
-    if !extension.is_file() {
-        return Err(format!(
-            "booth portal extension is missing: {}",
-            extension.display()
-        ));
-    }
-    let config = if extension_override.is_some() {
-        extension
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join("config.yml")
-    } else {
-        extension
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join("config.yml")
-    };
-    if !config.is_file() {
-        return Err(format!(
-            "booth portal config is missing: {}",
-            config.display()
-        ));
-    }
-    let status = std::process::Command::new("omp")
-        // Keep the session title generator from reclaiming the terminal after the booth
-        // extension mounts; the extension owns the title and status language.
-        .arg("--no-title")
-        .arg("--config")
-        .arg(config)
-        .arg("--extension")
-        .arg(extension)
-        .env("DSH_SUPERAGENT_URL", api_url)
-        .env("BOOTH_STATE_DIR", state_dir)
-        .env(
-            "BOOTH_BINARY",
-            std::env::current_exe().map_err(|error| format!("cannot locate booth: {error}"))?,
-        )
-        .status()
-        .map_err(|error| format!("cannot launch the booth interaction frontend: {error}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("booth frontend exited with {status}"))
-    }
-}
-
-/// The portal bundle was called `omp-portal` before booth took ownership of the frontend name.
-/// Keep reading that installed directory so replacing only the binary does not strand a working
-/// runtime; new installers always copy the booth-named directory.
-fn installed_portal_extension(data_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    ["booth-portal", "omp-portal"].iter().find_map(|name| {
-        let path = data_dir.join(name).join("extension.ts");
-        path.is_file().then_some(path)
-    })
 }
 
 /// What `booth provider` prints: the service's own catalog, never a secret.
@@ -1004,28 +935,6 @@ mod tests {
         let view = provider_view(&Api::new(&fake.base)).unwrap();
         assert_eq!(view["default"]["model"], "deepseek-flash");
         assert!(view["groups"].is_array(), "{view:?}");
-    }
-
-    #[test]
-    fn the_installed_portal_prefers_booth_and_reads_the_legacy_name() {
-        let root =
-            std::env::temp_dir().join(format!("booth-portal-path-{}", crate::oauth::uuid_v4()));
-        let old = root.join("omp-portal").join("extension.ts");
-        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
-        std::fs::write(&old, "legacy").unwrap();
-        assert_eq!(
-            installed_portal_extension(&root).as_deref(),
-            Some(old.as_path())
-        );
-
-        let current = root.join("booth-portal").join("extension.ts");
-        std::fs::create_dir_all(current.parent().unwrap()).unwrap();
-        std::fs::write(&current, "current").unwrap();
-        assert_eq!(
-            installed_portal_extension(&root).as_deref(),
-            Some(current.as_path())
-        );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

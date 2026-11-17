@@ -137,13 +137,6 @@ if [ ! -f "$runtime_dir/.booth-runtime-installed" ]; then
   : > "$staged_runtime/.booth-runtime-installed"
   mv "$staged_runtime" "$runtime_dir"
 fi
-mkdir -p "$DATA_DIR/booth-portal"
-portal_dir="$runtime_dir/booth-portal"
-# Releases before the booth-owned frontend name used omp-portal. Accept one of those bundles
-# during an upgrade, but always install the files under booth-portal for the next launch.
-[ -d "$portal_dir" ] || portal_dir="$runtime_dir/omp-portal"
-[ -f "$portal_dir/extension.ts" ] || die 'booth portal frontend is missing from the runtime bundle'
-cp "$portal_dir/extension.ts" "$portal_dir/config.yml" "$portal_dir/LICENSE" "$DATA_DIR/booth-portal/"
 printf '%s\n' "$runtime_dir/superagent" > "$DATA_DIR/bundle-path.tmp"
 mv "$DATA_DIR/bundle-path.tmp" "$DATA_DIR/bundle-path"
 mv "$tmp/$ASSET" "$BIN_DIR/booth"
@@ -153,44 +146,10 @@ booth init
 say 'starting the team service'
 booth restart
 
-if [ "${BOOTH_NO_CONSOLE:-}" = 1 ] || [ ! -r /dev/tty ]; then
+if [ "${BOOTH_NO_CONSOLE:-}" = 1 ] || ! (: </dev/tty) 2>/dev/null; then
   say 'installed booth. Open it with: booth'
   exit 0
 fi
-
-if ! have omp || ! omp --version >/dev/null 2>&1; then
-  say 'installing booth interaction frontend'
-  curl -fsSL https://omp.sh/install | env PI_INSTALL_DIR="$BIN_DIR" sh -
-fi
-have omp || die 'booth interaction frontend installation failed; rerun the booth installer'
-
-# Bun's global installer can leave OMP's platform package out when an existing
-# source install is reused. OMP itself still answers `--version`, but the first
-# real console start then fails when pi-natives tries to load its .node addon.
-# Repair only that source-install shape; the standalone OMP binary carries its
-# native addon and has no @oh-my-pi/pi-natives package to repair.
-ensure_omp_native() {
-  native_package="@oh-my-pi/pi-natives-$node_os_arch"
-  global_bin=$(bun pm bin -g 2>/dev/null || true)
-  [ -n "$global_bin" ] || return 0
-  global_modules="$(dirname "$global_bin")/install/global/node_modules"
-  wrapper="$global_modules/@oh-my-pi/pi-natives"
-  [ -f "$wrapper/package.json" ] || return 0
-
-  version=$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$wrapper/package.json" 2>/dev/null || true)
-  [ -n "$version" ] || die "cannot determine the booth interaction runtime version"
-  leaf="$global_modules/$native_package"
-  if find "$leaf" -maxdepth 2 -type f -name "pi_natives.${node_os_arch}*.node" -print -quit 2>/dev/null | grep -q .; then
-    return 0
-  fi
-
-  say 'repairing booth interaction runtime'
-  bun add --global --exact "$native_package@$version"
-  find "$leaf" -maxdepth 2 -type f -name "pi_natives.${node_os_arch}*.node" -print -quit 2>/dev/null | grep -q . \
-    || die 'booth interaction runtime installation failed; rerun the booth installer'
-}
-
-ensure_omp_native
 
 say 'opening the booth console'
 exec booth </dev/tty >/dev/tty

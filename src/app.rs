@@ -215,7 +215,7 @@ enum Modal {
     },
     /// `/keys`: the shortcuts, one screen.
     Keys,
-    /// `/provider`: every provider the team can be pointed at, grouped the way omp groups them.
+    /// `/provider`: every provider the team can be pointed at, grouped by their purpose.
     Providers(ProviderScreen),
 }
 
@@ -311,6 +311,8 @@ struct Status {
     queued: u32,
     errors: usize,
     setup: bool,
+    /// Last observed reason local portal input cannot be accepted.
+    input_blocked: Option<String>,
     note: Option<String>,
     account: bool,
     #[allow(dead_code)]
@@ -330,6 +332,7 @@ impl Status {
             queued: 0,
             errors: 0,
             setup: false,
+            input_blocked: None,
             note: None,
             account: false,
             repository: None,
@@ -371,6 +374,11 @@ impl Status {
                     None => name.clone(),
                 }),
             setup: state.setup.problem.is_some(),
+            input_blocked: state
+                .setup
+                .problem
+                .as_ref()
+                .map(|problem| format!("{} · /setup", problem.detail)),
             note: None,
             account: oauth::account_signed_in(),
             repository: state
@@ -380,6 +388,32 @@ impl Status {
                 .and_then(|accounts| accounts.repository.clone()),
         }
     }
+}
+
+/// A local instruction is admitted only when its Source is installed, enabled, and the
+/// operator is listed. Other Sources' allow lists do not grant console access.
+fn local_input_problem(settings: &serde_json::Value) -> Option<String> {
+    let local = settings
+        .get("sources")?
+        .as_array()?
+        .iter()
+        .find(|source| source["id"] == "local");
+    if !local
+        .is_some_and(|source| source["installed"] == true && source["value"]["enabled"] == true)
+    {
+        return Some("本地对话入口未安装或未启用，请运行 /setup".into());
+    }
+    let allowed = &settings["blocks"]["policy"]["value"]["sources"]["local"]["allowed"];
+    if !allowed.as_array().is_some_and(|senders| {
+        senders.iter().any(|sender| {
+            sender["id"]
+                .as_str()
+                .is_some_and(|id| id.eq_ignore_ascii_case("operator"))
+        })
+    }) {
+        return Some("本地发送者 operator 未获授权，请在当前 Git 项目运行 /setup".into());
+    }
+    None
 }
 
 /// What the console has already said about one ticket it opened.
@@ -628,6 +662,11 @@ impl App {
                         if matched.is_empty() {
                             continue;
                         }
+                        // The portal deliberately routes its conversational turns as `ignore`.
+                        // This is not an answer: keep waiting until the portal actually replies.
+                        if decision.outcome == "ignore" {
+                            continue;
+                        }
                         // One Eval decision may settle every trigger in a batch. Clear them all or
                         // the console will later report a false timeout for the other messages.
                         for trigger in &matched {
@@ -644,16 +683,8 @@ impl App {
                                     },
                                 );
                             }
-                        } else if decision.outcome == "ignore" && self.show_worker_details {
-                            let ids = matched
-                                .iter()
-                                .map(|id| short_id(id.strip_prefix("local-").unwrap_or(id)))
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                            self.push(Line::from(Span::styled(
-                                format!("  ⋯ {ids} · assessment finished without a ticket · portal reply may follow"),
-                                Style::default().fg(FAINT),
-                            )));
+                        } else {
+                            self.push_decision(&decision);
                         }
                     }
                 }
@@ -903,6 +934,16 @@ impl App {
             .thread
             .as_deref()
             .is_some_and(|thread| thread.starts_with("portal-"));
+        if portal && reply.kind == "reply" {
+            if let Some(id) = self
+                .pending
+                .iter()
+                .min_by_key(|(_, item)| item.sent)
+                .map(|(id, _)| id.clone())
+            {
+                self.pending.remove(&id);
+            }
+        }
         let label = match (portal, reply.kind.as_str()) {
             (true, "acknowledgement") => "portal · accepted",
             (true, "notice") => "portal · notice",
@@ -989,6 +1030,10 @@ impl App {
             });
             return true;
         }
+        if let Some(problem) = &self.status.input_blocked {
+            self.push(warn_line(&format!("{problem} · 消息尚未发送")));
+            return false;
+        }
         let thread = match intake::portal_thread(&config) {
             Ok(thread) => thread,
             Err(error) => {
@@ -1070,13 +1115,15 @@ impl App {
     fn check_pending(&mut self) {
         let now = Instant::now();
         let mut lines = Vec::new();
+        let mut diagnose = false;
         for (id, entry) in self.pending.iter_mut() {
             let short = short_id(id.strip_prefix("local-").unwrap_or(id));
             let waited = now.duration_since(entry.sent);
             if !entry.warned && waited > Duration::from_secs(20) {
                 entry.warned = true;
+                diagnose = true;
                 lines.push(Line::from(Span::styled(
-                    format!("  ⋯ {short} · no decision yet · /sources shows whether the source is polling"),
+                    format!("  ⋯ {short} · 门户尚未回复，正在检查团队状态"),
                     Style::default().fg(FAINT),
                 )));
             } else if entry.warned && !entry.stale && waited > Duration::from_secs(600) {
@@ -1091,6 +1138,17 @@ impl App {
             }
         }
         self.push_lines(lines);
+        if diagnose {
+            let api = self.api.clone();
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let message = match commands::execute(&api, "/overview") {
+                    Ok(lines) => Msg::Lines(lines),
+                    Err(error) => Msg::Error(format!("团队状态检查失败：{error}")),
+                };
+                let _ = tx.send(message);
+            });
+        }
     }
 
     fn refresh_status(&self) {
@@ -1171,7 +1229,15 @@ impl App {
                 let _ = tx.send(Msg::Catalog(Box::new(Catalog::parse(&models))));
             }
             let status = match api.state() {
-                Ok(state) => Status::from_state(&api, &state),
+                Ok(state) => {
+                    let mut status = Status::from_state(&api, &state);
+                    if status.input_blocked.is_none() {
+                        if let Ok(settings) = api.settings() {
+                            status.input_blocked = local_input_problem(&settings);
+                        }
+                    }
+                    status
+                }
                 Err(error) => {
                     let text = error.to_string();
                     let note = if text.contains("cannot reach") {
@@ -3964,6 +4030,26 @@ mod transcript_tests {
     }
 
     #[test]
+    fn an_unlisted_local_operator_is_not_silently_queued() {
+        let (mut app, dir, _env) = console("operator-not-allowed");
+        let mut settings = crate::testkit::default_settings();
+        settings["blocks"]["policy"]["value"]["sources"]["github"]["allowed"] =
+            json!([{ "id": "someone" }]);
+        app.status.input_blocked = local_input_problem(&settings);
+        app.input = "check the project".into();
+        app.submit();
+        assert!(!dir.join("booth-inbox.jsonl").exists());
+        assert_eq!(app.input, "check the project");
+        assert!(text(&app).contains("operator 未获授权"));
+        settings["blocks"]["policy"]["value"]["sources"]["local"]["allowed"] =
+            json!([{ "id": "operator" }]);
+        assert!(local_input_problem(&settings).is_none());
+        settings["sources"][1]["value"]["enabled"] = json!(false);
+        assert!(local_input_problem(&settings).unwrap().contains("未启用"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn pasted_multiline_instruction_reaches_the_inbox_intact() {
         let (mut app, dir, _env) = console("multiline-submit");
         app.paste("first\nsecond");
@@ -5032,7 +5118,7 @@ mod editor_tests {
     }
 
     #[test]
-    fn a_batched_decision_clears_every_pending_console_message() {
+    fn portal_ignore_waits_for_a_real_reply_and_accept_settles_a_batch() {
         let (mut app, dir, _env) = editor("pending-batch");
         for id in ["local-a", "local-b"] {
             app.pending.insert(
@@ -5049,12 +5135,20 @@ mod editor_tests {
             trigger_ids: vec!["local-a".into(), "local-b".into()],
             ..Decision::default()
         }]));
-        assert!(
-            app.pending.is_empty(),
-            "one batch judgement settles every included message"
+        assert_eq!(app.pending.len(), 2, "a portal ignore is not a response");
+        app.push_agent(intake::Reply {
+            id: "reply-1".into(),
+            kind: "reply".into(),
+            text: "working".into(),
+            ticket: None,
+            thread: Some("portal-test".into()),
+        });
+        assert_eq!(
+            app.pending.len(),
+            1,
+            "one portal response settles one message"
         );
-        assert!(rendered(&app).contains("assessment finished without a ticket"));
-        assert!(rendered(&app).contains("a, b"), "{}", rendered(&app));
+        app.pending.clear();
         for id in ["local-c", "local-d"] {
             app.pending.insert(
                 id.into(),
@@ -5120,7 +5214,7 @@ mod editor_tests {
             },
         );
         app.check_pending();
-        assert!(rendered(&app).contains("no decision yet"));
+        assert!(rendered(&app).contains("正在检查团队状态"));
         let after_warning = rendered(&app);
         app.check_pending();
         assert_eq!(

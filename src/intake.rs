@@ -918,7 +918,7 @@ fn gh_account_error(detail: &str) -> String {
     let lower = detail.to_ascii_lowercase();
     if lower.contains("rate limit exceeded") || lower.contains("api rate limit") {
         return format!(
-            "GitHub API rate limit exceeded while reading the gh account: {detail}. Run `gh auth status`; if the token is invalid, run `gh auth login -h github.com` (or `gh auth refresh`), then retry `/booth-setup owner/repo`. If the token is valid, wait for GitHub's rate-limit reset and retry."
+            "GitHub API rate limit exceeded while reading the gh account: {detail}. Run `gh auth status`; if the token is invalid, run `gh auth login -h github.com` (or `gh auth refresh`), then retry `/setup owner/repo`. If the token is valid, wait for GitHub's rate-limit reset and retry."
         );
     }
     if lower.contains("bad credentials")
@@ -926,7 +926,7 @@ fn gh_account_error(detail: &str) -> String {
         || lower.contains("token is invalid")
     {
         return format!(
-            "GitHub authentication failed: {detail}. Run `gh auth login -h github.com` (or `gh auth refresh`), then retry `/booth-setup owner/repo`."
+            "GitHub authentication failed: {detail}. Run `gh auth login -h github.com` (or `gh auth refresh`), then retry `/setup owner/repo`."
         );
     }
     format!("gh is not signed in: {detail}")

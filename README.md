@@ -1,15 +1,10 @@
 # dsh-booth
 
-`booth` is the terminal console and product surface for
-[dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype). It uses the MIT-licensed
-[oh-my-pi](https://github.com/can1357/oh-my-pi) interaction kernel for the composer, history, palette
-and shortcuts, then routes the conversation to the team's portal agent. The terminal is branded
-`booth`; the team backend is `dsh-superagent`.
-
-The visible product name is always `booth` in the console and its owned terminal title. oh-my-pi is retained as the implementation source for
-the terminal interaction layer and under its MIT license; its upstream command and package names
-remain internal compatibility details. This separation lets booth keep the familiar editor and
-keybindings while the team-agent runtime, portal routing, setup and lifecycle remain booth-owned.
+`booth` is an independent terminal console for the
+[dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype) team. Its Rust
+terminal interface, configuration, history and process lifecycle belong to booth; conversations
+are handled by the team's portal agent and delegated workers. It does not launch or share a
+session with another terminal coding agent.
 
 ## What is in the repository
 
@@ -19,10 +14,6 @@ downloads its prebuilt runtime; a source checkout lets `booth init` build it loc
 create the DSH profile and link the team bundle with `local-source/`; `booth up` runs that profile
 detached and waits for the management API. The submodule remains an MIT-licensed bundle with its
 own runtime.
-
-The release bundle keeps the portal adapter under `booth-portal/`, so the installed frontend and
-its configuration use booth's product name throughout. The underlying interaction kernel remains
-an implementation dependency and is not the product surface.
 
 The console itself talks only to the bundle's loopback management API (`/orchestrator/api/*`),
 so a DSH upgrade does not break it as long as the routes do.
@@ -37,22 +28,21 @@ The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header mus
 curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
 ```
 
-That downloads the prebuilt booth and team bundle, installs Node, Bun, dsh and the booth frontend only when
-missing, prepares the profile, and starts the service. Headless installs skip the frontend. It does not install Rust, Git or compile
+That downloads the prebuilt booth and team bundle, installs Node, Bun and dsh when missing, prepares the profile, and starts the service. The terminal interface is part of the booth binary. It does not install Rust, Git or compile
 projects on the user's machine. When the terminal is available, it opens booth; set
 `BOOTH_NO_CONSOLE=1` to leave the service running without opening the console. Releases currently
 support Linux x86_64 and ARM64; the installer adds its command directory to the active shell's
 login profile.
 
 The team backend currently requires an authenticated GitHub CLI and a repository the account
-can push to. Run `gh auth login`, open `booth`, and enter `/booth-setup owner/repo`. Configure
+can push to. Run `gh auth login`, open `booth`, and enter `/setup owner/repo`. Configure
 the DSH model provider and its credentials for the team. Until setup succeeds, booth shows the
 problem in the conversation instead of silently accepting messages it cannot process. If an old
 service remains stuck after an upgrade, `booth down && booth up` restarts the booth-owned service.
 
 If GitHub replies with `API rate limit exceeded` while setup reads the account, run
 `gh auth status`. An expired or invalid token makes `gh` fall back to the anonymous rate bucket;
-run `gh auth login -h github.com` (or `gh auth refresh`) and retry `/booth-setup owner/repo`.
+run `gh auth login -h github.com` (or `gh auth refresh`) and retry `/setup owner/repo`.
 When the token is valid, wait for GitHub's rate-limit window to reset and retry.
 
 For development from source:
@@ -151,7 +141,6 @@ still receives live @mentions, but `booth sources` reports the failed backfill.
 | `BOOTH_PROFILE` | `superagent` | DSH profile name |
 | `BOOTH_STATE_DIR` | `$DSH_HOME/state/superagent` | Database, `booth.pid`, `booth.log` |
 | `BOOTH_SUPERAGENT_DIR` | the repository's `superagent/` | Checkout to build and link |
-| `BOOTH_PORTAL_EXTENSION` | bundled `booth-portal/extension.ts` | Override the portal adapter during development |
 | `FEISHU_APP_ID`, `FEISHU_APP_SECRET` | — | The app `booth feishu login` configures |
 | `DSH_HOME` | `~/.dsh` | Where profiles and state live |
 
@@ -160,46 +149,11 @@ check the deployment guide asks for.
 
 ## Inside the console
 
-booth keeps its fast editor and keyboard model, then adds its own surface language: `you ›` for
-the operator, `booth ›` for the portal, and `team ›` for worker progress and results. The header
-names the product and the active team-agent kernel, while the status rail shows whether the team
-is connected, processing work, or waiting for a decision. This makes the portal conversation and
-the delegated team activity visible in one stream without exposing worker session mechanics.
-The header state changes with the conversation: `ready`, `working`, or `waiting`.
-The status rail also summarizes delegated work from the portal API, for example `3 tasks · 2 working · 1 waiting`, without opening a separate task screen.
-The header's right edge keeps a compact team pulse in view: `portal · 2 queued`, `team · 1 needs you`, `team · 3 active`, or `team · ready`; startup and outage states say `syncing` or `offline` directly.
-In the booth interaction surface, the footer uses the same single pulse so portal queue time, human decisions, and worker activity do not compete as separate status rows.
-Each session opens with a small booth orientation line — `one portal · many agents` — plus `/booth-focus`, the command that turns the current team state into one next action.
-The bundled frontend pins booth's ASCII symbol and status-line presets, so the default header does not inherit a machine's Nerd Font `pi`/powerline branding.
-When a task changes state, booth adds a team event to the transcript automatically; the active task title also appears in the status rail.
-Use `/booth-tasks` to print delegated task cards grouped by booth state in the transcript.
-Task views follow the portal's pagination, so older conversations remain available after the first 20.
-The live status rail samples recent pages; opening a task view performs the full paged read on demand.
-Use `/booth-task <id>` to open one task's state, instruction, title, and dependencies.
-`/booth-task` also accepts the worker ticket ID and prints the current human question when a task is waiting.
-Cards and task details normalize backend states into booth language: `working`, `waiting`, `blocked`, `done`, and `planned`.
-When a worker needs a decision, run `/booth-answer` to open a focused answer window for the next
-waiting question, or use `/booth-answer <text>` for a direct reply. The answer stays in the same
-portal conversation, gets its own `answer queued for team` acknowledgement, and wakes the portal
-to forward it to the waiting worker.
-While messages are in flight, the status rail includes elapsed time so a long-running team task remains visibly active.
-Every accepted instruction also gets an immediate `booth › queued for team` line with a short message ID, before the portal or workers reply.
-Concurrent instructions keep their own queue time; worker progress does not mark the whole booth session idle before the portal answers.
-Worker reports and follow-ups are rendered as readable `team ›` updates; the underlying relay JSON never replaces the portal conversation, and none of these progress relays settles the waiting message by itself.
-When a worker asks for a decision, booth enriches the relay from the ticket view and prints the current question under `needs your decision`, so the portal can answer without making the person hunt through a task detail screen.
-The portal outbox cursor is kept in the booth state directory, so replies produced while the console is closed appear when it is opened again.
-Use `/booth-now` for a compact board with the current message queue, full task counts, and active team work.
-Use `/booth-focus` when you want a single next move: it opens the team's waiting question, points to
-the live board while a portal message is queued, or shows the active task to watch. It is the shortest
-path through booth's states and does not require a task ID.
-Use `/booth-check` when a portal message has been queued for too long. Booth reads management health,
-executor load, portal tasks and each active ticket, then tells you whether the portal has not started,
-a worker is running or idle, a worker is waiting for a decision, or the model/runtime is unhealthy.
-The same evidence check appears automatically after 30 seconds without a portal reply, so a stall is
-reported with live team state instead of a generic credentials warning.
-Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the choice is kept across booth restarts, while the board and status rail continue updating.
-Use `/booth-stop <task-id>` to stop a delegated worker from the booth console; the command also accepts the worker ticket ID.
-Use `/booth-retry <task-id>` to start a fresh assignment for a stopped or failed worker.
+booth's terminal interface maintains its own transcript, composer and command palette. Ordinary
+text goes to the portal agent; its replies and service status are polled while the console is open.
+Use `/portal` for conversations and delegated tasks, `/overview` for problems and work waiting
+for a person, and `/status` for service health. `/setup` reads the current Git repository when
+possible. `/new` starts a fresh portal conversation.
 
 | Key | Does |
 | --- | --- |
@@ -226,8 +180,7 @@ line breaks are retained and long lines wrap. The composer shows up to five rows
 Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/portal`, `/tickets`,
 `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
 `/stop`, `/retry`, `/pause`, `/resume`, `/send`, `/setup`, `/agents`, `/eval` and `/provider`.
-The console adds `/booth-focus`, `/booth-now`, `/booth-tasks`, `/booth-task`, `/booth-answer`,
-`/booth-watch`, `/booth-stop`, `/booth-retry`, `/requeue`, `/dismiss`, `/unsubscribe`, `/new`,
+The console adds `/requeue`, `/dismiss`, `/unsubscribe`, `/new`,
 `/model`, `/login`, `/keys`, `/history`, `/refresh`, `/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
@@ -327,7 +280,7 @@ web panel.
 | --- | --- |
 | The portal answers but starts no worker | Conversation and simple questions do not require a worker |
 | `⋯ no decision yet` | The Source has not produced a judgement after 20 s; `/sources` shows whether it is polling and `/status` shows health |
-| `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and `/booth-answer` opens the focused decision window |
+| `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and you can reply in the portal conversation |
 | `↑ queued …` and no further line | The console wrote the instruction but the service may be down or still starting; check `booth status` and `booth logs` |
 | `◇ agent · could not judge  timeout` | The assessment ran past the Eval timeout; the panel's Eval block raises `timeoutSeconds`, and `/requeue <id>` puts the instruction back |
 | `no adapter registered for provider …` in a session | The profile layer no longer registers that provider; `/login` adds it back, or `booth reset-sessions` starts fresh sessions — the second costs the conversation history, so prefer the first |
@@ -400,7 +353,7 @@ the default, then renamed to `provider.json.migrated` and the stale `provider.ym
   ignored. A new view field does not break the console, only a renamed route does.
 - **Two-second poll.** The header refreshes on start and after each command, and a light timer
   rereads `/state` and the outbox every two seconds so acknowledgements and replies arrive
-  while you watch. `/booth-watch` controls whether task state changes are added to the transcript.
+  while you watch.
 - **Work enters through a Source, never a hidden route.** The management API has no "submit a
   request" route, and booth does not invent one: `local-source/` is a real Source kind, loaded
   by the profile next to `dsh-superagent/github-watch`, so instructions pass the same Policy
@@ -432,7 +385,7 @@ booth send --agent codex "fix the readme"
 booth send --agent cursor-agent "fix the readme"
 ```
 
-In the console, a line starting with `@booth`, `@claude`, `@codex`, or `@cursor-agent` runs that named tool directly; an unprefixed line goes through the portal. The direct form runs outside the portal task board.
+In the console, `@booth` and unprefixed instructions go through the team portal. `@claude`, `@codex`, or `@cursor-agent` invokes that named tool directly, outside the portal task board.
 
 ## Providers
 
