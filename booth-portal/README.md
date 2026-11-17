@@ -11,6 +11,11 @@ setup automatically. Use `/booth-setup` to retry, or `/booth-setup owner/repo`
 to override it. Until GitHub access succeeds, the console explains why it cannot
 send instead of silently queueing messages. The model used by the team is configured in DSH.
 
+If the setup problem contains `API rate limit exceeded`, run `gh auth status`. An invalid token
+can make `gh` use GitHub's anonymous rate bucket; re-authenticate with `gh auth login -h github.com`
+or `gh auth refresh`, then retry `/booth-setup owner/repo`. A valid token may simply need the
+GitHub rate-limit window to reset.
+
 When a worker needs a human decision, the relay includes the current question and the exact
 `/booth-answer` action. It opens a focused answer window for the next waiting question, while
 `/booth-answer <text>` remains available for direct replies. Answers use the same portal thread

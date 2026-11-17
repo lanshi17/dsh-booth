@@ -440,7 +440,7 @@ export default function boothPortal(pi: ExtensionAPI) {
       });
       if (!response.ok) return `管理服务暂时不可用（HTTP ${response.status}），请检查 booth logs。`;
       const state = await response.json() as { setup?: { problem?: { detail?: string } }; paused?: boolean; health?: Record<string, { state?: string; detail?: string }> };
-      if (state.setup?.problem) return `团队服务尚未完成配置：${state.setup.problem.detail || "配置不完整"}。请使用 /booth-setup owner/repo（需要已登录 gh）。`;
+      if (state.setup?.problem) return setupProblemText(state.setup.problem.detail || "配置不完整");
       if (state.paused) return "团队服务已暂停，请先运行 booth resume。";
       const local = state.health?.local;
       if (local && local.state !== "ready") return `本地对话入口尚未就绪：${local.detail || local.state}。请检查 booth status 和 booth logs。`;
@@ -450,6 +450,16 @@ export default function boothPortal(pi: ExtensionAPI) {
     } catch (error) {
       return `无法连接团队服务：${error instanceof Error ? error.message : String(error)}。请检查 booth status 和 booth logs。`;
     }
+  }
+
+  function setupProblemText(detail: string): string {
+    if (/rate limit exceeded|api rate limit/i.test(detail)) {
+      return `GitHub API 当前触发限流：${detail}\n\n请先运行 gh auth status；如果 token 已失效，运行 gh auth login -h github.com（或 gh auth refresh），然后重试 /booth-setup owner/repo。认证有效时请等待 GitHub 限流窗口恢复。`;
+    }
+    if (/cannot read its account|bad credentials|authentication token|token is invalid/i.test(detail)) {
+      return `GitHub 认证不可用：${detail}\n\n请运行 gh auth status，并在需要时运行 gh auth login -h github.com（或 gh auth refresh），然后重试 /booth-setup owner/repo。`;
+    }
+    return `团队服务尚未完成配置：${detail}。请使用 /booth-setup owner/repo（需要已登录 gh）。`;
   }
 
   async function queuePortalMessage(text: string, kind: PortalMessageKind): Promise<boolean> {

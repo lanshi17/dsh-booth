@@ -50,6 +50,11 @@ the DSH model provider and its credentials for the team. Until setup succeeds, b
 problem in the conversation instead of silently accepting messages it cannot process. If an old
 service remains stuck after an upgrade, `booth down && booth up` restarts the booth-owned service.
 
+If GitHub replies with `API rate limit exceeded` while setup reads the account, run
+`gh auth status`. An expired or invalid token makes `gh` fall back to the anonymous rate bucket;
+run `gh auth login -h github.com` (or `gh auth refresh`) and retry `/booth-setup owner/repo`.
+When the token is valid, wait for GitHub's rate-limit window to reset and retry.
+
 For development from source:
 
 ```sh

@@ -899,9 +899,8 @@ fn gh_login(program: &str) -> Result<String, String> {
 /// The account a successful `gh api user` printed, or why there is none.
 fn account_of(output: std::process::Output) -> Result<String, String> {
     if !output.status.success() {
-        return Err(format!(
-            "gh is not signed in: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
+        return Err(gh_account_error(
+            String::from_utf8_lossy(&output.stderr).trim(),
         ));
     }
     let login = String::from_utf8_lossy(&output.stdout).trim().to_owned();
@@ -909,6 +908,28 @@ fn account_of(output: std::process::Output) -> Result<String, String> {
         return Err("gh did not report an account".into());
     }
     Ok(login)
+}
+
+/// Give `/setup` a useful recovery path when `gh api user` fails. GitHub returns the same 403
+/// wording for an anonymous request that has exhausted the IP bucket and for a CLI whose saved
+/// token has expired or been rejected; calling this merely "not signed in" sends people to the
+/// wrong fix and makes the service's setup problem look unrelated to authentication.
+fn gh_account_error(detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    if lower.contains("rate limit exceeded") || lower.contains("api rate limit") {
+        return format!(
+            "GitHub API rate limit exceeded while reading the gh account: {detail}. Run `gh auth status`; if the token is invalid, run `gh auth login -h github.com` (or `gh auth refresh`), then retry `/booth-setup owner/repo`. If the token is valid, wait for GitHub's rate-limit reset and retry."
+        );
+    }
+    if lower.contains("bad credentials")
+        || lower.contains("authentication token")
+        || lower.contains("token is invalid")
+    {
+        return format!(
+            "GitHub authentication failed: {detail}. Run `gh auth login -h github.com` (or `gh auth refresh`), then retry `/booth-setup owner/repo`."
+        );
+    }
+    format!("gh is not signed in: {detail}")
 }
 
 fn section(text: &str) -> L {
@@ -2057,6 +2078,15 @@ mod api_tests {
         let failing = write("failing", "#!/bin/sh\necho 'not signed in' >&2; exit 4\n");
         let error = gh_login(failing.to_str().unwrap()).unwrap_err();
         assert!(error.contains("not signed in"), "{error}");
+
+        let limited = write(
+            "limited",
+            "#!/bin/sh\necho 'gh: API rate limit exceeded for 127.0.0.1. (HTTP 403)' >&2; exit 1\n",
+        );
+        let error = gh_login(limited.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("rate limit exceeded"), "{error}");
+        assert!(error.contains("gh auth status"), "{error}");
+        assert!(error.contains("gh auth login"), "{error}");
 
         let missing = dir.join("absent");
         let error = gh_login(missing.to_str().unwrap()).unwrap_err();
