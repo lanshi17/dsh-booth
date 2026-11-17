@@ -365,6 +365,10 @@ export default function boothPortal(pi: ExtensionAPI) {
       const load = overview.executor;
       if (load) lines.push(`executor · ${load.running || 0} running · ${load.queued || 0} queued${load.maxWorkers ? ` · ${load.maxWorkers} max` : ""}`);
       for (const problem of (overview.problems || []).slice(0, 4)) {
+        if (problem.kind === "no-allowed") {
+          lines.push("阻断 · 没有获准发消息的人，门户不能接收指令。运行 /booth-setup；配置完成后重新发送。");
+          continue;
+        }
         const label = problem.kind || problem.name || "runtime";
         const detail = problem.detail ? ` · ${problem.detail}` : "";
         if (!lines.some(line => line.includes(`health · ${label}`) && line.includes(problem.detail || "\u0000"))) {
@@ -382,9 +386,10 @@ export default function boothPortal(pi: ExtensionAPI) {
     const active = tasks
       .filter(task => !["done"].includes(taskState(task.ticket?.state || "planned")))
       .sort((a, b) => (b.conversationUpdatedAt || "").localeCompare(a.conversationUpdatedAt || ""));
-    if (!active.length) {
-      lines.push("portal · no delegated task is recorded; the portal has not completed its turn yet");
-      lines.push("next · check the model/session health, then retry the message");
+    if (tasksResult.status === "rejected") {
+      lines.push("portal · 无法读取任务状态，不能判断消息是否已分派");
+    } else if (!active.length) {
+      lines.push("portal · 未发现未完成的团队任务；无法据此确认门户是否收到这条消息");
     } else {
       lines.push("team · live worker state");
       const details = await Promise.all(active.slice(0, 6).map(async task => {
@@ -573,6 +578,28 @@ export default function boothPortal(pi: ExtensionAPI) {
       if (local && local.state !== "ready") return `本地对话入口尚未就绪：${local.detail || local.state}。请检查 booth status 和 booth logs。`;
       const runtime = state.health?.runtime;
       if (runtime && runtime.state !== "ready") return `团队服务尚未就绪：${runtime.detail || runtime.state}。请检查 booth status 和 booth logs。`;
+      const overviewResponse = await fetch(`${base}/orchestrator/api/overview`, {
+        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+      });
+      if (!overviewResponse.ok) return `无法检查消息准入状态（HTTP ${overviewResponse.status}）；请检查 booth status。`;
+      const overview = await overviewResponse.json() as { problems?: Array<{ kind?: string }> };
+      if (overview.problems?.some(problem => problem.kind === "no-allowed")) {
+        return "团队没有配置允许发消息的人，门户无法处理你的指令。请在当前 Git 项目中运行 /booth-setup；如果自动配置失败，按显示的具体原因修复后重试。";
+      }
+      const settingsResponse = await fetch(`${base}/orchestrator/api/settings`, {
+        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+      });
+      if (!settingsResponse.ok) return `无法检查本地发送者权限（HTTP ${settingsResponse.status}）；请检查 booth status。`;
+      const settings = await settingsResponse.json() as {
+        sources?: Array<{ id?: string; installed?: boolean; value?: { enabled?: boolean } }>;
+        blocks?: { policy?: { value?: { sources?: { local?: { allowed?: Array<{ id?: string }> } } } } };
+      };
+      const localSource = settings.sources?.find(source => source.id === "local");
+      if (!localSource?.installed || !localSource.value?.enabled) return "本地对话入口未启用，门户无法收到消息。请运行 /booth-setup。";
+      const allowed = settings.blocks?.policy?.value?.sources?.local?.allowed;
+      if (!allowed?.some(sender => sender.id?.toLowerCase() === "operator")) {
+        return "本地发送者 operator 未获授权，门户无法处理消息。请在当前 Git 项目中运行 /booth-setup。";
+      }
       return undefined;
     } catch (error) {
       return `无法连接团队服务：${error instanceof Error ? error.message : String(error)}。请检查 booth status 和 booth logs。`;
@@ -634,17 +661,18 @@ export default function boothPortal(pi: ExtensionAPI) {
     }
   }
 
-  async function autoSetup(): Promise<void> {
+  async function autoSetup(): Promise<string | undefined> {
     try {
-      await pi.exec(
+      const result = await pi.exec(
         process.env.BOOTH_BINARY || "booth",
         ["--url", apiBase(), "setup"],
         { timeout: 180000 },
       );
-    } catch {
-      // Readiness below reports the actionable Git/GitHub error. Auto setup is
-      // best effort so a non-Git working directory still opens the console.
+      if (result.code !== 0) return [result.stdout, result.stderr].filter(Boolean).join("\n").trim() || `自动配置失败（退出码 ${result.code}）`;
+    } catch (error) {
+      return `自动配置失败：${error instanceof Error ? error.message : String(error)}`;
     }
+    return undefined;
   }
 
   pi.on("session_start", async (_event, ctx) => {
@@ -656,8 +684,9 @@ export default function boothPortal(pi: ExtensionAPI) {
     updateWatchStatus();
     let problem = await readiness();
     if (problem) {
-      await autoSetup();
+      const setupError = await autoSetup();
       problem = await readiness();
+      if (problem && setupError) problem += `\n\n自动配置详情：${setupError}`;
     }
     if (problem) {
       teamState = "waiting";
