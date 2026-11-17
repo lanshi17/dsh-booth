@@ -192,6 +192,11 @@ Use `/booth-now` for a compact board with the current message queue, full task c
 Use `/booth-focus` when you want a single next move: it opens the team's waiting question, points to
 the live board while a portal message is queued, or shows the active task to watch. It is the shortest
 path through booth's states and does not require a task ID.
+Use `/booth-check` when a portal message has been queued for too long. Booth reads management health,
+executor load, portal tasks and each active ticket, then tells you whether the portal has not started,
+a worker is running or idle, a worker is waiting for a decision, or the model/runtime is unhealthy.
+The same evidence check appears automatically after 30 seconds without a portal reply, so a stall is
+reported with live team state instead of a generic credentials warning.
 Use `/booth-watch off` to pause automatic task state events, or `/booth-watch on` to resume them; the choice is kept across booth restarts, while the board and status rail continue updating.
 Use `/booth-stop <task-id>` to stop a delegated worker from the booth console; the command also accepts the worker ticket ID.
 Use `/booth-retry <task-id>` to start a fresh assignment for a stopped or failed worker.

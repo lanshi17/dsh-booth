@@ -25,6 +25,10 @@ as ordinary instructions, so the portal can route the decision back to the waiti
 state. It opens the waiting question, points to the board while a portal message is queued, or
 names the active task to watch. No task ID is needed.
 
+`/booth-check` inspects the management health, executor load, portal tasks and active ticket
+assignments. A check also runs automatically when a portal message has waited 30 seconds, so the
+console reports whether the portal or a worker is the stalled part of the team.
+
 The console opens with a booth orientation line (`one portal · many agents`) instead of the
 upstream frontend splash; the editor and keyboard mechanics remain supplied by the MIT kernel.
 

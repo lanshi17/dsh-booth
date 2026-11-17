@@ -23,6 +23,20 @@ type RelayPayload = {
   };
 };
 
+type TicketAssignment = {
+  state?: string;
+  ended_reason?: string;
+  report?: { state?: string; preview?: string; at?: string };
+};
+
+type TicketDetail = {
+  ticket_id?: string;
+  title?: string;
+  state?: string;
+  attention?: { question?: string };
+  assignments?: { items?: TicketAssignment[] };
+};
+
 function relayOf(text: string): RelayPayload | undefined {
   try {
     const value = JSON.parse(text) as RelayPayload;
@@ -82,6 +96,8 @@ let activeThread = thread;
 const apiBase = () => (process.env.DSH_SUPERAGENT_URL || `http://127.0.0.1:${process.env.BOOTH_PORT || "3082"}`).replace(/\/$/, "");
 type BoothTask = {
   id?: string;
+  conversationId?: string;
+  conversationUpdatedAt?: string;
   instruction?: string;
   dependsOn?: string[];
   depends_on?: string[];
@@ -112,8 +128,12 @@ async function portalTasks(maxPages = 20): Promise<BoothTask[]> {
       headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
     });
     if (!response.ok) throw new Error(`任务视图暂时不可用（HTTP ${response.status}）`);
-    const view = await response.json() as { items?: Array<{ tasks?: BoothTask[] }>; next_offset?: number | null };
-    tasks.push(...(view.items || []).flatMap(item => item.tasks || []));
+    const view = await response.json() as { items?: Array<{ id?: string; updatedAt?: string; tasks?: BoothTask[] }>; next_offset?: number | null };
+    tasks.push(...(view.items || []).flatMap(item => (item.tasks || []).map(task => ({
+      ...task,
+      conversationId: item.id,
+      conversationUpdatedAt: item.updatedAt,
+    }))));
     const next = view.next_offset;
     if (typeof next !== "number" || next <= offset) break;
     offset = next;
@@ -291,6 +311,113 @@ export default function boothPortal(pi: ExtensionAPI) {
     } catch {
       // The local transcript remains usable while the optional task summary is unavailable.
     }
+  }
+
+  /**
+   * Explain a silent portal turn with live backend evidence. A queued line by itself is not a
+   * useful status: the operator needs to know whether the portal has not started, a worker is
+   * running, a worker is idle, or the runtime/model is unhealthy.
+   */
+  async function diagnosePending(): Promise<string> {
+    const oldest = pending.size ? Math.min(...[...pending.values()].map(item => item.sent)) : Date.now();
+    const age = Math.max(0, Math.floor((Date.now() - oldest) / 1000));
+    const lines = [
+      "booth check",
+      pending.size
+        ? `portal · ${pending.size} message${pending.size === 1 ? "" : "s"} waiting · ${age}s`
+        : "portal · no message is waiting; inspecting the live team board",
+    ];
+    const [stateResult, overviewResult, tasksResult] = await Promise.allSettled([
+      fetch(`${apiBase()}/orchestrator/api/state`, {
+        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+      }),
+      fetch(`${apiBase()}/orchestrator/api/overview`, {
+        headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+      }),
+      portalTasks(4),
+    ]);
+
+    let healthShown = false;
+    if (stateResult.status === "fulfilled" && stateResult.value.ok) {
+      const state = await stateResult.value.json() as {
+        paused?: boolean;
+        health?: Record<string, { state?: string; detail?: string }>;
+      };
+      if (state.paused) lines.push("runtime · paused");
+      for (const [name, health] of Object.entries(state.health || {})) {
+        if (health.state && health.state !== "ready") {
+          lines.push(`health · ${name} · ${health.state}${health.detail ? ` · ${health.detail}` : ""}`);
+          healthShown = true;
+        }
+      }
+      if (!healthShown && !state.paused) lines.push("runtime · healthy; checking portal and workers");
+    } else if (stateResult.status === "rejected") {
+      lines.push(`runtime · unavailable · ${stateResult.reason instanceof Error ? stateResult.reason.message : String(stateResult.reason)}`);
+    } else {
+      lines.push("runtime · management API did not answer");
+    }
+
+    if (overviewResult.status === "fulfilled" && overviewResult.value.ok) {
+      const overview = await overviewResult.value.json() as {
+        executor?: { running?: number; queued?: number; maxWorkers?: number };
+        problems?: Array<{ kind?: string; name?: string; detail?: string }>;
+      };
+      const load = overview.executor;
+      if (load) lines.push(`executor · ${load.running || 0} running · ${load.queued || 0} queued${load.maxWorkers ? ` · ${load.maxWorkers} max` : ""}`);
+      for (const problem of (overview.problems || []).slice(0, 4)) {
+        const label = problem.kind || problem.name || "runtime";
+        const detail = problem.detail ? ` · ${problem.detail}` : "";
+        if (!lines.some(line => line.includes(`health · ${label}`) && line.includes(problem.detail || "\u0000"))) {
+          lines.push(`problem · ${label}${detail}`);
+        }
+      }
+    } else if (overviewResult.status === "rejected") {
+      lines.push(`overview · unavailable · ${overviewResult.reason instanceof Error ? overviewResult.reason.message : String(overviewResult.reason)}`);
+    }
+
+    let tasks: BoothTask[] = [];
+    if (tasksResult.status === "fulfilled") tasks = tasksResult.value;
+    else lines.push(`team board · unavailable · ${tasksResult.reason instanceof Error ? tasksResult.reason.message : String(tasksResult.reason)}`);
+
+    const active = tasks
+      .filter(task => !["done"].includes(taskState(task.ticket?.state || "planned")))
+      .sort((a, b) => (b.conversationUpdatedAt || "").localeCompare(a.conversationUpdatedAt || ""));
+    if (!active.length) {
+      lines.push("portal · no delegated task is recorded; the portal has not completed its turn yet");
+      lines.push("next · check the model/session health, then retry the message");
+    } else {
+      lines.push("team · live worker state");
+      const details = await Promise.all(active.slice(0, 6).map(async task => {
+        const cardState = taskState(task.ticket?.state || "planned");
+        const title = task.ticket?.title || task.instruction || task.id || "task";
+        let detail = "";
+        const ticketId = task.ticket?.ticket_id;
+        if (ticketId) {
+          try {
+            const response = await fetch(`${apiBase()}/orchestrator/api/tickets/${encodeURIComponent(ticketId)}`, {
+              headers: { "x-orchestrator-request": "1" }, signal: AbortSignal.timeout(3000),
+            });
+            if (response.ok) {
+              const ticket = await response.json() as TicketDetail;
+              const assignment = ticket.assignments?.items?.[0];
+              if (assignment?.state) detail = ` · worker ${assignment.state}`;
+              if (assignment?.report?.state) detail += ` · report ${assignment.report.state}`;
+              if (ticket.attention?.question) detail += " · needs your decision";
+            }
+          } catch {
+            detail = " · ticket detail unavailable";
+          }
+        }
+        return `  ${cardState} · [${task.id || ticketId || "task"}] ${title}${detail}`;
+      }));
+      lines.push(...details);
+      const idle = active.some(task => taskState(task.ticket?.state || "planned") === "planned");
+      lines.push(idle
+        ? "portal · a task is planned or idle; it must inspect the ticket and request a worker status"
+        : "portal · worker activity is visible; the portal will answer when its relay arrives");
+    }
+    lines.push("commands · /booth-now  /booth-tasks  /booth-focus");
+    return lines.join("\n");
   }
 
   async function taskCards(): Promise<string> {
@@ -647,6 +774,22 @@ export default function boothPortal(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("booth-check", {
+    description: "Inspect the portal, runtime health and delegated workers",
+    handler: async (_args, ctx) => {
+      try {
+        if (!pending.size) {
+          await refreshTaskStatus();
+          pi.sendMessage({ customType: "booth-check-card", content: await diagnosePending(), display: true, attribution: "agent" }, { triggerTurn: false });
+          return;
+        }
+        pi.sendMessage({ customType: "booth-check-card", content: await diagnosePending(), display: true, attribution: "agent" }, { triggerTurn: false });
+      } catch (error) {
+        ctx.ui.notify(`团队检查失败：${error instanceof Error ? error.message : String(error)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("booth-watch", {
     description: "Toggle automatic team activity events",
     handler: async (args, ctx) => {
@@ -763,6 +906,8 @@ export default function boothPortal(pi: ExtensionAPI) {
     new Text(theme.fg("accent", String(message.content))));
   pi.registerMessageRenderer("booth-focus-card", (message, _options, theme) =>
     new Text(theme.fg("warning", String(message.content))));
+  pi.registerMessageRenderer("booth-check-card", (message, _options, theme) =>
+    new Text(theme.fg("warning", String(message.content))));
   pi.registerMessageRenderer("booth-watch-card", (message, _options, theme) =>
     new Text(theme.fg("muted", String(message.content))));
   pi.registerMessageRenderer("booth-task-control", (message, _options, theme) =>
@@ -804,7 +949,16 @@ export default function boothPortal(pi: ExtensionAPI) {
       for (const item of pending.values()) {
         if (!item.warned && Date.now() - item.sent >= 30000) {
           item.warned = true;
-          pi.sendMessage({ customType: "booth-portal-reply", content: "团队暂时还没有回复。请检查 DSH 中的模型和凭证配置；消息仍在处理中。", display: true, attribution: "agent" }, { triggerTurn: false });
+          try {
+            pi.sendMessage({ customType: "booth-check-card", content: await diagnosePending(), display: true, attribution: "agent" }, { triggerTurn: false });
+          } catch (error) {
+            pi.sendMessage({
+              customType: "booth-portal-reply",
+              content: `门户超过 30 秒没有回复，自动检查失败：${error instanceof Error ? error.message : String(error)}。运行 /booth-check 重试。`,
+              display: true,
+              attribution: "agent",
+            }, { triggerTurn: false });
+          }
         }
       }
     } finally { polling = false; }
