@@ -28,9 +28,8 @@ The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header mus
 curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
 ```
 
-That downloads the prebuilt booth and team bundle, installs Node, Bun and dsh when missing, prepares the profile, and starts the service. The terminal interface is part of the booth binary. It does not install Rust, Git or compile
-projects on the user's machine. When the terminal is available, it opens booth; set
-`BOOTH_NO_CONSOLE=1` to leave the service running without opening the console. Releases currently
+That downloads the prebuilt booth and team bundle, installs Node, Bun and dsh when missing, and prepares the profile. The installer prints common commands and exits; run `booth` to open the console or `booth up` to start the service. The terminal interface is part of the booth binary. It does not install Rust, Git or compile
+projects on the user's machine. Releases currently
 support Linux x86_64 and ARM64; the installer adds its command directory to the active shell's
 login profile.
 

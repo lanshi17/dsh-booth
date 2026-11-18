@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install and start the latest booth release:
+# Install the latest booth release:
 #   curl -fsSL https://raw.githubusercontent.com/lanshi17/dsh-booth/master/install.sh | sh
 set -eu
 
@@ -143,13 +143,14 @@ mv "$tmp/$ASSET" "$BIN_DIR/booth"
 
 say 'preparing the team service'
 booth init
-say 'starting the team service'
-booth restart
-
-if [ "${BOOTH_NO_CONSOLE:-}" = 1 ] || ! (: </dev/tty) 2>/dev/null; then
-  say 'installed booth. Open it with: booth'
-  exit 0
-fi
-
-say 'opening the booth console'
-exec booth </dev/tty >/dev/tty
+say ''
+say "booth $version installed successfully"
+say ''
+say 'Common commands:'
+say '  booth                 Open the console'
+say '  booth up              Start the team service'
+say '  booth status          Check service status'
+say '  booth logs --lines 40 View recent service logs'
+say '  booth down            Stop the team service'
+say ''
+say "If booth is not found, restart your shell or add $BIN_DIR to PATH."
