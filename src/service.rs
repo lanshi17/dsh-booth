@@ -4,6 +4,7 @@
 //! runs `dsh --profile <name> --no-open` detached and waits for the management API; `booth stop`
 //! ends it. No tmux, no shell script: the pid and the log live under the state directory.
 
+use fs2::FileExt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -258,7 +259,24 @@ fn repair_profile(cfg: &Config) -> Result<(), String> {
     result
 }
 
+/// Serialize lifecycle operations from consoles and CLI commands sharing this state directory.
+fn lifecycle_lock(cfg: &Config) -> Result<fs::File, String> {
+    create_private_state_dir(cfg)?;
+    let path = cfg.state_dir.join("booth-service.lock");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    file.lock_exclusive()
+        .map_err(|error| format!("cannot lock {}: {error}", path.display()))?;
+    Ok(file)
+}
+
 pub fn start(cfg: &Config) -> Result<(), String> {
+    let _lock = lifecycle_lock(cfg)?;
     start_once(cfg)
 }
 
@@ -420,6 +438,7 @@ fn open_log(cfg: &Config) -> Result<(fs::File, fs::File), String> {
 }
 
 pub fn stop(cfg: &Config) -> Result<(), String> {
+    let _lock = lifecycle_lock(cfg)?;
     stop_with_timeout(cfg, STOP_TIMEOUT)
 }
 
@@ -465,15 +484,16 @@ fn stop_with_timeout(cfg: &Config, timeout: Duration) -> Result<(), String> {
 }
 
 pub fn restart(cfg: &Config) -> Result<(), String> {
+    let _lock = lifecycle_lock(cfg)?;
     if cfg.pid().exists() {
-        stop(cfg)?;
+        stop_with_timeout(cfg, STOP_TIMEOUT)?;
     } else if Api::new(&cfg.url()).state().is_ok() {
         return Err(format!(
             "a service already listens on {} but was not started by booth; run `booth down && booth up` for that service, then retry the upgrade",
             cfg.url()
         ));
     }
-    start(cfg)
+    start_once(cfg)
 }
 
 /// The root DSH keeps its session stores under: one project tree per working directory.
@@ -1522,6 +1542,27 @@ mod tests {
 
         let _ = fs::remove_dir_all(&home);
         drop(env);
+    }
+
+    #[test]
+    fn concurrent_lifecycle_calls_wait_for_the_same_lock() {
+        let mut cfg = config("lifecycle-lock");
+        let api = crate::testkit::FakeApi::start();
+        cfg.port = api.base.rsplit(':').next().unwrap().parse().unwrap();
+        let held = lifecycle_lock(&cfg).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let child_cfg = cfg.clone();
+        let worker = std::thread::spawn(move || {
+            tx.send(start(&child_cfg)).unwrap();
+        });
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(held);
+        assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap().is_ok());
+        worker.join().unwrap();
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
     }
 
     #[test]
