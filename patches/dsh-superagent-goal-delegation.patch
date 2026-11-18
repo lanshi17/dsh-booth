@@ -1,0 +1,110 @@
+diff --git a/cordis.patch.yml b/cordis.patch.yml
+index 3ece254..6d135ac 100644
+--- a/cordis.patch.yml
++++ b/cordis.patch.yml
+@@ -127,4 +127,2 @@
+-    # The agent preset of the main Session (ROUTER_PRESET in src/app/sessions.ts). The worker's 5-second shell and job waits, so a command or a wait does not hold back the next candidates, and
+-    # only what the main Session uses: no subagents, web, file search or writes, todo list, questions to a person, presenting,
+-    # plan mode, plugin manager, scheduling, goals or workflows. No persona: the main Session's prompt is complete, so it has
+-    # no other section.
++    # The agent preset of the main Session (ROUTER_PRESET in src/app/sessions.ts). The supervisor coordinates goals and delegates
++    # implementation to worker subagents; it keeps the 5-second shell and job waits so a command or wait does not hold back candidates.
+@@ -182,0 +181,29 @@
++          - id: command-goal
++            name: '@deepseek-ai/dsh-command-goal'
++          - id: tool-goal
++            name: '@deepseek-ai/dsh-tool-goal'
++          - id: delegation
++            name: cordis:group
++            group: true
++            isolate:
++              workflowEngine: true
++            config:
++              - id: tool-subagent-control
++                name: '@deepseek-ai/dsh-tool-subagent-control'
++              - id: tool-subagent-list-agents
++                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
++              - id: tool-subagent
++                name: '@deepseek-ai/dsh-tool-subagent'
++                config:
++                  provider: spawn
++                  toolName: subagent
++                  modelSelectionSettings: true
++                  agentPreset: dsh-superagent-worker
++                  agentOptions:
++                    provider: commandcode
++                    model: deepseek/deepseek-v4.1-flash
++              - id: tool-subagent-fork
++                name: '@deepseek-ai/dsh-tool-subagent'
++                config:
++                  provider: fork
++                  toolName: subagent_fork
+diff --git a/prompts/orchestrator.md b/prompts/orchestrator.md
+index f02cc04..4077b93 100644
+--- a/prompts/orchestrator.md
++++ b/prompts/orchestrator.md
+@@ -16 +16,3 @@ Never merge or enable auto-merge yourself, close issues or expose private Feishu
+-Worker reports, follow_up notices, new candidates and a background job's end, with its output, arrive by themselves as messages: never wait for them with sleep, polling or job waits; end the turn when nothing is left to do.
++Worker reports, follow_up notices, new candidates and job results arrive as messages; never wait or poll for them.
++
++In goal mode, delegate substantial implementation to parallel `subagent`s; coordinate their results, verify them, and summarize instead of implementing the goal in this Session.
+diff --git a/src/app/sessions.ts b/src/app/sessions.ts
+index d56e77f..40dee34 100644
+--- a/src/app/sessions.ts
++++ b/src/app/sessions.ts
+@@ -64,0 +65,3 @@ const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash
++/** Goal and delegation tools available to the supervisor Session. */
++const ROUTER_DELEGATION_TOOLS = ['subagent', 'subagent_fork', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
++  'get_goal', 'create_goal', 'update_goal']
+@@ -273 +276 @@ export class Sessions {
+-      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
++      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill', ...ROUTER_DELEGATION_TOOLS] }),
+diff --git a/tests/bundle-patch.spec.ts b/tests/bundle-patch.spec.ts
+index 7132e93..9f1cc47 100644
+--- a/tests/bundle-patch.spec.ts
++++ b/tests/bundle-patch.spec.ts
+@@ -22,2 +22,6 @@ async function patched(): Promise<Row[]> {
+-/** Every plugin row of a preset, those inside groups too. */
+-const flat = (rows: readonly Row[]): Row[] => rows.flatMap(row => [row, ...Array.isArray(row.config) ? flat(row.config) : []])
++/** Every plugin row of a preset, including Cordis groups whose entries are nested under config. */
++const flat = (rows: readonly Row[]): Row[] => rows.flatMap(row => {
++  const config = row.config
++  const children = Array.isArray(config) ? config : config && typeof config === 'object' && Array.isArray(config.config) ? config.config : []
++  return [row, ...flat(children)]
++})
+@@ -41,2 +45 @@ it('defines the worker preset Executor Sessions run under, with a shell that mov
+-  // Spawned subagents run under standard, whose shell moves a command to the background only after 60 s; forked ones, which would run under
+-  // this preset, are left out.
++  // Worker children use standard; only the supervisor's goal delegation targets the constrained worker preset.
+@@ -69 +72,3 @@ it('defines the router preset the main Session runs under: the worker\'s 5-secon
+-  for (const name of ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-tool-fs-search',
++  for (const name of ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-goal', '@deepseek-ai/dsh-command-goal']) expect(names, name).toContain(name)
++  expect(named(plugins, '@deepseek-ai/dsh-tool-subagent')).toContainEqual(expect.objectContaining({ provider: 'spawn', agentPreset: 'dsh-superagent-worker' }))
++  for (const name of ['@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-tool-fs-search',
+@@ -71,2 +76,2 @@ it('defines the router preset the main Session runs under: the worker\'s 5-secon
+-    '@deepseek-ai/dsh-plugin-manager/tools', '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule', '@deepseek-ai/dsh-tool-goal',
+-    '@deepseek-ai/dsh-command-goal', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc']) expect(names, name).not.toContain(name)
++    '@deepseek-ai/dsh-plugin-manager/tools', '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule',
++    '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc']) expect(names, name).not.toContain(name)
+diff --git a/tests/runtime.spec.ts b/tests/runtime.spec.ts
+index ee4c8c4..d3345a2 100644
+--- a/tests/runtime.spec.ts
++++ b/tests/runtime.spec.ts
+@@ -169 +169,3 @@ beforeEach(async () => {
+-        'ask_user_question', 'plugin_manager', 'schedule_create', 'create_goal', 'session_create', 'session_send_message', 'feishu_doc_edit']
++        'ask_user_question', 'plugin_manager', 'schedule_create', 'create_goal', 'session_create', 'session_send_message', 'feishu_doc_edit',
++        ...(agentPreset === 'dsh-superagent-router' ? ['update_goal', 'get_goal', 'subagent', 'subagent_fork', 'list_subagent_models',
++          'send_message', 'list_agents', 'interrupt_agent'] : [])]
+@@ -174 +176 @@ beforeEach(async () => {
+-        // Preset tools are inherited; subagent is registered on the agent itself and cannot be named by restrict.
++        // Preset tools are inherited by the Session and can be included in its allow-list.
+@@ -177 +179 @@ beforeEach(async () => {
+-          return (scope === preset || own) && inherited.includes(name) || own && name === 'subagent' ? { name } : undefined
++          return (scope === preset || own) && inherited.includes(name) ? { name } : undefined
+@@ -1556 +1558 @@ it('refuses the main Session a bash command that runs sleep and a long job wait,
+-  expect(masterPrompt).toContain('Worker reports, follow_up notices, new candidates and a background job\'s end, with its output, arrive by themselves as messages')
++  expect(masterPrompt).toContain('Worker reports, follow_up notices, new candidates and job results arrive as messages')
+@@ -1590 +1592,2 @@ it('refuses an ended ticket\'s worker its tools, and restricts the main Session
+-  expect(restricts.get(runtime.masterId)).toEqual([{ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }])
++  expect(restricts.get(runtime.masterId)).toEqual([{ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill', 'subagent', 'subagent_fork',
++    'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'get_goal', 'create_goal', 'update_goal'] }])

@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "superagent"
 PATCHER = ROOT / "tools" / "apply_superagent_patch.py"
-FILES = ("src/app/runtime.ts", "src/app/sessions.ts", "tests/runtime.spec.ts")
+FILES = ("src/app/runtime.ts", "src/app/sessions.ts", "tests/runtime.spec.ts", "tests/bundle-patch.spec.ts", "tests/cards.spec.ts", "cordis.patch.yml", "prompts/orchestrator.md")
 
 
 class ApplySuperagentPatchTests(unittest.TestCase):
@@ -26,6 +26,13 @@ class ApplySuperagentPatchTests(unittest.TestCase):
             first = subprocess.run([str(PATCHER), str(bundle)], text=True, capture_output=True)
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertIn("replaceMasterId", (bundle / "src/app/sessions.ts").read_text())
+            self.assertIn("ROUTER_DELEGATION_TOOLS", (bundle / "src/app/sessions.ts").read_text())
+            self.assertIn("get_goal", (bundle / "src/app/sessions.ts").read_text())
+            self.assertIn("@deepseek-ai/dsh-tool-goal", (bundle / "cordis.patch.yml").read_text())
+            self.assertIn("delegate substantial implementation to parallel `subagent`s", (bundle / "prompts/orchestrator.md").read_text())
+            bundle_test = (bundle / "tests/bundle-patch.spec.ts").read_text()
+            self.assertIn("agentPreset: 'dsh-superagent-worker'", bundle_test)
+            self.assertIn("@deepseek-ai/dsh-tool-subagent", bundle_test)
             self.assertIn("currentMasterId", (bundle / "src/app/runtime.ts").read_text())
             self.assertIn("misreports a missing persisted session", (bundle / "tests/runtime.spec.ts").read_text())
 
