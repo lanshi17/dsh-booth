@@ -1,15 +1,23 @@
 diff --git a/cordis.patch.yml b/cordis.patch.yml
-index 3ece254..6d135ac 100644
 --- a/cordis.patch.yml
 +++ b/cordis.patch.yml
-@@ -127,4 +127,2 @@
+@@ -124,10 +124,8 @@
+             config:
+               fetch: false
+               searchTimeoutMs: 60000
 -    # The agent preset of the main Session (ROUTER_PRESET in src/app/sessions.ts). The worker's 5-second shell and job waits, so a command or a wait does not hold back the next candidates, and
 -    # only what the main Session uses: no subagents, web, file search or writes, todo list, questions to a person, presenting,
 -    # plan mode, plugin manager, scheduling, goals or workflows. No persona: the main Session's prompt is complete, so it has
 -    # no other section.
 +    # The agent preset of the main Session (ROUTER_PRESET in src/app/sessions.ts). The supervisor coordinates goals and delegates
 +    # implementation to worker subagents; it keeps the 5-second shell and job waits so a command or wait does not hold back candidates.
-@@ -182,0 +181,29 @@
+     - id: dsh-superagent-router-preset
+       name: '@deepseek-ai/dsh-agent-preset'
+       config:
+@@ -180,6 +178,35 @@
+             name: '@deepseek-ai/dsh-skill-filesystem'
+           - id: tool-skill
+             name: '@deepseek-ai/dsh-tool-skill'
 +          - id: command-goal
 +            name: '@deepseek-ai/dsh-command-goal'
 +          - id: tool-goal
@@ -39,31 +47,54 @@ index 3ece254..6d135ac 100644
 +                config:
 +                  provider: fork
 +                  toolName: subagent_fork
+           - id: compaction
+             name: cordis:group
+             group: true
 diff --git a/prompts/orchestrator.md b/prompts/orchestrator.md
-index f02cc04..4077b93 100644
 --- a/prompts/orchestrator.md
 +++ b/prompts/orchestrator.md
-@@ -16 +16,3 @@ Never merge or enable auto-merge yourself, close issues or expose private Feishu
+@@ -13,4 +13,6 @@
+
+ Act only as the deployment's GitHub account.
+ Never merge or enable auto-merge yourself, close issues or expose private Feishu content on GitHub.
 -Worker reports, follow_up notices, new candidates and a background job's end, with its output, arrive by themselves as messages: never wait for them with sleep, polling or job waits; end the turn when nothing is left to do.
 +Worker reports, follow_up notices, new candidates and job results arrive as messages; never wait or poll for them.
 +
 +In goal mode, delegate substantial implementation to parallel `subagent`s; coordinate their results, verify them, and summarize instead of implementing the goal in this Session.
 diff --git a/src/app/sessions.ts b/src/app/sessions.ts
-index d56e77f..40dee34 100644
 --- a/src/app/sessions.ts
 +++ b/src/app/sessions.ts
-@@ -64,0 +65,3 @@ const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash
+@@ -62,6 +62,9 @@
+  */
+ const WORK_TOOLS = ['read', 'write', 'edit', 'read_image', 'glob', 'grep', 'bash', 'pwsh', 'job_output', 'job_list', 'job_kill', 'web_search',
+   'web_fetch', 'skill', 'todo_write', 'subagent', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent']
 +/** Goal and delegation tools available to the supervisor Session. */
 +const ROUTER_DELEGATION_TOOLS = ['subagent', 'subagent_fork', 'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent',
 +  'get_goal', 'create_goal', 'update_goal']
-@@ -273 +276 @@ export class Sessions {
+ /** What the main Session is told when it would wait: what it waits for comes to it, and a waiting step holds back the next. */
+ const NO_WAIT = 'Reports, follow_up notices, new candidates and a background job\'s end with its output arrive by themselves as messages; '
+   + 'end the turn instead of waiting for them.'
+@@ -270,7 +273,12 @@
+     const register = this.registerTool(agent, binding)
+     for (const tool of host.tools(agent, ticket)) register(tool.name, tool.description, tool.schema, tool.execute)
+     if (master) {
 -      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }),
-+      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill', ...ROUTER_DELEGATION_TOOLS] }),
++      // DSH hosts can expose an older global tool set. Naming an unavailable delegated tool
++      // makes tools.restrict throw while restoring the persisted router Session, which prevents
++      // the entire orchestrator plugin from mounting. Keep only tools visible in this preset.
++      const parent = scopeParentOf(agent)
++      const delegation = ROUTER_DELEGATION_TOOLS.filter(name => agent.ctx.tools.get(name, parent))
++      binding.disposers.push(agent.ctx.tools.restrict({ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill', ...delegation] }),
+         agent.ctx.tools.guard(execution => noWait(execution, () => this.routed(agent))))
+     } else {
+       // An Executor Session keeps the profile's work tools it has, which DSH requires to be known; its own tools are not masked.
 diff --git a/tests/bundle-patch.spec.ts b/tests/bundle-patch.spec.ts
-index 7132e93..9f1cc47 100644
 --- a/tests/bundle-patch.spec.ts
 +++ b/tests/bundle-patch.spec.ts
-@@ -22,2 +22,6 @@ async function patched(): Promise<Row[]> {
+@@ -19,8 +19,12 @@
+   expect(warnings).toEqual([])
+   return rows
+ }
 -/** Every plugin row of a preset, those inside groups too. */
 -const flat = (rows: readonly Row[]): Row[] => rows.flatMap(row => [row, ...Array.isArray(row.config) ? flat(row.config) : []])
 +/** Every plugin row of a preset, including Cordis groups whose entries are nested under config. */
@@ -72,39 +103,73 @@ index 7132e93..9f1cc47 100644
 +  const children = Array.isArray(config) ? config : config && typeof config === 'object' && Array.isArray(config.config) ? config.config : []
 +  return [row, ...flat(children)]
 +})
-@@ -41,2 +45 @@ it('defines the worker preset Executor Sessions run under, with a shell that mov
+
+ /** A preset the patch defines, by its id. */
+ const presetOf = (rows: readonly Row[], id: string) => rows.map(row => row.config as { id?: string; order?: number; plugins: Row[] })
+@@ -38,8 +42,7 @@
+   expect(named('@deepseek-ai/dsh-pwsh-sandbox')).toEqual([{ timeoutMs: 5000, maxTimeoutMs: 5000 }])
+   expect(named('@deepseek-ai/dsh-tool-jobs')).toEqual([{ waitTimeoutMs: 5000, maxWaitTimeoutMs: 5000 }])
+   expect(named('@deepseek-ai/dsh-tool-web')).toEqual([expect.objectContaining({ fetch: false })])
 -  // Spawned subagents run under standard, whose shell moves a command to the background only after 60 s; forked ones, which would run under
 -  // this preset, are left out.
 +  // Worker children use standard; only the supervisor's goal delegation targets the constrained worker preset.
-@@ -69 +72,3 @@ it('defines the router preset the main Session runs under: the worker\'s 5-secon
+   expect(named('@deepseek-ai/dsh-tool-subagent')).toEqual([expect.objectContaining({ provider: 'spawn', agentPreset: 'standard' })])
+   // What a worker needs, and none of what asks a person, presents, plans, changes the profile, schedules, sets goals or runs workflows.
+   for (const name of ['@deepseek-ai/dsh-tool-fs', '@deepseek-ai/dsh-tool-fs-search', '@deepseek-ai/dsh-tool-bash', '@deepseek-ai/dsh-tool-skill',
+@@ -66,8 +69,10 @@
+     '@deepseek-ai/dsh-compaction-tool-result-pruner']) expect(named(plugins, name).length, name).toBeGreaterThan(0)
+   expect(named(plugins, '@deepseek-ai/dsh-tool-fs')).toEqual([{ write: false, edit: false }])
+   const names = plugins.map(row => row.name)
 -  for (const name of ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-tool-fs-search',
 +  for (const name of ['@deepseek-ai/dsh-tool-subagent', '@deepseek-ai/dsh-tool-subagent-control', '@deepseek-ai/dsh-tool-goal', '@deepseek-ai/dsh-command-goal']) expect(names, name).toContain(name)
 +  expect(named(plugins, '@deepseek-ai/dsh-tool-subagent')).toContainEqual(expect.objectContaining({ provider: 'spawn', agentPreset: 'dsh-superagent-worker' }))
 +  for (const name of ['@deepseek-ai/dsh-tool-web', '@deepseek-ai/dsh-tool-fs-search',
-@@ -71,2 +76,2 @@ it('defines the router preset the main Session runs under: the worker\'s 5-secon
+     '@deepseek-ai/dsh-tool-todo', '@deepseek-ai/dsh-tool-ask-user', '@deepseek-ai/dsh-tool-present', '@deepseek-ai/dsh-plan-mode',
 -    '@deepseek-ai/dsh-plugin-manager/tools', '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule', '@deepseek-ai/dsh-tool-goal',
 -    '@deepseek-ai/dsh-command-goal', '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc']) expect(names, name).not.toContain(name)
 +    '@deepseek-ai/dsh-plugin-manager/tools', '@deepseek-ai/dsh-plugin-market/tools', '@deepseek-ai/dsh-tool-schedule',
 +    '@deepseek-ai/dsh-tool-workflow', '@deepseek-ai/dsh-workflow-ptc']) expect(names, name).not.toContain(name)
+ })
 diff --git a/tests/runtime.spec.ts b/tests/runtime.spec.ts
-index ee4c8c4..d3345a2 100644
 --- a/tests/runtime.spec.ts
 +++ b/tests/runtime.spec.ts
-@@ -169 +169,3 @@ beforeEach(async () => {
+@@ -166,15 +166,17 @@
+       const agentCtx = new Context()
+       const preset = {}
+       const inherited = ['bash', 'read', 'read_image', 'skill', 'job_output', 'job_list', 'job_kill', 'grep', 'web_search',
 -        'ask_user_question', 'plugin_manager', 'schedule_create', 'create_goal', 'session_create', 'session_send_message', 'feishu_doc_edit']
 +        'ask_user_question', 'plugin_manager', 'schedule_create', 'create_goal', 'session_create', 'session_send_message', 'feishu_doc_edit',
 +        ...(agentPreset === 'dsh-superagent-router' ? ['update_goal', 'get_goal', 'subagent', 'subagent_fork', 'list_subagent_models',
 +          'send_message', 'list_agents', 'interrupt_agent'] : [])]
-@@ -174 +176 @@ beforeEach(async () => {
+       const sessionTools = new Map<string, RegisteredTool>()
+       tools.set(sessionId, sessionTools)
+       agentCtx.reflect.provide('tools', { register: (tool: RegisteredTool) => { sessionTools.set(tool.name,
+         tool); return () => sessionTools.delete(tool.name) },
 -        // Preset tools are inherited; subagent is registered on the agent itself and cannot be named by restrict.
 +        // Preset tools are inherited by the Session and can be included in its allow-list.
-@@ -177 +179 @@ beforeEach(async () => {
+         get: (name: string, scope?: object) => {
+           const own = scope === agents.get(sessionId)
 -          return (scope === preset || own) && inherited.includes(name) || own && name === 'subagent' ? { name } : undefined
 +          return (scope === preset || own) && inherited.includes(name) ? { name } : undefined
-@@ -1556 +1558 @@ it('refuses the main Session a bash command that runs sleep and a long job wait,
+         },
+         restrict: vi.fn((rule: { allow: string[] }) => {
+           if (rule.allow.some(name => !inherited.includes(name))) throw new Error('Restriction names a non-inherited tool')
+@@ -1553,7 +1555,7 @@
+   const { sessionId } = await acceptedTicket()
+   expect(guards.get(sessionId)!(bash('sleep 60'))).toBeUndefined()
+   // The main Session's role says so.
 -  expect(masterPrompt).toContain('Worker reports, follow_up notices, new candidates and a background job\'s end, with its output, arrive by themselves as messages')
 +  expect(masterPrompt).toContain('Worker reports, follow_up notices, new candidates and job results arrive as messages')
-@@ -1590 +1592,2 @@ it('refuses an ended ticket\'s worker its tools, and restricts the main Session
+ })
+
+ it('reads the main Session\'s preset from a registry with or without presetForSession, and takes standard\'s caps when it cannot', async () => {
+@@ -1587,7 +1589,8 @@
+   expect(guards.get(sessionId)!()).toBeUndefined()
+   runtime.engine.stopTicket(ticket.id)
+   expect(guards.get(sessionId)!()).toBe('Ticket ended; new work needs a new authorized ticket')
 -  expect(restricts.get(runtime.masterId)).toEqual([{ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill'] }])
 +  expect(restricts.get(runtime.masterId)).toEqual([{ allow: ['skill', 'bash', 'read', 'read_image', 'job_output', 'job_list', 'job_kill', 'subagent', 'subagent_fork',
 +    'list_subagent_models', 'send_message', 'list_agents', 'interrupt_agent', 'get_goal', 'create_goal', 'update_goal'] }])
+   // A worker keeps only the profile's work tools: none that ask a person, change the profile, schedule or start work outside
+   // the worker slots, reach other Sessions or edit documents, whenever they were registered.
+   expect(restricts.get(sessionId)).toEqual([{ allow: ['read', 'read_image', 'grep', 'bash', 'job_output', 'job_list', 'job_kill', 'web_search', 'skill'] }])

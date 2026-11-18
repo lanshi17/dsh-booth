@@ -8,6 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 PATCHES = [
     ROOT / "patches" / "dsh-superagent-session-recovery.patch",
     ROOT / "patches" / "dsh-superagent-goal-delegation.patch",
+    ROOT / "patches" / "dsh-superagent-startup-parallel.patch",
+    ROOT / "patches" / "dsh-superagent-registration.patch",
 ]
 
 

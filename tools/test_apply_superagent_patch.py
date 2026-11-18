@@ -8,7 +8,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "superagent"
 PATCHER = ROOT / "tools" / "apply_superagent_patch.py"
-FILES = ("src/app/runtime.ts", "src/app/sessions.ts", "tests/runtime.spec.ts", "tests/bundle-patch.spec.ts", "tests/cards.spec.ts", "cordis.patch.yml", "prompts/orchestrator.md")
+FILES = ("src/deployment.ts", "src/app/runtime.ts", "src/app/sessions.ts", "src/index.ts", "tests/runtime.spec.ts", "tests/deployment.spec.ts", "tests/bundle-patch.spec.ts", "tests/cards.spec.ts", "cordis.patch.yml", "prompts/orchestrator.md")
 
 
 class ApplySuperagentPatchTests(unittest.TestCase):
@@ -34,7 +34,13 @@ class ApplySuperagentPatchTests(unittest.TestCase):
             self.assertIn("agentPreset: 'dsh-superagent-worker'", bundle_test)
             self.assertIn("@deepseek-ai/dsh-tool-subagent", bundle_test)
             self.assertIn("currentMasterId", (bundle / "src/app/runtime.ts").read_text())
+            self.assertIn("const delegation = ROUTER_DELEGATION_TOOLS.filter", (bundle / "src/app/sessions.ts").read_text())
+            deployment = (bundle / "src/deployment.ts").read_text()
+            self.assertIn("const cancel = new AbortController()", deployment)
+            self.assertIn("const modeCheck = run(cancel.signal", deployment)
             self.assertIn("misreports a missing persisted session", (bundle / "tests/runtime.spec.ts").read_text())
+            self.assertIn("componentRegistration", (bundle / "src/index.ts").read_text())
+            self.assertIn("/supervisor/v1/components/register", (bundle / "src/index.ts").read_text())
 
             second = subprocess.run([str(PATCHER), str(bundle)], text=True, capture_output=True)
             self.assertEqual(second.returncode, 0, second.stderr)

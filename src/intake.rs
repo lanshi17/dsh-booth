@@ -208,6 +208,27 @@ pub fn archive(cfg: &service::Config, entry: &ConversationEntry) -> Result<(), S
     Ok(())
 }
 
+/// The transcript retains at most 4,000 lines; each visible entry renders at least one.
+pub const MAX_VISIBLE_CONVERSATION_ENTRIES: usize = 4000;
+
+fn entry_is_visible(entry: &ConversationEntry) -> bool {
+    entry.role == "user" || entry.reply.is_some()
+}
+
+/// Early or partially recovered agent entries may have text but no embedded reply object.
+fn normalize_entry(mut entry: ConversationEntry) -> ConversationEntry {
+    if entry.role == "agent" && entry.reply.is_none() {
+        entry.reply = Some(Reply {
+            id: entry.id.clone(),
+            kind: "reply".into(),
+            text: entry.text.clone(),
+            ticket: None,
+            thread: Some(entry.thread.clone()),
+        });
+    }
+    entry
+}
+
 /// Recover complete records from the source logs. A retry skips records already archived.
 /// Streaming and reusing the archive file keep a large first import bounded and fast.
 pub fn recover_conversations(
@@ -215,7 +236,7 @@ pub fn recover_conversations(
     thread: &str,
 ) -> Result<(std::collections::HashSet<String>, Vec<ConversationEntry>), String> {
     use std::collections::HashSet;
-    let mut entries = Vec::new();
+    let mut entries = std::collections::VecDeque::new();
     let archive_path = cfg.state_dir.join("booth-conversations.jsonl");
     let mut archive_file = open_archive(cfg)?;
     let mut seen = HashSet::new();
@@ -232,8 +253,15 @@ pub fn recover_conversations(
                 break;
             }
             if let Ok(entry) = serde_json::from_slice::<ConversationEntry>(&line) {
-                if seen.insert((entry.role.clone(), entry.id.clone())) && entry.thread == thread {
-                    entries.push(entry);
+                let entry = normalize_entry(entry);
+                if seen.insert((entry.role.clone(), entry.id.clone()))
+                    && entry.thread == thread
+                    && entry_is_visible(&entry)
+                {
+                    if entries.len() == MAX_VISIBLE_CONVERSATION_ENTRIES {
+                        entries.pop_front();
+                    }
+                    entries.push_back(entry);
                 }
             }
         }
@@ -298,8 +326,11 @@ pub fn recover_conversations(
                 reply,
             };
             append_archive(&mut archive_file, &entry)?;
-            if entry.thread == thread {
-                entries.push(entry);
+            if entry.thread == thread && entry_is_visible(&entry) {
+                if entries.len() == MAX_VISIBLE_CONVERSATION_ENTRIES {
+                    entries.pop_front();
+                }
+                entries.push_back(entry);
             }
             seen.insert((role.into(), id.into()));
         }
@@ -328,40 +359,103 @@ pub fn recover_conversations(
         seen.into_iter()
             .filter_map(|(role, id)| (role == "agent").then_some(id))
             .collect(),
-        entries,
+        entries.into_iter().collect(),
     ))
 }
 
-pub fn conversation(cfg: &service::Config, thread: &str) -> Vec<ConversationEntry> {
-    std::fs::read_to_string(cfg.state_dir.join("booth-conversations.jsonl"))
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| serde_json::from_str::<ConversationEntry>(line).ok())
-        .filter(|entry| entry.thread == thread)
-        .collect()
+/// Visit valid archive records independently, so one damaged line does not hide later history.
+fn for_each_conversation_entry(
+    cfg: &service::Config,
+    mut visit: impl FnMut(ConversationEntry),
+) -> Result<(), String> {
+    let path = cfg.state_dir.join("booth-conversations.jsonl");
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+    };
+    FileExt::lock_shared(&file)
+        .map_err(|error| format!("cannot lock {}: {error}", path.display()))?;
+    // Booth writers only append under the exclusive lock. Capture a complete prefix and
+    // release the lock before parsing it, so a large scan does not stall live replies.
+    let length = file
+        .metadata()
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?
+        .len();
+    FileExt::unlock(&file).map_err(|error| format!("cannot unlock {}: {error}", path.display()))?;
+    let mut reader = BufReader::new(file.take(length));
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        match reader.read_until(b'\n', &mut line) {
+            Ok(0) => break,
+            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+            Ok(_) => {
+                if let Ok(entry) = serde_json::from_slice::<ConversationEntry>(&line) {
+                    visit(normalize_entry(entry));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
-pub fn conversations(cfg: &service::Config) -> Vec<String> {
+#[cfg(test)]
+pub fn conversation(cfg: &service::Config, thread: &str) -> Vec<ConversationEntry> {
+    let mut entries = Vec::new();
+    for_each_conversation_entry(cfg, |entry| {
+        if entry.thread == thread {
+            entries.push(entry);
+        }
+    })
+    .unwrap();
+    entries
+}
+
+/// Fetch only entries that can still fit in the console transcript.
+fn find_recent_conversation(
+    cfg: &service::Config,
+    thread: &str,
+) -> Result<(bool, Vec<ConversationEntry>), String> {
+    let mut entries = std::collections::VecDeque::new();
+    let mut found = false;
+    for_each_conversation_entry(cfg, |entry| {
+        if entry.thread == thread {
+            found = true;
+            if entry_is_visible(&entry) {
+                if entries.len() == MAX_VISIBLE_CONVERSATION_ENTRIES {
+                    entries.pop_front();
+                }
+                entries.push_back(entry);
+            }
+        }
+    })?;
+    Ok((found, entries.into_iter().collect()))
+}
+
+#[cfg(test)]
+pub fn recent_conversation(cfg: &service::Config, thread: &str) -> Vec<ConversationEntry> {
+    find_recent_conversation(cfg, thread).unwrap().1
+}
+
+pub fn conversations(cfg: &service::Config) -> Result<Vec<String>, String> {
     let mut threads = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    for entry in std::fs::read_to_string(cfg.state_dir.join("booth-conversations.jsonl"))
-        .unwrap_or_default()
-        .lines()
-        .filter_map(|line| serde_json::from_str::<ConversationEntry>(line).ok())
-    {
+    for_each_conversation_entry(cfg, |entry| {
         if seen.insert(entry.thread.clone()) {
             threads.push(entry.thread);
         }
-    }
+    })?;
     threads.reverse();
-    threads
+    Ok(threads)
 }
 
-pub fn select_conversation(cfg: &service::Config, thread: &str) -> Result<(), String> {
-    if !conversations(cfg)
-        .iter()
-        .any(|candidate| candidate == thread)
-    {
+pub fn select_conversation(
+    cfg: &service::Config,
+    thread: &str,
+) -> Result<Vec<ConversationEntry>, String> {
+    let (found, entries) = find_recent_conversation(cfg, thread)?;
+    if !found {
         return Err("conversation not found; use /sessions to list saved conversations".into());
     }
     let path = cfg.state_dir.join("booth-conversation");
@@ -370,7 +464,9 @@ pub fn select_conversation(cfg: &service::Config, thread: &str) -> Result<(), St
         .join(format!(".booth-conversation-{}", oauth::uuid_v4()));
     std::fs::write(&temp, thread)
         .map_err(|error| format!("cannot select conversation: {error}"))?;
-    std::fs::rename(&temp, &path).map_err(|error| format!("cannot select conversation: {error}"))
+    std::fs::rename(&temp, &path)
+        .map_err(|error| format!("cannot select conversation: {error}"))?;
+    Ok(entries)
 }
 
 /// Appends one instruction for the Source and returns its id; `thread` continues a ticket's thread.
@@ -393,6 +489,9 @@ pub fn send(cfg: &service::Config, text: &str, thread: Option<&str>) -> Result<S
         .append(true)
         .open(inbox(cfg))
         .map_err(|error| format!("cannot write {}: {error}", inbox(cfg).display()))?;
+    // The newline repair and append must be one operation across console processes.
+    file.lock_exclusive()
+        .map_err(|error| format!("cannot lock {}: {error}", inbox(cfg).display()))?;
     // A write cut short — a full disk, an I/O error, a hand edit — leaves a record without its
     // newline. The Source skips that malformed line, but appending this instruction onto it
     // would make one line of the damaged record and the new one, so the Source would skip both.
@@ -681,7 +780,7 @@ pub fn eval(api: &Api, argument: &str) -> Result<Vec<L>, String> {
 
 /// The lines typed in earlier console sessions, oldest first, capped at 500.
 pub fn history(cfg: &service::Config) -> Vec<String> {
-    let text = std::fs::read_to_string(cfg.state_dir.join("booth-history.txt")).unwrap_or_default();
+    let text = history_tail(&cfg.state_dir.join("booth-history.txt"), 500).unwrap_or_default();
     let lines: Vec<String> = text
         .lines()
         .map(|line| {
@@ -693,6 +792,45 @@ pub fn history(cfg: &service::Config) -> Vec<String> {
     lines[lines.len().saturating_sub(500)..].to_vec()
 }
 
+/// Read only enough trailing bytes to contain the requested lines, including long lines.
+fn history_tail(path: &std::path::Path, limit: usize) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    FileExt::lock_shared(&file)?;
+    history_tail_file(&mut file, limit)
+}
+
+fn history_tail_file(file: &mut std::fs::File, limit: usize) -> std::io::Result<String> {
+    let mut end = file.metadata()?.len();
+    let mut newlines = 0;
+    let start = loop {
+        let begin = end.saturating_sub(TAIL_WINDOW);
+        let mut bytes = vec![0; (end - begin) as usize];
+        file.seek(SeekFrom::Start(begin))?;
+        file.read_exact(&mut bytes)?;
+        let mut boundary = None;
+        for (index, byte) in bytes.iter().enumerate().rev() {
+            if *byte == b'\n' {
+                newlines += 1;
+                if newlines == limit + 1 {
+                    boundary = Some(begin + index as u64 + 1);
+                    break;
+                }
+            }
+        }
+        if let Some(boundary) = boundary {
+            break boundary;
+        }
+        if begin == 0 {
+            break 0;
+        }
+        end = begin;
+    };
+    file.seek(SeekFrom::Start(start))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)?;
+    Ok(text)
+}
+
 /// Appends a submitted line, rewriting the file once it holds twice the cap.
 ///
 /// A write cut short leaves the last line without its newline. Appending onto it would merge the
@@ -701,18 +839,24 @@ pub fn history(cfg: &service::Config) -> Vec<String> {
 pub fn remember(cfg: &service::Config, line: &str) {
     let path = cfg.state_dir.join("booth-history.txt");
     let _ = std::fs::create_dir_all(&cfg.state_dir);
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let count = existing.lines().count();
-    if count >= 1000 {
-        let kept: Vec<&str> = existing.lines().skip(count - 500).collect();
-        let _ = std::fs::write(&path, format!("{}\n", kept.join("\n")));
-    }
     if let Ok(mut file) = OpenOptions::new()
         .read(true)
         .create(true)
         .append(true)
         .open(&path)
     {
+        // Prevent another console from appending between reading and pruning the history.
+        if file.lock_exclusive().is_err() {
+            return;
+        }
+        let existing = history_tail_file(&mut file, 1000).unwrap_or_default();
+        let count = existing.lines().count();
+        if count >= 1000 {
+            let kept: Vec<&str> = existing.lines().skip(count - 500).collect();
+            if file.set_len(0).is_err() || writeln!(file, "{}", kept.join("\n")).is_err() {
+                return;
+            }
+        }
         if ends_mid_record(&mut file).unwrap_or(false) {
             let _ = file.write_all(b"\n");
         }
@@ -791,11 +935,12 @@ fn between_instances(error: &ApiError) -> bool {
 /// loop only retried a missing Source entry or a revision conflict, so one interrupted read
 /// aborted the whole setup after the blocks already written.
 fn settings_after_restart(api: &Api, deadline: Instant) -> Result<Value, String> {
+    let started = Instant::now();
     loop {
         match api.settings() {
             Ok(settings) => return Ok(settings),
             Err(error) if between_instances(&error) && Instant::now() < deadline => {
-                sleep(Duration::from_millis(600));
+                sleep(retry_delay(started, Duration::from_millis(600)));
             }
             Err(error) => return Err(error.to_string()),
         }
@@ -859,7 +1004,8 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     };
     // The same knob as `wait_ready`: a caller can shorten both waits, and a test does.
     let registration = wait_budget().min(Duration::from_secs(30));
-    let deadline = Instant::now() + registration;
+    let started = Instant::now();
+    let deadline = started + registration;
     let settings = loop {
         // A restart mid-read answers with a transport error or a 5xx; that is the same "not
         // back yet" as an empty registry, so the loop retries instead of failing the setup.
@@ -867,7 +1013,7 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
             Ok(settings) => settings,
             Err(error) if Instant::now() < deadline => {
                 let _ = error;
-                sleep(Duration::from_millis(500));
+                sleep(retry_delay(started, Duration::from_millis(500)));
                 continue;
             }
             Err(error) => return Err(error.to_string()),
@@ -880,7 +1026,7 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
                 "the booth console Source is not installed; run `booth init` to install it".into(),
             );
         }
-        sleep(Duration::from_millis(500));
+        sleep(retry_delay(started, Duration::from_millis(500)));
     };
     let previous = settings
         .get("sources")
@@ -900,7 +1046,8 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
     // Saving a Source restarts dsh-superagent, and its registry is briefly empty: re-read the
     // revision and retry while the Source is not yet back instead of failing the whole setup.
     let save = |block: &str, change: &dyn Fn(&mut Value)| -> Result<(), String> {
-        let deadline = Instant::now() + Duration::from_secs(60);
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(60);
         loop {
             let settings = settings_after_restart(api, deadline)?;
             let source = block.strip_prefix("source:");
@@ -921,7 +1068,7 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
                         None => format!("the settings block `{block}` is missing"),
                     });
                 }
-                sleep(Duration::from_millis(600));
+                sleep(retry_delay(started, Duration::from_millis(600)));
                 continue;
             };
             let mut value = entry.get("value").cloned().unwrap_or_else(|| json!({}));
@@ -939,7 +1086,7 @@ pub fn setup(api: &Api, cfg: &service::Config, argument: &str) -> Result<Vec<L>,
                                         || *code == 409
                             )) =>
                 {
-                    sleep(Duration::from_millis(600));
+                    sleep(retry_delay(started, Duration::from_millis(600)));
                 }
                 Err(error) => return Err(error.to_string()),
             }
@@ -1065,6 +1212,15 @@ fn home() -> Result<String, String> {
 /// The pause before the single retry of a CLI the kernel refused to execute.
 const RETRY_PAUSE: Duration = Duration::from_millis(50);
 
+/// Use short probes while a restart is normally completing, then back off to reduce load.
+fn retry_delay(started: Instant, steady: Duration) -> Duration {
+    if started.elapsed() < Duration::from_secs(2) {
+        Duration::from_millis(100)
+    } else {
+        steady
+    }
+}
+
 /// How long a settings change may take to answer; `BOOTH_WAIT_SECONDS` overrides it.
 fn wait_budget() -> Duration {
     std::env::var("BOOTH_WAIT_SECONDS")
@@ -1076,7 +1232,8 @@ fn wait_budget() -> Duration {
 
 pub(crate) fn wait_ready(api: &Api) -> Result<(), String> {
     let budget = wait_budget();
-    let deadline = Instant::now() + budget;
+    let started = Instant::now();
+    let deadline = started + budget;
     loop {
         if api.state().is_ok() {
             return Ok(());
@@ -1087,7 +1244,7 @@ pub(crate) fn wait_ready(api: &Api) -> Result<(), String> {
                 budget.as_secs()
             ));
         }
-        sleep(Duration::from_millis(500));
+        sleep(retry_delay(started, Duration::from_millis(500)));
     }
 }
 
@@ -1387,7 +1544,8 @@ mod tests {
         let start = Instant::now();
         let (_, entries) = recover_conversations(&cfg, "t").unwrap();
         let recovery = start.elapsed();
-        assert_eq!(entries.len(), 20_000);
+        assert_eq!(entries.len(), MAX_VISIBLE_CONVERSATION_ENTRIES);
+        assert_eq!(conversation(&cfg, "t").len(), 20_000);
         let start = Instant::now();
         for id in 0..500 {
             archive(
@@ -1407,6 +1565,60 @@ mod tests {
             start.elapsed()
         );
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn separate_senders_respect_the_inbox_lock() {
+        const CHILD_DIR: &str = "BOOTH_TEST_INBOX_CHILD_DIR";
+        if let Some(dir) = std::env::var_os(CHILD_DIR) {
+            let cfg = config(PathBuf::from(dir));
+            for _ in 0..50 {
+                send(&cfg, "message", Some("shared")).unwrap();
+            }
+            return;
+        }
+        let dir = scratch("process-inbox");
+        let cfg = config(dir.clone());
+        let locked = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(inbox(&cfg))
+            .unwrap();
+        locked.lock_exclusive().unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let mut children = Vec::new();
+        for _ in 0..4 {
+            children.push(
+                Command::new(&exe)
+                    .args([
+                        "--exact",
+                        "intake::tests::separate_senders_respect_the_inbox_lock",
+                    ])
+                    .env(CHILD_DIR, &dir)
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(std::fs::metadata(inbox(&cfg)).unwrap().len(), 0);
+        drop(locked);
+        for mut child in children {
+            assert!(child.wait().unwrap().success());
+        }
+        let lines = std::fs::read_to_string(inbox(&cfg)).unwrap();
+        let records: Vec<Value> = lines
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records.len(), 200);
+        let ids: std::collections::HashSet<_> = records
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids.len(), 200);
+        assert!(records.iter().all(|entry| entry["thread"] == "shared"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1523,6 +1735,231 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries.iter().filter(|e| e.id == "user-1").count(), 1);
         assert_eq!(entries.iter().filter(|e| e.id == "reply-1").count(), 1);
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_archive_reports_error_without_changing_selected_conversation() {
+        let cfg = config(scratch("archive-read-error"));
+        let selected = cfg.state_dir.join("booth-conversation");
+        std::fs::write(&selected, "current").unwrap();
+        std::fs::create_dir(cfg.state_dir.join("booth-conversations.jsonl")).unwrap();
+        assert!(conversations(&cfg).unwrap_err().contains("cannot read"));
+        assert!(select_conversation(&cfg, "other")
+            .err()
+            .unwrap()
+            .contains("cannot read"));
+        assert_eq!(std::fs::read_to_string(selected).unwrap(), "current");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn session_scan_uses_a_snapshot_without_blocking_later_appends() {
+        let cfg = config(scratch("archive-scan-snapshot"));
+        let make_entry = |id: &str| ConversationEntry {
+            thread: id.into(),
+            id: id.into(),
+            role: "user".into(),
+            text: id.into(),
+            reply: None,
+        };
+        archive(&cfg, &make_entry("before")).unwrap();
+        let (entered, active) = std::sync::mpsc::channel();
+        let (resume, paused) = std::sync::mpsc::channel();
+        let scan_cfg = cfg.clone();
+        let scan = std::thread::spawn(move || {
+            let mut ids = Vec::new();
+            for_each_conversation_entry(&scan_cfg, |entry| {
+                ids.push(entry.id);
+                entered.send(()).unwrap();
+                paused.recv_timeout(Duration::from_secs(3)).unwrap();
+            })
+            .unwrap();
+            ids
+        });
+        active.recv_timeout(Duration::from_secs(2)).unwrap();
+        let (finished, result) = std::sync::mpsc::channel();
+        let write_cfg = cfg.clone();
+        let writer = std::thread::spawn(move || {
+            finished
+                .send(archive(&write_cfg, &make_entry("after")))
+                .unwrap();
+        });
+        let append = result.recv_timeout(Duration::from_secs(1));
+        resume.send(()).unwrap();
+        let ids = scan.join().unwrap();
+        writer.join().unwrap();
+        assert!(
+            append.unwrap().is_ok(),
+            "live append waited for the whole scan"
+        );
+        assert_eq!(ids, vec!["before"]);
+        assert_eq!(conversations(&cfg).unwrap(), vec!["after", "before"]);
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn session_scan_waits_for_a_concurrent_archive_write() {
+        let cfg = config(scratch("archive-snapshot"));
+        let path = cfg.state_dir.join("booth-conversations.jsonl");
+        let mut writer = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writer.lock_exclusive().unwrap();
+        let entry = ConversationEntry {
+            thread: "new-thread".into(),
+            id: "one".into(),
+            role: "user".into(),
+            text: "complete".into(),
+            reply: None,
+        };
+        let line = serde_json::to_vec(&entry).unwrap();
+        let split = line.len() / 2;
+        writer.write_all(&line[..split]).unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (finished, result) = std::sync::mpsc::channel();
+        let other = cfg.clone();
+        let reader = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            finished.send(conversations(&other)).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            result.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        writer.write_all(&line[split..]).unwrap();
+        writer.write_all(b"\n").unwrap();
+        drop(writer);
+        assert_eq!(
+            result
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap(),
+            vec!["new-thread"]
+        );
+        reader.join().unwrap();
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn damaged_archive_line_does_not_hide_other_conversations() {
+        let cfg = config(scratch("archive-invalid"));
+        let path = cfg.state_dir.join("booth-conversations.jsonl");
+        let one = ConversationEntry {
+            thread: "first".into(),
+            id: "1".into(),
+            role: "user".into(),
+            text: "one".into(),
+            reply: None,
+        };
+        let two = ConversationEntry {
+            thread: "second".into(),
+            id: "2".into(),
+            role: "user".into(),
+            text: "two".into(),
+            reply: None,
+        };
+        let mut bytes = serde_json::to_vec(&one).unwrap();
+        bytes.extend_from_slice(b"\n\xff\n");
+        bytes.extend_from_slice(&serde_json::to_vec(&two).unwrap());
+        bytes.push(b'\n');
+        std::fs::write(path, bytes).unwrap();
+        assert_eq!(conversations(&cfg).unwrap(), vec!["second", "first"]);
+        assert_eq!(conversation(&cfg, "first")[0].text, "one");
+        assert_eq!(conversation(&cfg, "second")[0].text, "two");
+        select_conversation(&cfg, "second").unwrap();
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn agent_text_is_restored_when_the_embedded_reply_is_missing() {
+        let cfg = config(scratch("agent-no-reply"));
+        let entry = ConversationEntry {
+            thread: "t".into(),
+            id: "agent-1".into(),
+            role: "agent".into(),
+            text: "preserved text".into(),
+            reply: None,
+        };
+        std::fs::write(
+            cfg.state_dir.join("booth-conversations.jsonl"),
+            serde_json::to_string(&entry).unwrap() + "\n",
+        )
+        .unwrap();
+        let (_, entries) = recover_conversations(&cfg, "t").unwrap();
+        assert_eq!(entries[0].reply.as_ref().unwrap().text, "preserved text");
+        assert_eq!(
+            recent_conversation(&cfg, "t")[0]
+                .reply
+                .as_ref()
+                .unwrap()
+                .text,
+            "preserved text"
+        );
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn non_renderable_records_do_not_evict_visible_history() {
+        let cfg = config(scratch("recovery-invisible"));
+        let path = cfg.state_dir.join("booth-conversations.jsonl");
+        let valid = ConversationEntry {
+            thread: "t".into(),
+            id: "kept".into(),
+            role: "user".into(),
+            text: "visible".into(),
+            reply: None,
+        };
+        let mut body = serde_json::to_string(&valid).unwrap() + "\n";
+        for id in 0..MAX_VISIBLE_CONVERSATION_ENTRIES {
+            let invisible = ConversationEntry {
+                thread: "t".into(),
+                id: id.to_string(),
+                role: "metadata".into(),
+                text: "not displayed".into(),
+                reply: None,
+            };
+            body.push_str(&serde_json::to_string(&invisible).unwrap());
+            body.push('\n');
+        }
+        std::fs::write(path, body).unwrap();
+        let (_, restored) = recover_conversations(&cfg, "t").unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, "kept");
+        assert_eq!(recent_conversation(&cfg, "t")[0].id, "kept");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn recovery_bounds_visible_entries_without_removing_archive_history() {
+        let cfg = config(scratch("recovery-visible-cap"));
+        let path = cfg.state_dir.join("booth-conversations.jsonl");
+        let mut body = String::new();
+        for id in 0..(MAX_VISIBLE_CONVERSATION_ENTRIES + 3) {
+            let entry = ConversationEntry {
+                thread: "t".into(),
+                id: id.to_string(),
+                role: "user".into(),
+                text: id.to_string(),
+                reply: None,
+            };
+            body.push_str(&serde_json::to_string(&entry).unwrap());
+            body.push('\n');
+        }
+        std::fs::write(path, body).unwrap();
+        let (_, visible) = recover_conversations(&cfg, "t").unwrap();
+        assert_eq!(visible.len(), MAX_VISIBLE_CONVERSATION_ENTRIES);
+        assert_eq!(visible[0].id, "3");
+        let recent = recent_conversation(&cfg, "t");
+        assert_eq!(recent.len(), MAX_VISIBLE_CONVERSATION_ENTRIES);
+        assert_eq!(recent[0].id, "3");
+        assert_eq!(
+            conversation(&cfg, "t").len(),
+            MAX_VISIBLE_CONVERSATION_ENTRIES + 3
+        );
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
     }
 
@@ -1854,6 +2291,43 @@ mod tests {
     }
 
     #[test]
+    fn history_reads_only_the_recent_lines_even_with_damaged_old_bytes() {
+        let dir = scratch("history-tail");
+        let cfg = config(dir.clone());
+        let path = cfg.state_dir.join("booth-history.txt");
+        let mut body = b"\xff\n".to_vec();
+        for index in 0..600 {
+            body.extend_from_slice(format!("record-{index}-{}\n", "x".repeat(64)).as_bytes());
+        }
+        body.extend_from_slice("最后一行".as_bytes());
+        std::fs::write(path, body).unwrap();
+        let entries = history(&cfg);
+        assert_eq!(entries.len(), 500);
+        assert!(entries[0].starts_with("record-101-"));
+        assert_eq!(entries[499], "最后一行");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn remember_prunes_large_history_even_if_old_bytes_are_invalid() {
+        let dir = scratch("history-prune-invalid");
+        let cfg = config(dir.clone());
+        let path = cfg.state_dir.join("booth-history.txt");
+        let mut body = b"\xff\n".to_vec();
+        for index in 0..1200 {
+            body.extend_from_slice(format!("entry-{index}\n").as_bytes());
+        }
+        std::fs::write(&path, body).unwrap();
+        remember(&cfg, "new");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<_> = text.lines().collect();
+        assert_eq!(lines.len(), 501);
+        assert_eq!(lines[0], "entry-700");
+        assert_eq!(lines[500], "new");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn history_starts_a_line_after_a_cut_short_one() {
         // A write cut short leaves the last prompt without its newline. Appending onto it
         // would merge the next prompt into one entry nobody typed, and the merge survives
@@ -1871,6 +2345,53 @@ mod tests {
             "{text:?}"
         );
         assert_eq!(history(&cfg), ["half", "next"], "{text:?}");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_consoles_preserve_recent_history_during_pruning() {
+        const CHILD_DIR: &str = "BOOTH_TEST_HISTORY_CHILD_DIR";
+        const CHILD_ID: &str = "BOOTH_TEST_HISTORY_CHILD_ID";
+        if let Some(dir) = std::env::var_os(CHILD_DIR) {
+            let cfg = config(PathBuf::from(dir));
+            let child = std::env::var(CHILD_ID).unwrap();
+            for index in 0..50 {
+                remember(&cfg, &format!("new-{child}-{index}"));
+            }
+            return;
+        }
+        let dir = scratch("process-history");
+        let cfg = config(dir.clone());
+        let old = (0..990)
+            .map(|index| format!("old-{index}\n"))
+            .collect::<String>();
+        std::fs::write(dir.join("booth-history.txt"), old).unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let mut children = Vec::new();
+        for id in 0..4 {
+            children.push(
+                Command::new(&exe)
+                    .args([
+                        "--exact",
+                        "intake::tests::concurrent_consoles_preserve_recent_history_during_pruning",
+                    ])
+                    .env(CHILD_DIR, &dir)
+                    .env(CHILD_ID, id.to_string())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            );
+        }
+        for mut child in children {
+            assert!(child.wait().unwrap().success());
+        }
+        let history = history(&cfg);
+        for id in 0..4 {
+            for index in 0..50 {
+                let wanted = format!("new-{id}-{index}");
+                assert!(history.contains(&wanted), "missing {wanted}");
+            }
+        }
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2159,11 +2680,20 @@ mod api_tests {
 
     #[test]
     fn summary_says_so_when_the_catalog_is_empty() {
+        let _env = env_lock();
+        let previous = std::env::var_os("DSH_HOME");
+        let home = scratch("summary-no-account");
+        std::env::set_var("DSH_HOME", &home);
         let text: String = summary(&Catalog::default())
             .iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        match previous {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
+        std::fs::remove_dir_all(home).unwrap();
         // Not signed in and no override: the console must say there is no model, not repeat the
         // signed-in wording.
         assert!(text.contains("no model yet"), "{text}");

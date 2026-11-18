@@ -16,6 +16,7 @@ mod model;
 mod oauth;
 mod provider;
 mod service;
+mod supervisor;
 #[cfg(test)]
 mod testkit;
 mod wechat;
@@ -33,10 +34,10 @@ const DEFAULT_URL: &str = "http://127.0.0.1:3082";
 #[command(
     name = "booth",
     version,
-    about = "A terminal console for dsh-superagent",
-    long_about = "Runs the bundled superagent service and reads its loopback management API. \
-                  `booth init` prepares the profile, `booth up` runs the service, `booth` with no \
-                  command opens the console."
+    about = "A terminal console and supervisor for dsh-superagent",
+    long_about = "Supervises independently registered components and reads the dsh-superagent \
+                  loopback management API. `booth init` prepares the profile, `booth up` starts \
+                  the supervisor and component, and `booth` with no command opens the console."
 )]
 struct Cli {
     /// Base URL of the dsh-superagent management API.
@@ -72,6 +73,13 @@ enum Command {
     Down,
     /// Restart the service.
     Restart,
+    /// List components registered with the stable supervisor.
+    Components {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the booth component supervisor in the foreground.
+    Supervisor,
     /// Print the service log.
     Logs {
         #[arg(long, default_value_t = 40)]
@@ -372,6 +380,71 @@ fn run(api: Api, command: Command) -> Result<(), String> {
         Command::Up => service::start(&service::Config::from_env()?),
         Command::Down => service::stop(&service::Config::from_env()?),
         Command::Restart => service::restart(&service::Config::from_env()?),
+        Command::Components { json } => {
+            let components = service::components(&service::Config::from_env()?)?;
+            if json {
+                print_json(&components)
+            } else {
+                let rows = components
+                    .get("components")
+                    .and_then(|value| value.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                if rows.is_empty() {
+                    println!("no registered components");
+                } else {
+                    for row in rows {
+                        println!(
+                            "{}  pid {}  {}  lease {}",
+                            row.get("id")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("?"),
+                            row.get("pid").and_then(|value| value.as_u64()).unwrap_or(0),
+                            row.get("apiUrl")
+                                .and_then(|value| value.as_str())
+                                .unwrap_or("?"),
+                            row.get("lastSeen")
+                                .and_then(|value| value.as_u64())
+                                .unwrap_or(0),
+                        );
+                    }
+                }
+                Ok(())
+            }
+        }
+        Command::Supervisor => {
+            let cfg = service::Config::from_env()?;
+            let token = match std::env::var("BOOTH_SUPERVISOR_TOKEN") {
+                Ok(token) if token.len() >= 24 => {
+                    let path = supervisor::token_path(&cfg.state_dir);
+                    std::fs::create_dir_all(&cfg.state_dir).map_err(|error| {
+                        format!("cannot create {}: {error}", cfg.state_dir.display())
+                    })?;
+                    std::fs::write(&path, format!("{token}\n"))
+                        .map_err(|error| format!("cannot persist supervisor token: {error}"))?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                            .map_err(|error| format!("cannot protect supervisor token: {error}"))?;
+                    }
+                    token
+                }
+                Ok(_) => {
+                    return Err("BOOTH_SUPERVISOR_TOKEN must contain at least 24 characters".into())
+                }
+                Err(_) => supervisor::read_token(&cfg.state_dir)
+                    .or_else(|_| supervisor::ensure_token(&cfg.state_dir))?,
+            };
+            supervisor::run(supervisor::Config {
+                state_dir: cfg.state_dir,
+                port: std::env::var("BOOTH_SUPERVISOR_PORT")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(supervisor::DEFAULT_PORT),
+                token,
+            })
+        }
         Command::Logs { lines } => service::logs(&service::Config::from_env()?, lines),
         Command::Provider { json } => {
             if json {

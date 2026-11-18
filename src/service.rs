@@ -1,8 +1,10 @@
-//! Service lifecycle: the same binary that talks to the API also owns the service behind it.
+//! Service lifecycle: booth starts a stable supervisor and an independently leased component.
 //!
 //! `booth init` prepares a DSH profile from the pinned `superagent/` checkout; `booth up`
-//! runs `dsh --profile <name> --no-open` detached and waits for the management API; `booth stop`
-//! ends it. No tmux, no shell script: the pid and the log live under the state directory.
+//! starts the loopback supervisor first, then runs `dsh --profile <name> --no-open` as the
+//! `dsh-superagent` component. The component registers its management URL and lease; `booth
+//! restart` replaces only it. No tmux, no shell script: pids and logs live under the state
+//! directory.
 
 use fs2::FileExt;
 use std::fs::{self, OpenOptions};
@@ -14,9 +16,11 @@ use std::thread::sleep;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::api::Api;
+use crate::supervisor;
 
 const DEFAULT_PORT: u16 = 3082;
 const READY_TIMEOUT: Duration = Duration::from_secs(90);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const STOP_TIMEOUT: Duration = Duration::from_secs(20);
 
 #[derive(Clone)]
@@ -283,17 +287,22 @@ pub fn start(cfg: &Config) -> Result<(), String> {
 fn start_once(cfg: &Config) -> Result<(), String> {
     if let Some(pid) = read_pid(cfg) {
         if alive(pid) && is_service(pid, &cfg.profile) {
+            ensure_supervisor(cfg)?;
             println!("already running (pid {pid}); waiting for its management API");
             return wait_ready(cfg, Some(pid));
         }
         // A stale or reused pid must not stop a start.
         let _ = fs::remove_file(cfg.pid());
     }
-    if Api::new(&cfg.url()).state().is_ok() {
+    if let Ok(state) = Api::with_timeout(&cfg.url(), PROBE_TIMEOUT).state() {
         println!(
             "a service already listens on {} — not started by booth",
             cfg.url()
         );
+        if state_is_ready(&state) {
+            report(cfg, &Api::new(&cfg.url()), &state);
+            return Ok(());
+        }
         return wait_ready(cfg, None);
     }
     // The management API is not the only sign that the port is taken. DSH's web server binds
@@ -322,6 +331,11 @@ fn start_once(cfg: &Config) -> Result<(), String> {
         println!("the booth console Source is not linked into the profile; run `booth init` to install it");
     }
 
+    // The supervisor is a stable process. The dsh-superagent component below is disposable and
+    // registers itself after its own runtime is ready, so restarting it never reloads this
+    // registry or any other component.
+    ensure_supervisor(cfg)?;
+
     create_private_state_dir(cfg)?;
     let (log, errors) = open_log(cfg)?;
 
@@ -342,6 +356,13 @@ fn start_once(cfg: &Config) -> Result<(), String> {
     command
         .arg("--no-open")
         .current_dir(&cfg.bundle)
+        .env("BOOTH_SUPERVISOR_URL", supervisor_url())
+        .env(
+            "BOOTH_SUPERVISOR_TOKEN",
+            supervisor::read_token(&cfg.state_dir)?,
+        )
+        .env("BOOTH_COMPONENT_ID", "dsh-superagent")
+        .env("BOOTH_COMPONENT_API", cfg.url())
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(errors));
@@ -356,23 +377,39 @@ fn start_once(cfg: &Config) -> Result<(), String> {
     wait_ready(cfg, Some(pid))
 }
 
+/// A mounted HTTP route alone is not enough: the runtime must be ready or need setup.
+fn state_is_ready(state: &crate::model::StateView) -> bool {
+    state
+        .health
+        .get("runtime")
+        .map(|health| health.state.as_str())
+        == Some("ready")
+        || state.setup.problem.is_some()
+}
+
 /// Waits for a DSH management API to mount its runtime, whether booth started the process or
 /// found it already running. A listening web server can answer before the plugin is ready.
 fn wait_ready(cfg: &Config, pid: Option<u32>) -> Result<(), String> {
-    let api = Api::new(&cfg.url());
-    let deadline = Instant::now() + READY_TIMEOUT;
+    let api = Api::with_timeout(&cfg.url(), PROBE_TIMEOUT);
+    let started = Instant::now();
+    let deadline = started + READY_TIMEOUT;
     loop {
         if let Ok(state) = api.state() {
-            // The web server answers before dsh-superagent has mounted its runtime. Returning
-            // here made `booth up` print success while the console still had nowhere to send
-            // work, which looked like a hung composer. Wait for the runtime health entry (or a
-            // setup problem that the operator must fix through the now-available API).
-            let runtime = state
-                .health
-                .get("runtime")
-                .map(|health| health.state.as_str());
-            if runtime == Some("ready") || state.setup.problem.is_some() {
-                return report(cfg);
+            if state_is_ready(&state) {
+                if pid.is_some() && !component_registered(cfg) {
+                    if started.elapsed() > Duration::from_secs(5) {
+                        tail(cfg, 12);
+                        return Err(format!(
+                            "dsh-superagent is ready but did not register with the booth supervisor; see {}",
+                            cfg.log().display()
+                        ));
+                    }
+                    sleep(Duration::from_millis(100));
+                    continue;
+                }
+                // Prompt installation retains the normal API timeout; only probes are short.
+                report(cfg, &Api::new(&cfg.url()), &state);
+                return Ok(());
             }
         }
         if let Some(pid) = pid {
@@ -393,8 +430,33 @@ fn wait_ready(cfg: &Config, pid: Option<u32>) -> Result<(), String> {
                 cfg.log().display()
             ));
         }
-        sleep(Duration::from_millis(400));
+        // Probe quickly during a typical warm start, then back off while initialization is slow.
+        let interval = if started.elapsed() < Duration::from_secs(2) {
+            Duration::from_millis(100)
+        } else {
+            Duration::from_millis(400)
+        };
+        sleep(interval);
     }
+}
+
+fn component_registered(cfg: &Config) -> bool {
+    supervisor_request(cfg, "GET", "/supervisor/v1/components", None)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("components")
+                .and_then(|items| items.as_array())
+                .cloned()
+        })
+        .map(|items| {
+            items.iter().any(|item| {
+                item.get("id").and_then(|id| id.as_str()) == Some("dsh-superagent")
+                    && item.get("pid").and_then(|pid| pid.as_u64())
+                        == Some(read_pid(cfg).unwrap_or_default() as u64)
+            })
+        })
+        .unwrap_or(false)
 }
 
 /// Creates the state directory, and keeps it private.
@@ -439,7 +501,9 @@ fn open_log(cfg: &Config) -> Result<(fs::File, fs::File), String> {
 
 pub fn stop(cfg: &Config) -> Result<(), String> {
     let _lock = lifecycle_lock(cfg)?;
-    stop_with_timeout(cfg, STOP_TIMEOUT)
+    stop_with_timeout(cfg, STOP_TIMEOUT)?;
+    unregister_component(cfg);
+    stop_supervisor(cfg)
 }
 
 /// Stops the service, giving it `timeout` to exit after SIGTERM before forcing it.
@@ -464,7 +528,8 @@ fn stop_with_timeout(cfg: &Config, timeout: Duration) -> Result<(), String> {
         ));
     }
     signal(pid, "TERM")?;
-    let deadline = Instant::now() + timeout;
+    let started = Instant::now();
+    let deadline = started + timeout;
     loop {
         // The pid is not the identity: while this waits, the service can exit and the kernel can
         // hand the pid to an unrelated program. Only a process that still carries this profile's
@@ -476,7 +541,12 @@ fn stop_with_timeout(cfg: &Config, timeout: Duration) -> Result<(), String> {
             signal(pid, "KILL")?;
             break;
         }
-        sleep(Duration::from_millis(200));
+        let interval = if started.elapsed() < Duration::from_secs(2) {
+            Duration::from_millis(50)
+        } else {
+            Duration::from_millis(200)
+        };
+        sleep(interval);
     }
     let _ = fs::remove_file(cfg.pid());
     println!("stopped (pid {pid})");
@@ -487,7 +557,8 @@ pub fn restart(cfg: &Config) -> Result<(), String> {
     let _lock = lifecycle_lock(cfg)?;
     if cfg.pid().exists() {
         stop_with_timeout(cfg, STOP_TIMEOUT)?;
-    } else if Api::new(&cfg.url()).state().is_ok() {
+        unregister_component(cfg);
+    } else if Api::with_timeout(&cfg.url(), PROBE_TIMEOUT).state().is_ok() {
         return Err(format!(
             "a service already listens on {} but was not started by booth; run `booth down && booth up` for that service, then retry the upgrade",
             cfg.url()
@@ -911,8 +982,7 @@ pub fn logs(cfg: &Config, lines: usize) -> Result<(), String> {
     Ok(())
 }
 
-fn report(cfg: &Config) -> Result<(), String> {
-    let state = Api::new(&cfg.url()).state().map_err(String::from)?;
+fn report(cfg: &Config, api: &Api, state: &crate::model::StateView) {
     let runtime = state
         .health
         .get("runtime")
@@ -930,10 +1000,9 @@ fn report(cfg: &Config) -> Result<(), String> {
         println!("setup pending: {}", problem.detail);
         println!("hint: /setup owner/repo in the console, or `booth setup owner/repo`");
     }
-    if let Err(error) = crate::decider::install(&Api::new(&cfg.url())) {
+    if let Err(error) = crate::decider::install(api) {
         eprintln!("decider prompt not installed: {error}");
     }
-    Ok(())
 }
 
 /// What to say about the one-time provider migration, if anything.
@@ -947,6 +1016,202 @@ fn migration_note(result: Result<Vec<String>, String>) -> Option<String> {
         Ok(_) => None,
         Err(error) => Some(format!("could not migrate the old provider file: {error}")),
     }
+}
+
+fn supervisor_url() -> String {
+    let port = std::env::var("BOOTH_SUPERVISOR_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(supervisor::DEFAULT_PORT);
+    format!("http://127.0.0.1:{port}")
+}
+
+fn supervisor_request(
+    cfg: &Config,
+    method: &str,
+    path: &str,
+    body: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let token = supervisor::read_token(&cfg.state_dir)?;
+    let url = format!("{}{path}", supervisor_url());
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_millis(500))
+        .timeout(Duration::from_secs(2))
+        .build();
+    let request = agent
+        .request(method, &url)
+        .set("x-booth-supervisor-token", &token);
+    let response = match body {
+        Some(value) => request.send_json(value),
+        None => request.call(),
+    };
+    match response {
+        Ok(response) => response
+            .into_json()
+            .map_err(|error| format!("invalid supervisor response: {error}")),
+        Err(error) => Err(format!("cannot reach booth supervisor: {error}")),
+    }
+}
+
+fn supervisor_ready(cfg: &Config) -> bool {
+    supervisor_request(cfg, "GET", "/supervisor/v1/health", None)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("status")
+                .and_then(|status| status.as_str())
+                .map(str::to_owned)
+        })
+        .as_deref()
+        == Some("ready")
+}
+
+/// Return the supervisor's durable component registry for diagnostics and integrations.
+pub fn components(cfg: &Config) -> Result<serde_json::Value, String> {
+    supervisor_request(cfg, "GET", "/supervisor/v1/components", None)
+}
+
+fn supervisor_process(pid: u32) -> bool {
+    fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|raw| {
+            let text = String::from_utf8_lossy(&raw);
+            text.split('\0').any(|word| word == "supervisor")
+        })
+        .unwrap_or(false)
+}
+
+fn ensure_supervisor(cfg: &Config) -> Result<(), String> {
+    create_private_state_dir(cfg)?;
+    let token = supervisor::ensure_token(&cfg.state_dir)?;
+    if supervisor_ready(cfg) {
+        return Ok(());
+    }
+    let supervisor_pid_path = cfg.state_dir.join("booth-supervisor.pid");
+    if let Some(pid) = fs::read_to_string(&supervisor_pid_path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+    {
+        if alive(pid) && supervisor_process(pid) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline {
+                if supervisor_ready(cfg) {
+                    return Ok(());
+                }
+                sleep(Duration::from_millis(50));
+            }
+            return Err(format!(
+                "booth supervisor pid {pid} is alive but not answering on {}",
+                supervisor_url()
+            ));
+        }
+        let _ = fs::remove_file(&supervisor_pid_path);
+    }
+    let port = std::env::var("BOOTH_SUPERVISOR_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(supervisor::DEFAULT_PORT);
+    if port_in_use(port) {
+        return Err(format!(
+            "{} is already in use by a non-booth process",
+            supervisor_url()
+        ));
+    }
+    let executable =
+        std::env::current_exe().map_err(|error| format!("cannot locate booth: {error}"))?;
+    let program = if executable.exists() {
+        executable
+    } else {
+        PathBuf::from("booth")
+    };
+    let mut command = if which("setsid") {
+        let mut command = Command::new("setsid");
+        command.arg(program);
+        command
+    } else {
+        let mut command = Command::new("nohup");
+        command.arg(program);
+        command
+    };
+    let child = command
+        .arg("supervisor")
+        .env("BOOTH_STATE_DIR", &cfg.state_dir)
+        .env("BOOTH_SUPERVISOR_PORT", port.to_string())
+        .env("BOOTH_SUPERVISOR_TOKEN", &token)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("cannot start booth supervisor: {error}"))?;
+    fs::write(
+        cfg.state_dir.join("booth-supervisor.pid"),
+        child.id().to_string(),
+    )
+    .map_err(|error| format!("cannot write supervisor pid: {error}"))?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if supervisor_ready(cfg) {
+            return Ok(());
+        }
+        if !alive(child.id()) {
+            break;
+        }
+        sleep(Duration::from_millis(50));
+    }
+    Err(format!(
+        "booth supervisor did not become ready on {}",
+        supervisor_url()
+    ))
+}
+
+fn unregister_component(cfg: &Config) {
+    let _ = supervisor_request(
+        cfg,
+        "POST",
+        "/supervisor/v1/components/dsh-superagent/unregister",
+        Some(&serde_json::json!({})),
+    );
+}
+
+fn stop_supervisor(cfg: &Config) -> Result<(), String> {
+    if supervisor_request(cfg, "GET", "/supervisor/v1/components", None)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("components")
+                .and_then(|items| items.as_array())
+                .cloned()
+        })
+        .is_some_and(|items| !items.is_empty())
+    {
+        return Ok(());
+    }
+    let path = cfg.state_dir.join("booth-supervisor.pid");
+    let Some(pid) = fs::read_to_string(&path)
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+    else {
+        return Ok(());
+    };
+    if !alive(pid) {
+        let _ = fs::remove_file(path);
+        return Ok(());
+    }
+    if !supervisor_process(pid) {
+        return Err(format!(
+            "supervisor pid {pid} is not a booth supervisor; remove {} yourself",
+            path.display()
+        ));
+    }
+    signal(pid, "TERM")?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(pid) && Instant::now() < deadline {
+        sleep(Duration::from_millis(50));
+    }
+    if alive(pid) {
+        signal(pid, "KILL")?;
+    }
+    let _ = fs::remove_file(path);
+    Ok(())
 }
 
 fn write_patch(cfg: &Config) -> Result<(), String> {
@@ -1590,6 +1855,95 @@ mod tests {
         assert!(error.contains("was not started by booth"), "{error}");
         assert!(error.contains("booth down && booth up"), "{error}");
         std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn unresponsive_listener_does_not_hold_start_for_the_normal_api_timeout() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut cfg = config("unresponsive-start");
+        cfg.port = listener.local_addr().unwrap().port();
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (_connection, _) = listener.accept().unwrap();
+            let _ = wait.recv_timeout(Duration::from_secs(10));
+        });
+        let started = Instant::now();
+        let result = start(&cfg);
+        let elapsed = started.elapsed();
+        release.send(()).unwrap();
+        server.join().unwrap();
+        assert!(result.unwrap_err().contains("already in use"));
+        assert!(elapsed < Duration::from_secs(6), "probe took {elapsed:?}");
+        let _ = fs::remove_dir_all(&cfg.state_dir);
+    }
+
+    #[test]
+    fn start_reuses_a_ready_state_from_an_existing_service() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut cfg = config("ready-state-once");
+        cfg.port = listener.local_addr().unwrap().port();
+        let worker = std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            for stream in listener.incoming().take(2) {
+                let mut stream = stream.unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut raw = [0u8; 4096];
+                let count = stream.read(&mut raw).unwrap();
+                let head = String::from_utf8_lossy(&raw[..count]);
+                let path = head
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap()
+                    .to_owned();
+                requests.push(path.clone());
+                let body = if path.ends_with("/state") {
+                    r#"{"health":{"runtime":{"state":"ready"}},"load":{"maxWorkers":1},"setup":{}}"#
+                } else {
+                    "{}"
+                };
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+            requests
+        });
+        assert!(start(&cfg).is_ok());
+        let requests = worker.join().unwrap();
+        assert!(requests[0].ends_with("/state"), "{requests:?}");
+        assert!(requests[1].ends_with("/prompts"), "{requests:?}");
+        let _ = fs::remove_dir_all(&cfg.state_dir);
+    }
+
+    #[test]
+    fn early_probes_still_wait_for_runtime_readiness() {
+        let mut cfg = config("early-readiness");
+        let api = crate::testkit::FakeApi::start();
+        cfg.port = api.base.rsplit(':').next().unwrap().parse().unwrap();
+        let state = |runtime: &str| {
+            serde_json::json!({
+                "health": { "runtime": { "state": runtime, "detail": "" } },
+                "load": { "running": 0, "queued": 0, "maxWorkers": 3 },
+                "setup": { "problem": null }
+            })
+        };
+        api.set_route("/state", state("starting"));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_cfg = cfg.clone();
+        let worker = std::thread::spawn(move || {
+            tx.send(wait_ready(&worker_cfg, None)).unwrap();
+        });
+        assert!(matches!(
+            rx.recv_timeout(Duration::from_millis(250)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        api.set_route("/state", state("ready"));
+        assert!(rx.recv_timeout(Duration::from_secs(3)).unwrap().is_ok());
+        worker.join().unwrap();
+        let _ = fs::remove_dir_all(&cfg.state_dir);
     }
 
     #[test]
@@ -2317,7 +2671,9 @@ mod tests {
             } }
         }));
 
-        report(&cfg).unwrap();
+        let api = Api::new(&cfg.url());
+        let state = api.state().unwrap();
+        report(&cfg, &api, &state);
         assert_eq!(fake.put_count(), 1);
         let (name, body) = fake.last_put().unwrap();
         assert_eq!(name, "prompts");
@@ -2336,7 +2692,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("persistent team lead"));
-        report(&cfg).unwrap();
+        report(&cfg, &api, &state);
         assert_eq!(
             fake.put_count(),
             1,

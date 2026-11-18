@@ -54,9 +54,14 @@ pub struct Api {
 
 impl Api {
     pub fn new(base: &str) -> Self {
+        Self::with_timeout(base, Duration::from_secs(20))
+    }
+
+    /// A shorter bound for repeatable, read-only readiness probes.
+    pub(crate) fn with_timeout(base: &str, timeout: Duration) -> Self {
         let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(3))
-            .timeout(Duration::from_secs(20))
+            .timeout_connect(timeout.min(Duration::from_secs(3)))
+            .timeout(timeout)
             .build();
         Self {
             base: base.trim_end_matches('/').to_string(),

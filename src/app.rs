@@ -200,6 +200,8 @@ enum Msg {
             String,
         >,
     ),
+    Selected(String, Result<Vec<intake::ConversationEntry>, String>),
+    Sessions(u64, Result<Vec<String>, String>),
     Decisions(Vec<crate::model::Decision>),
     /// The service's model catalog, fetched with every poll so the view is never stale.
     Catalog(Box<Catalog>),
@@ -465,6 +467,10 @@ pub struct App {
     rx: Receiver<Msg>,
     /// Recovery runs off the UI thread; archive mutations wait until it finishes.
     recovering: bool,
+    /// A reply read before a conversation switch finishes must be applied afterwards.
+    deferred_replies: Vec<(Vec<intake::Reply>, intake::Tail)>,
+    sessions_loading: bool,
+    transcript_version: u64,
     /// Agent messages already shown in this run, so a poll cannot show one twice.
     seen: std::collections::HashSet<String>,
     /// Trigger ids of the instructions this console sent and has not seen judged yet, with when
@@ -476,8 +482,14 @@ pub struct App {
     replied: std::collections::HashSet<String>,
     /// When the transcript last polled the service for status and replies.
     polled: Instant,
+    /// Local replies use a shorter interval than remote status requests.
+    reply_polled: Instant,
     /// One poll at a time: a slow or unreachable service must not stack polling threads.
     polling: Arc<AtomicBool>,
+    /// File replies must not wait for slow management API calls.
+    reply_polling: Arc<AtomicBool>,
+    /// Keep health updates independent of ticket and decision requests.
+    status_polling: Arc<AtomicBool>,
     /// The last killed text, for Ctrl+Y, as in booth's editor.
     kill: String,
     /// Lines that arrived while the transcript was scrolled up.
@@ -631,12 +643,18 @@ impl App {
             tx,
             rx,
             recovering: false,
+            deferred_replies: Vec::new(),
+            sessions_loading: false,
+            transcript_version: 0,
             seen: std::collections::HashSet::new(),
             pending: std::collections::HashMap::new(),
             tracked: std::collections::HashMap::new(),
             replied: std::collections::HashSet::new(),
             polled: Instant::now(),
+            reply_polled: Instant::now(),
             polling: Arc::new(AtomicBool::new(false)),
+            reply_polling: Arc::new(AtomicBool::new(false)),
+            status_polling: Arc::new(AtomicBool::new(false)),
             kill: String::new(),
             unread: 0,
             tail,
@@ -660,19 +678,23 @@ impl App {
         self.refresh_status();
     }
 
-    fn restore_conversation(&mut self) {
-        if let Some(config) = self.config.clone() {
-            if let Ok(thread) = intake::portal_thread(&config) {
-                for entry in intake::conversation(&config, &thread) {
-                    if entry.role == "user" {
-                        self.push_input(&entry.text);
-                    } else if let Some(reply) = entry.reply {
-                        self.seen.insert(reply.id.clone());
-                        self.push_agent(reply);
-                    }
-                }
+    fn show_conversation(&mut self, entries: Vec<intake::ConversationEntry>) {
+        for entry in entries {
+            if entry.role == "user" {
+                self.push_input(&entry.text);
+            } else if let Some(reply) = entry.reply {
+                self.seen.insert(reply.id.clone());
+                self.push_agent(reply);
             }
         }
+    }
+
+    fn finish_conversation_load(&mut self) {
+        self.recovering = false;
+        for (replies, checkpoint) in std::mem::take(&mut self.deferred_replies) {
+            self.apply(Msg::Replies(replies, checkpoint));
+        }
+        self.refresh_status();
     }
 
     fn event_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
@@ -682,11 +704,7 @@ impl App {
             if self.quit {
                 return Ok(());
             }
-            if self.polled.elapsed() > Duration::from_secs(2) {
-                self.polled = Instant::now();
-                self.check_pending();
-                self.refresh_status();
-            }
+            self.poll_due();
             if event::poll(Duration::from_millis(120))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key),
@@ -694,6 +712,19 @@ impl App {
                     _ => {}
                 }
             }
+        }
+    }
+
+    /// Poll local replies more often without increasing the frequency of remote API requests.
+    fn poll_due(&mut self) {
+        if self.polled.elapsed() > Duration::from_secs(2) {
+            self.polled = Instant::now();
+            self.reply_polled = Instant::now();
+            self.check_pending();
+            self.refresh_status();
+        } else if self.reply_polled.elapsed() > Duration::from_millis(500) {
+            self.reply_polled = Instant::now();
+            self.refresh_replies();
         }
     }
 
@@ -728,17 +759,42 @@ impl App {
                     match result {
                         Ok((seen, entries)) => {
                             self.seen.extend(seen);
-                            for entry in entries {
-                                if entry.role == "user" {
-                                    self.push_input(&entry.text);
-                                } else if let Some(reply) = entry.reply {
-                                    self.push_agent(reply);
-                                }
-                            }
+                            self.show_conversation(entries);
                         }
                         Err(error) => self.push(warn_line(&error)),
                     }
-                    self.refresh_status();
+                    self.finish_conversation_load();
+                }
+                Msg::Selected(command, result) => {
+                    match result {
+                        Ok(entries) => {
+                            self.lines.clear();
+                            self.show_conversation(entries);
+                        }
+                        Err(error) => {
+                            self.push_input(&command);
+                            self.push(warn_line(&error));
+                        }
+                    }
+                    self.finish_conversation_load();
+                }
+                Msg::Sessions(version, result) => {
+                    self.sessions_loading = false;
+                    if version == self.transcript_version {
+                        match result {
+                            Ok(threads) if threads.is_empty() => {
+                                self.push(warn_line("no saved conversations yet"))
+                            }
+                            Ok(threads) => {
+                                for thread in threads {
+                                    self.push(Line::from(format!(
+                                        "  {thread} · /session {thread}"
+                                    )));
+                                }
+                            }
+                            Err(error) => self.push(warn_line(&error)),
+                        }
+                    }
                 }
                 Msg::Catalog(catalog) => self.catalog = *catalog,
                 Msg::Decisions(decisions) => {
@@ -782,6 +838,10 @@ impl App {
                 // transcript is the portal conversation; inspect the team with explicit commands.
                 Msg::Tickets(poll) => self.show_tickets_if_enabled(poll),
                 Msg::Replies(replies, checkpoint) => {
+                    if self.recovering {
+                        self.deferred_replies.push((replies, checkpoint));
+                        return;
+                    }
                     let mut saved = true;
                     for reply in replies {
                         if self.seen.contains(&reply.id) {
@@ -1279,40 +1339,87 @@ impl App {
         }
     }
 
+    fn refresh_replies(&self) {
+        // The outbox is local: keep it independent of slow or unavailable HTTP endpoints.
+        if !self.recovering && !self.reply_polling.swap(true, Ordering::SeqCst) {
+            let config = self.config.clone();
+            let tail = self.tail.clone();
+            let tx = self.tx.clone();
+            let polling = self.reply_polling.clone();
+            std::thread::spawn(move || {
+                if let Some(config) = &config {
+                    if let Ok(tail) = tail.lock() {
+                        let mut next = tail.clone();
+                        let replies = intake::replies_from(config, &mut next);
+                        if next != *tail {
+                            let _ = tx.send(Msg::Replies(replies, next));
+                        }
+                    }
+                }
+                polling.store(false, Ordering::SeqCst);
+            });
+        }
+    }
+
     fn refresh_status(&self) {
+        self.refresh_replies();
+        if !self.status_polling.swap(true, Ordering::SeqCst) {
+            let api = self.api.clone();
+            let tx = self.tx.clone();
+            let polling = self.status_polling.clone();
+            std::thread::spawn(move || {
+                let status = match api.state() {
+                    Ok(state) => {
+                        let mut status = Status::from_state(&api, &state);
+                        if status.input_blocked.is_none() {
+                            if let Ok(settings) = api.settings() {
+                                status.input_blocked = local_input_problem(&settings);
+                            }
+                        }
+                        status
+                    }
+                    Err(error) => {
+                        let text = error.to_string();
+                        let note = if text.contains("cannot reach") {
+                            format!("{} · booth up", clip_error(&text))
+                        } else {
+                            clip_error(&text)
+                        };
+                        Status::down(api.base(), note)
+                    }
+                };
+                let _ = tx.send(Msg::Status(status));
+                polling.store(false, Ordering::SeqCst);
+            });
+        }
         if self.polling.swap(true, Ordering::SeqCst) {
             return;
         }
         let polling = self.polling.clone();
-        let api = self.api.clone();
         let tx = self.tx.clone();
-        let config = if self.recovering {
-            None
-        } else {
-            self.config.clone()
-        };
         // Keep asking for judgements while any sent instruction is unresolved.
         let pending = !self.pending.is_empty();
         let tracked: Vec<String> = self.tracked.keys().cloned().collect();
         let polled = self.api.clone();
-        let tail = self.tail.clone();
         std::thread::spawn(move || {
-            if pending {
-                if let Ok(view) = polled.decisions() {
-                    let _ = tx.send(Msg::Decisions(view.items));
-                }
-            }
-            // Replies first: the ticket poll below then knows a report was already spoken. The
-            // tail remembers where the last read stopped, so a poll costs the new bytes only.
-            if let Some(config) = &config {
-                if let Ok(tail) = tail.lock() {
-                    let mut next = tail.clone();
-                    let replies = intake::replies_from(config, &mut next);
-                    if next != *tail {
-                        let _ = tx.send(Msg::Replies(replies, next));
+            // These reads are independent of the ticket page. Start them now so a slow ticket
+            // endpoint cannot delay decisions or the model picker.
+            let decision_job = pending.then(|| {
+                let api = polled.clone();
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    if let Ok(view) = api.decisions() {
+                        let _ = tx.send(Msg::Decisions(view.items));
                     }
+                })
+            });
+            let model_api = polled.clone();
+            let model_tx = tx.clone();
+            let model_job = std::thread::spawn(move || {
+                if let Ok(models) = model_api.models() {
+                    let _ = model_tx.send(Msg::Catalog(Box::new(Catalog::parse(&models))));
                 }
-            }
+            });
             // Open tickets are the header's counts as well as the followed tickets' stages.
             let mut rows = Vec::new();
             let mut open_total = 0;
@@ -1358,30 +1465,10 @@ impl App {
                     person,
                 }));
             }
-            if let Ok(models) = polled.models() {
-                let _ = tx.send(Msg::Catalog(Box::new(Catalog::parse(&models))));
+            if let Some(job) = decision_job {
+                let _ = job.join();
             }
-            let status = match api.state() {
-                Ok(state) => {
-                    let mut status = Status::from_state(&api, &state);
-                    if status.input_blocked.is_none() {
-                        if let Ok(settings) = api.settings() {
-                            status.input_blocked = local_input_problem(&settings);
-                        }
-                    }
-                    status
-                }
-                Err(error) => {
-                    let text = error.to_string();
-                    let note = if text.contains("cannot reach") {
-                        format!("{} · booth up", clip_error(&text))
-                    } else {
-                        clip_error(&text)
-                    };
-                    Status::down(api.base(), note)
-                }
-            };
-            let _ = tx.send(Msg::Status(status));
+            let _ = model_job.join();
             polling.store(false, Ordering::SeqCst);
         });
     }
@@ -1446,6 +1533,7 @@ impl App {
                     }
                 }
                 KeyCode::Char('l') => {
+                    self.transcript_version = self.transcript_version.wrapping_add(1);
                     self.lines.clear();
                     self.scroll = 0;
                 }
@@ -1835,34 +1923,33 @@ impl App {
         }
         if line == "/sessions" {
             self.push_input(&line);
-            if let Some(config) = &self.config {
-                let threads = intake::conversations(config);
-                if threads.is_empty() {
-                    self.push(warn_line("no saved conversations yet"));
-                } else {
-                    for thread in threads {
-                        self.push(Line::from(format!("  {thread} · /session {thread}")));
-                    }
-                }
+            if self.sessions_loading {
+                self.push(warn_line("conversation list is still loading"));
+            } else if let Some(config) = self.config.clone() {
+                self.sessions_loading = true;
+                let version = self.transcript_version;
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let _ = tx.send(Msg::Sessions(version, intake::conversations(&config)));
+                });
             }
             return;
         }
         if let Some(thread) = line.strip_prefix("/session ") {
-            if let Some(config) = &self.config {
-                match intake::select_conversation(config, thread.trim()) {
-                    Ok(()) => {
-                        self.lines.clear();
-                        self.restore_conversation();
-                    }
-                    Err(error) => {
-                        self.push_input(&line);
-                        self.push(warn_line(&error));
-                    }
-                }
+            if let Some(config) = self.config.clone() {
+                self.recovering = true;
+                self.transcript_version = self.transcript_version.wrapping_add(1);
+                let thread = thread.trim().to_owned();
+                let tx = self.tx.clone();
+                std::thread::spawn(move || {
+                    let result = intake::select_conversation(&config, &thread);
+                    let _ = tx.send(Msg::Selected(line, result));
+                });
             }
             return;
         }
         if line == "/new" || line == "/reset" {
+            self.transcript_version = self.transcript_version.wrapping_add(1);
             self.push(Line::from(vec![
                 Span::styled("  ❯ ", Style::default().fg(CYAN)),
                 Span::styled(line.clone(), Style::default().fg(TEXT)),
@@ -1929,6 +2016,7 @@ impl App {
                 return;
             }
             "/clear" => {
+                self.transcript_version = self.transcript_version.wrapping_add(1);
                 self.lines.clear();
                 self.scroll = 0;
                 self.follow = true;
@@ -4297,6 +4385,241 @@ mod transcript_tests {
     }
 
     #[test]
+    fn model_catalog_arrives_before_a_slow_ticket_page() {
+        use std::io::{Read, Write};
+        let (mut app, dir, _env) = console("catalog-before-tickets");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        app.api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+        app.pending.insert(
+            "local-slow".into(),
+            Awaiting {
+                sent: Instant::now(),
+                warned: false,
+                stale: false,
+            },
+        );
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        let release = Arc::new(AtomicBool::new(false));
+        let release_for_server = release.clone();
+        let server = std::thread::spawn(move || {
+            while !stopped.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let release = release_for_server.clone();
+                        std::thread::spawn(move || {
+                            let mut request = [0u8; 4096];
+                            let Ok(size) = stream.read(&mut request) else {
+                                return;
+                            };
+                            let line = String::from_utf8_lossy(&request[..size]);
+                            let path = line
+                                .lines()
+                                .next()
+                                .and_then(|line| line.split_whitespace().nth(1))
+                                .unwrap_or("");
+                            if path.contains("/tickets?") {
+                                while !release.load(Ordering::SeqCst) {
+                                    std::thread::sleep(Duration::from_millis(5));
+                                }
+                            }
+                            let body = if path.contains("/models") {
+                                r#"{"default":{"provider":"test","model":"fast"},"groups":[],"routableProviders":[]}"#
+                            } else if path.contains("/state") {
+                                r#"{"health":{"runtime":{"state":"ready"}},"load":{"maxWorkers":1},"setup":{}}"#
+                            } else if path.contains("/decisions?") {
+                                r#"{"items":[]}"#
+                            } else {
+                                "{}"
+                            };
+                            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                        });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        app.refresh_status();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut catalog = None;
+        while Instant::now() < deadline {
+            match app.rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(Msg::Catalog(value)) => {
+                    catalog = Some(value);
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => {}
+            }
+        }
+        stop.store(true, Ordering::SeqCst);
+        release.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        assert_eq!(
+            catalog.expect("catalog waited for tickets").default,
+            Some(("test".into(), "fast".into()))
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn service_status_arrives_while_decisions_are_stalled() {
+        use std::io::{Read, Write};
+        let (mut app, dir, _env) = console("status-while-decisions-stalled");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        app.api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let stopped = stop.clone();
+        let (started, decisions_started) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            while !stopped.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let started = started.clone();
+                        let stopped = stopped.clone();
+                        std::thread::spawn(move || {
+                            let mut request = [0u8; 4096];
+                            let Ok(n) = stream.read(&mut request) else {
+                                return;
+                            };
+                            let request = String::from_utf8_lossy(&request[..n]);
+                            if request.contains("/decisions?") {
+                                let _ = started.send(());
+                                while !stopped.load(Ordering::SeqCst) {
+                                    std::thread::sleep(Duration::from_millis(5));
+                                }
+                            }
+                            let body = if request.contains("/state ") {
+                                r#"{"health":{"runtime":{"state":"ready"}},"load":{"maxWorkers":1},"setup":{}}"#
+                            } else {
+                                "{}"
+                            };
+                            let _ = write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+                        });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        app.pending.insert(
+            "local-test".into(),
+            Awaiting {
+                sent: Instant::now(),
+                warned: false,
+                stale: false,
+            },
+        );
+        app.refresh_status();
+        let decision_wait = decisions_started.recv_timeout(Duration::from_secs(2));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut status = None;
+        while Instant::now() < deadline {
+            if let Ok(Msg::Status(received)) = app.rx.recv_timeout(Duration::from_millis(100)) {
+                status = Some(received);
+                break;
+            }
+        }
+        stop.store(true, Ordering::SeqCst);
+        server.join().unwrap();
+        assert!(decision_wait.is_ok(), "decisions request did not start");
+        assert_eq!(
+            status.expect("health update waited for decisions").runtime,
+            "ready"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn stale_session_list_does_not_reappear_after_clearing() {
+        let (mut app, dir, _env) = console("stale-sessions");
+        app.sessions_loading = true;
+        let version = app.transcript_version;
+        app.input = "/clear".into();
+        app.submit();
+        app.apply(Msg::Sessions(version, Ok(vec!["old-thread".into()])));
+        assert!(!app.sessions_loading);
+        assert!(!text(&app).contains("old-thread"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn sessions_reports_archive_read_failure() {
+        let (mut app, dir, _env) = console("sessions-read-error");
+        std::fs::create_dir(dir.join("booth-conversations.jsonl")).unwrap();
+        app.input = "/sessions".into();
+        app.submit();
+        while app.sessions_loading {
+            let msg = app.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            app.apply(msg);
+        }
+        assert!(text(&app).contains("cannot read"));
+        assert!(!text(&app).contains("no saved conversations yet"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_reply_timer_does_not_wait_for_the_remote_poll_interval() {
+        let (mut app, dir, _env) = console("reply-short-interval");
+        std::fs::write(
+            dir.join("booth-outbox.jsonl"),
+            "{\"id\":\"reply\",\"text\":\"arrived\"}\n",
+        )
+        .unwrap();
+        app.polled = Instant::now();
+        app.reply_polled = Instant::now() - Duration::from_millis(600);
+        app.poll_due();
+        match app.rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Msg::Replies(replies, _)) => assert_eq!(replies[0].text, "arrived"),
+            _ => panic!("the shorter local reply timer did not poll"),
+        }
+        assert!(!app.polling.load(Ordering::SeqCst));
+        assert!(!app.status_polling.load(Ordering::SeqCst));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn local_replies_arrive_while_the_management_api_is_stalled() {
+        let (mut app, dir, _env) = console("reply-while-api-stalled");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        app.api = Api::new(&format!("http://{}", listener.local_addr().unwrap()));
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let server = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            let _ = wait.recv_timeout(Duration::from_secs(5));
+        });
+        app.pending.insert(
+            "local-test".into(),
+            Awaiting {
+                sent: Instant::now(),
+                warned: false,
+                stale: false,
+            },
+        );
+        std::fs::write(
+            dir.join("booth-outbox.jsonl"),
+            "{\"id\":\"reply\",\"text\":\"arrived\"}\n",
+        )
+        .unwrap();
+        app.refresh_status();
+        let message = app.rx.recv_timeout(Duration::from_secs(1));
+        release.send(()).unwrap();
+        server.join().unwrap();
+        match message {
+            Ok(Msg::Replies(replies, _)) => assert_eq!(replies[0].text, "arrived"),
+            _ => panic!("local reply waited for the stalled API"),
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn recovering_preserves_draft_and_allows_other_commands() {
         let (mut app, dir, _env) = console("recovering-draft");
         app.recovering = true;
@@ -4314,6 +4637,30 @@ mod transcript_tests {
         app.input = "message while loading".into();
         app.submit();
         assert!(dir.join("booth-inbox.jsonl").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reply_read_during_session_switch_is_delivered_after_the_switch() {
+        let (mut app, dir, _env) = console("reply-during-switch");
+        let cfg = app.config.clone().unwrap();
+        let thread = intake::portal_thread(&cfg).unwrap();
+        app.recovering = true;
+        let reply = intake::Reply {
+            id: "during-switch".into(),
+            kind: "reply".into(),
+            text: "arrived during switch".into(),
+            ticket: None,
+            thread: Some(thread.clone()),
+        };
+        app.apply(Msg::Replies(vec![reply], intake::Tail::fresh()));
+        assert!(!app.seen.contains("during-switch"));
+        assert_eq!(app.deferred_replies.len(), 1);
+        app.apply(Msg::Selected("/session test".into(), Ok(Vec::new())));
+        assert!(!app.recovering);
+        assert!(app.deferred_replies.is_empty());
+        assert!(text(&app).contains("arrived during switch"));
+        assert_eq!(intake::conversation(&cfg, &thread).len(), 1);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4379,9 +4726,17 @@ mod transcript_tests {
         assert!(!text(&fresh).contains("first message"));
         fresh.input = "/sessions".into();
         fresh.submit();
+        while fresh.sessions_loading {
+            let msg = fresh.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            fresh.apply(msg);
+        }
         assert!(text(&fresh).contains("/session portal-"));
-        fresh.input = format!("/session {}", intake::conversations(&config)[0]);
+        fresh.input = format!("/session {}", intake::conversations(&config).unwrap()[0]);
         fresh.submit();
+        while fresh.recovering {
+            let msg = fresh.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            fresh.apply(msg);
+        }
         assert!(text(&fresh).contains("first message"));
         assert!(text(&fresh).contains("first answer"));
         assert!(dir.join("booth-conversations.jsonl").exists());

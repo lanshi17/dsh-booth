@@ -1,6 +1,6 @@
 # dsh-booth
 
-`booth` is an independent terminal console for the
+`booth` is an independent terminal console and component supervisor for the
 [dsh-superagent](https://github.com/deepseek-ai/dsh-superagent-prototype) team. Its Rust
 terminal interface, configuration, history and process lifecycle belong to booth; conversations
 are handled by the team's portal agent and delegated workers. It does not launch or share a
@@ -15,8 +15,17 @@ create the DSH profile and link the team bundle with `local-source/`; `booth up`
 detached and waits for the management API. The submodule remains an MIT-licensed bundle with its
 own runtime.
 
-The console itself talks only to the bundle's loopback management API (`/orchestrator/api/*`),
-so a DSH upgrade does not break it as long as the routes do.
+The console talks to the bundle's loopback management API (`/orchestrator/api/*`). The booth
+supervisor is a separate, stable loopback process on port `3081` by default. A component registers
+its id, process id and management URL with a short lease (`/supervisor/v1/components/*`), then
+renews that lease until it exits. `dsh-superagent` is one such component: it runs in its own DSH
+process, so `booth restart` replaces only that component while the supervisor and its registry stay
+alive. Other components can use the same registration contract without becoming booth plugins.
+Registration is authenticated by the private `booth-supervisor.token` in the state directory.
+The register body is `{ "id", "pid", "apiUrl", "version" }`; a component renews
+`POST /supervisor/v1/components/<id>/heartbeat` every few seconds and may explicitly call
+`.../<id>/unregister` during graceful shutdown. `booth components --json` exposes the current
+lease table.
 
 The API is guarded by `sameOrigin()` in `src/app/http.ts`: the `Host` header must be
 `127.0.0.1:<port>` or `localhost:<port>`, and every request carries
@@ -65,6 +74,7 @@ Updating the bundle:
 git submodule update --remote superagent
 booth init        # rebuild
 booth restart
+booth components                    # registered components and their leases
 ```
 
 ## Try it without a service
@@ -85,8 +95,10 @@ conversations and `/session <id>` restores one. `/new` starts another conversati
 the earlier ones. Existing messages are recovered from `booth-inbox.jsonl` and
 `booth-outbox.jsonl`; their original files are retained. Older records without timestamps cannot
 always be reconstructed in their original interleaved order.
-The archive is independent of DSH's model sessions, but the agent still needs DSH and
-dsh-superagent running to process messages.
+The archive is independent of DSH's model sessions. The agent process registers with booth's
+supervisor when its management API is ready; if it crashes, its lease expires and the supervisor
+does not retain a phantom component. `booth down` unregisters the component and stops the
+supervisor after the component has exited.
 
 ```sh
 booth                              # the console
@@ -94,6 +106,7 @@ booth init                         # prepare the profile and build (once)
 booth up                           # start the service in the background
 booth down                         # stop the service booth started
 booth restart
+booth components                   # list the registered component leases
 booth logs --lines 40
 booth wechat login                # connect an iLink bot from the terminal
 booth wechat allow <微信用户 ID>  # allow another sender to contact the portal
@@ -149,6 +162,7 @@ still receives live @mentions, but `booth sources` reports the failed backfill.
 | `BOOTH_PROFILE` | `superagent` | DSH profile name |
 | `BOOTH_STATE_DIR` | `$DSH_HOME/state/superagent` | Database, `booth.pid`, `booth.log` |
 | `BOOTH_SUPERAGENT_DIR` | the repository's `superagent/` | Checkout to build and link |
+| `BOOTH_SUPERVISOR_PORT` | `3081` | Loopback supervisor registry port |
 | `FEISHU_APP_ID`, `FEISHU_APP_SECRET` | — | The app `booth feishu login` configures |
 | `DSH_HOME` | `~/.dsh` | Where profiles and state live |
 
@@ -359,9 +373,13 @@ the default, then renamed to `provider.json.migrated` and the stale `provider.ym
 - **Decoding is tolerant on purpose.** The bundle is a research prototype whose views grow;
   fields this console does not render stay `serde_json::Value`, and unknown fields are
   ignored. A new view field does not break the console, only a renamed route does.
-- **Two-second poll.** The header refreshes on start and after each command, and a light timer
-  rereads `/state` and the outbox every two seconds so acknowledgements and replies arrive
-  while you watch.
+- **Independent polling.** The header refreshes on start, after commands, and roughly every
+  two seconds. The console checks its local outbox roughly every 500 ms, independently of slow
+  management API requests, so replies can appear while the service status is still loading.
+  During service setup, independent read-only account checks start together where their inputs
+  allow it: GitHub account/repository checks, and Feishu strict-mode/bot checks after auth. A
+  prerequisite failure cancels the speculative check while preserving the original error. During
+  the console poll, decisions and model catalog reads also run alongside ticket status.
 - **Work enters through a Source, never a hidden route.** The management API has no "submit a
   request" route, and booth does not invent one: `local-source/` is a real Source kind, loaded
   by the profile next to `dsh-superagent/github-watch`, so instructions pass the same Policy
