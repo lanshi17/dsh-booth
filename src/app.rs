@@ -191,6 +191,15 @@ enum Msg {
     Error(String),
     Status(Status),
     Replies(Vec<intake::Reply>, intake::Tail),
+    Recovered(
+        Result<
+            (
+                std::collections::HashSet<String>,
+                Vec<intake::ConversationEntry>,
+            ),
+            String,
+        >,
+    ),
     Decisions(Vec<crate::model::Decision>),
     /// The service's model catalog, fetched with every poll so the view is never stale.
     Catalog(Box<Catalog>),
@@ -454,6 +463,8 @@ pub struct App {
     modal: Option<Modal>,
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
+    /// Recovery runs off the UI thread; archive mutations wait until it finishes.
+    recovering: bool,
     /// Agent messages already shown in this run, so a poll cannot show one twice.
     seen: std::collections::HashSet<String>,
     /// Trigger ids of the instructions this console sent and has not seen judged yet, with when
@@ -482,7 +493,7 @@ pub struct App {
     show_worker_details: bool,
 }
 
-pub fn run(api: Api) -> Result<(), String> {
+pub fn run(api: Api, start_service: bool) -> Result<(), String> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(
             "the console needs a terminal; use `booth <command>` for one-shot output".into(),
@@ -493,6 +504,13 @@ pub fn run(api: Api) -> Result<(), String> {
     let mut guard = TerminalGuard(true);
     let mut terminal = setup_terminal().map_err(|error| error.to_string())?;
     let mut app = App::new(api);
+    if start_service {
+        app.start_service_in_background();
+    }
+    // Show the console before restoring potentially large on-disk histories.
+    terminal
+        .draw(|frame| app.draw(frame))
+        .map_err(|error| error.to_string())?;
     app.bootstrap();
     let result = app
         .event_loop(&mut terminal)
@@ -548,6 +566,36 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
 }
 
 impl App {
+    /// Keep service initialization off the UI thread, and send failures back to the console.
+    fn start_service_in_background(&self) {
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = std::env::current_exe()
+                .map_err(|error| format!("cannot locate booth: {error}"))
+                .and_then(|exe| {
+                    std::process::Command::new(exe)
+                        .arg("up")
+                        .output()
+                        .map_err(|error| format!("cannot start service: {error}"))
+                })
+                .and_then(|output| {
+                    if output.status.success() {
+                        Ok(())
+                    } else {
+                        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                        Err(if error.is_empty() {
+                            format!("service startup failed ({})", output.status)
+                        } else {
+                            error
+                        })
+                    }
+                });
+            if let Err(error) = result {
+                let _ = tx.send(Msg::Error(error));
+            }
+        });
+    }
+
     fn new(api: Api) -> Self {
         let (tx, rx) = mpsc::channel();
         let status = Status::connecting(api.base());
@@ -582,6 +630,7 @@ impl App {
             started: Instant::now(),
             tx,
             rx,
+            recovering: false,
             seen: std::collections::HashSet::new(),
             pending: std::collections::HashMap::new(),
             tracked: std::collections::HashMap::new(),
@@ -599,7 +648,31 @@ impl App {
     }
 
     fn bootstrap(&mut self) {
+        if let Some(config) = self.config.clone() {
+            self.recovering = true;
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let result = intake::portal_thread(&config)
+                    .and_then(|thread| intake::recover_conversations(&config, &thread));
+                let _ = tx.send(Msg::Recovered(result));
+            });
+        }
         self.refresh_status();
+    }
+
+    fn restore_conversation(&mut self) {
+        if let Some(config) = self.config.clone() {
+            if let Ok(thread) = intake::portal_thread(&config) {
+                for entry in intake::conversation(&config, &thread) {
+                    if entry.role == "user" {
+                        self.push_input(&entry.text);
+                    } else if let Some(reply) = entry.reply {
+                        self.seen.insert(reply.id.clone());
+                        self.push_agent(reply);
+                    }
+                }
+            }
+        }
     }
 
     fn event_loop(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Result<()> {
@@ -650,6 +723,23 @@ impl App {
                     )));
                 }
                 Msg::Status(status) => self.status = status,
+                Msg::Recovered(result) => {
+                    self.recovering = false;
+                    match result {
+                        Ok((seen, entries)) => {
+                            self.seen.extend(seen);
+                            for entry in entries {
+                                if entry.role == "user" {
+                                    self.push_input(&entry.text);
+                                } else if let Some(reply) = entry.reply {
+                                    self.push_agent(reply);
+                                }
+                            }
+                        }
+                        Err(error) => self.push(warn_line(&error)),
+                    }
+                    self.refresh_status();
+                }
                 Msg::Catalog(catalog) => self.catalog = *catalog,
                 Msg::Decisions(decisions) => {
                     for decision in decisions {
@@ -692,18 +782,46 @@ impl App {
                 // transcript is the portal conversation; inspect the team with explicit commands.
                 Msg::Tickets(poll) => self.show_tickets_if_enabled(poll),
                 Msg::Replies(replies, checkpoint) => {
-                    let mut fresh = Vec::new();
+                    let mut saved = true;
                     for reply in replies {
-                        if self.seen.insert(reply.id.clone()) {
-                            fresh.push(reply);
+                        if self.seen.contains(&reply.id) {
+                            continue;
+                        }
+                        if let Some(config) = &self.config {
+                            let entry = intake::ConversationEntry {
+                                thread: reply
+                                    .thread
+                                    .clone()
+                                    .filter(|thread| !thread.is_empty())
+                                    .unwrap_or_else(|| "legacy-unthreaded".into()),
+                                id: reply.id.clone(),
+                                role: "agent".into(),
+                                text: reply.text.clone(),
+                                reply: Some(reply.clone()),
+                            };
+                            if let Err(error) = intake::archive(config, &entry) {
+                                self.push(warn_line(&error));
+                                saved = false;
+                                continue;
+                            }
+                        }
+                        self.seen.insert(reply.id.clone());
+                        let active = self
+                            .config
+                            .as_ref()
+                            .and_then(|cfg| intake::portal_thread(cfg).ok());
+                        if reply.thread.is_none() || reply.thread.as_ref() == active.as_ref() {
+                            self.push_agent(reply);
                         }
                     }
-                    for reply in fresh {
-                        self.push_agent(reply);
-                    }
                     if let Some(config) = &self.config {
-                        if let Err(error) = checkpoint.save(config) {
-                            self.push(warn_line(&error));
+                        if saved {
+                            if let Ok(mut tail) = self.tail.lock() {
+                                *tail = checkpoint.clone();
+                            }
+                            if let Err(error) = checkpoint.save(config) {
+                                self.push(warn_line(&error));
+                            }
                         }
                     }
                 }
@@ -1043,6 +1161,16 @@ impl App {
         };
         match intake::send(&config, &text, Some(&thread)) {
             Ok(id) => {
+                let entry = intake::ConversationEntry {
+                    thread,
+                    id: id.clone(),
+                    role: "user".into(),
+                    text: text.clone(),
+                    reply: None,
+                };
+                if let Err(error) = intake::archive(&config, &entry) {
+                    self.push(warn_line(&error));
+                }
                 self.pending.insert(
                     format!("local-{id}"),
                     Awaiting {
@@ -1158,7 +1286,11 @@ impl App {
         let polling = self.polling.clone();
         let api = self.api.clone();
         let tx = self.tx.clone();
-        let config = self.config.clone();
+        let config = if self.recovering {
+            None
+        } else {
+            self.config.clone()
+        };
         // Keep asking for judgements while any sent instruction is unresolved.
         let pending = !self.pending.is_empty();
         let tracked: Vec<String> = self.tracked.keys().cloned().collect();
@@ -1173,10 +1305,11 @@ impl App {
             // Replies first: the ticket poll below then knows a report was already spoken. The
             // tail remembers where the last read stopped, so a poll costs the new bytes only.
             if let Some(config) = &config {
-                if let Ok(mut tail) = tail.lock() {
-                    let replies = intake::replies_from(config, &mut tail);
-                    if !replies.is_empty() {
-                        let _ = tx.send(Msg::Replies(replies, tail.clone()));
+                if let Ok(tail) = tail.lock() {
+                    let mut next = tail.clone();
+                    let replies = intake::replies_from(config, &mut next);
+                    if next != *tail {
+                        let _ = tx.send(Msg::Replies(replies, next));
                     }
                 }
             }
@@ -1654,6 +1787,22 @@ impl App {
 
     fn submit(&mut self) {
         let line = self.input.trim().to_string();
+        if self.recovering
+            && (!line.starts_with('/')
+                || line == "/sessions"
+                || line == "/session"
+                || line.starts_with("/session ")
+                || line == "/new"
+                || line == "/reset"
+                || line == "/send"
+                || line.starts_with("/send "))
+            && !line.is_empty()
+        {
+            self.push(warn_line(
+                "restoring conversation history; your draft is preserved",
+            ));
+            return;
+        }
         self.input.clear();
         self.cursor = 0;
         self.selection = 0;
@@ -1682,6 +1831,35 @@ impl App {
         }
         if line == "/history" {
             self.open_history();
+            return;
+        }
+        if line == "/sessions" {
+            self.push_input(&line);
+            if let Some(config) = &self.config {
+                let threads = intake::conversations(config);
+                if threads.is_empty() {
+                    self.push(warn_line("no saved conversations yet"));
+                } else {
+                    for thread in threads {
+                        self.push(Line::from(format!("  {thread} · /session {thread}")));
+                    }
+                }
+            }
+            return;
+        }
+        if let Some(thread) = line.strip_prefix("/session ") {
+            if let Some(config) = &self.config {
+                match intake::select_conversation(config, thread.trim()) {
+                    Ok(()) => {
+                        self.lines.clear();
+                        self.restore_conversation();
+                    }
+                    Err(error) => {
+                        self.push_input(&line);
+                        self.push(warn_line(&error));
+                    }
+                }
+            }
             return;
         }
         if line == "/new" || line == "/reset" {
@@ -1757,6 +1935,11 @@ impl App {
                 return;
             }
             "/refresh" => {
+                self.push_input(&line);
+                self.push(Line::from(Span::styled(
+                    "  ↻ refreshing service status",
+                    Style::default().fg(FAINT),
+                )));
                 self.refresh_status();
                 return;
             }
@@ -2955,7 +3138,7 @@ const KEYS: &[(&str, &str)] = &[
 ];
 
 fn draw_keys(frame: &mut Frame, area: Rect) {
-    let width = area.width.saturating_sub(8).clamp(40, 66).min(area.width);
+    let width = area.width.saturating_sub(8).clamp(40, 78).min(area.width);
     let height = (KEYS.len() as u16 + 3).min(area.height);
     let rect = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
@@ -3145,7 +3328,7 @@ fn draw_model(frame: &mut Frame, area: Rect, pick: &ModelPick, catalog: &Catalog
     let mut lines: Vec<L> = Vec::new();
     if catalog.choices.is_empty() {
         lines.push(Line::from(Span::styled(
-            " the service lists no model — is it running?",
+            " no models available · use /login to configure a provider",
             Style::default().fg(DIM),
         )));
     }
@@ -4110,6 +4293,98 @@ mod transcript_tests {
         assert_eq!(entries[0]["thread"], entries[1]["thread"]);
         assert_ne!(entries[0]["thread"], "old-worker");
         assert_eq!(app.pending.len(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn recovering_preserves_draft_and_allows_other_commands() {
+        let (mut app, dir, _env) = console("recovering-draft");
+        app.recovering = true;
+        app.input = "message while loading".into();
+        app.cursor = app.input.chars().count();
+        app.submit();
+        assert_eq!(app.input, "message while loading");
+        assert!(!dir.join("booth-inbox.jsonl").exists());
+        app.input = "/keys".into();
+        app.submit();
+        assert!(matches!(app.modal, Some(Modal::Keys)));
+        app.modal = None;
+        app.apply(Msg::Recovered(Ok((Default::default(), Vec::new()))));
+        assert!(!app.recovering);
+        app.input = "message while loading".into();
+        app.submit();
+        assert!(dir.join("booth-inbox.jsonl").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn failed_archive_keeps_reply_available_for_retry() {
+        let (mut app, dir, _env) = console("reply-archive-retry");
+        let config = app.config.clone().unwrap();
+        let path = dir.join("booth-outbox.jsonl");
+        std::fs::write(
+            &path,
+            "{\"id\":\"retry\",\"text\":\"kept\",\"thread\":\"other\"}\n",
+        )
+        .unwrap();
+        let mut next = intake::Tail::fresh();
+        let replies = intake::replies_from(&config, &mut next);
+        let archive = dir.join("booth-conversations.jsonl");
+        std::fs::create_dir(&archive).unwrap();
+        app.apply(Msg::Replies(replies, next.clone()));
+        assert!(!app.seen.contains("retry"));
+        assert!(intake::replies_from(&config, &mut app.tail.lock().unwrap().clone()).len() == 1);
+        assert!(!dir.join("booth-outbox-cursor.json").exists());
+        std::fs::remove_dir(&archive).unwrap();
+        let mut retry = app.tail.lock().unwrap().clone();
+        let replies = intake::replies_from(&config, &mut retry);
+        app.apply(Msg::Replies(replies, retry));
+        assert!(app.seen.contains("retry"));
+        assert_eq!(intake::conversation(&config, "other").len(), 1);
+        assert!(!text(&app).contains("kept"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn conversation_is_restored_without_replaying_other_threads() {
+        let (mut app, dir, _env) = console("restore-conversation");
+        app.input = "first message".into();
+        app.submit();
+        let config = app.config.clone().unwrap();
+        let thread = intake::portal_thread(&config).unwrap();
+        let reply = intake::Reply {
+            id: "reply-1".into(),
+            kind: "reply".into(),
+            text: "first answer".into(),
+            ticket: None,
+            thread: Some(thread),
+        };
+        app.apply(Msg::Replies(vec![reply], intake::Tail::fresh()));
+        let mut resumed = App::new(Api::new("http://127.0.0.1:1"));
+        resumed.bootstrap();
+        while resumed.recovering {
+            let msg = resumed.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            resumed.apply(msg);
+        }
+        assert!(text(&resumed).contains("first message"));
+        assert!(text(&resumed).contains("first answer"));
+        assert!(resumed.seen.contains("reply-1"));
+        intake::reset_portal_thread(&config).unwrap();
+        let mut fresh = App::new(Api::new("http://127.0.0.1:1"));
+        fresh.bootstrap();
+        while fresh.recovering {
+            let msg = fresh.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            fresh.apply(msg);
+        }
+        assert!(!text(&fresh).contains("first message"));
+        fresh.input = "/sessions".into();
+        fresh.submit();
+        assert!(text(&fresh).contains("/session portal-"));
+        fresh.input = format!("/session {}", intake::conversations(&config)[0]);
+        fresh.submit();
+        assert!(text(&fresh).contains("first message"));
+        assert!(text(&fresh).contains("first answer"));
+        assert!(dir.join("booth-conversations.jsonl").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

@@ -10,11 +10,12 @@ use crate::format::L;
 use crate::oauth;
 use crate::provider::Catalog;
 use crate::service;
+use fs2::FileExt;
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span};
 use serde_json::{json, Value};
 use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::Command;
 use std::thread::sleep;
@@ -83,12 +84,293 @@ pub fn reset_portal_thread(cfg: &service::Config) -> Result<(), String> {
 }
 
 /// One agent message the console shows: an acknowledgement, a reply, or a notice.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Reply {
     pub id: String,
     pub kind: String,
     pub text: String,
     pub ticket: Option<String>,
     pub thread: Option<String>,
+}
+
+/// A console-owned record, separate from DSH's session and model state.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct ConversationEntry {
+    pub thread: String,
+    pub id: String,
+    pub role: String,
+    pub text: String,
+    pub reply: Option<Reply>,
+}
+
+fn open_archive(cfg: &service::Config) -> Result<std::fs::File, String> {
+    service::create_private_state_dir(cfg)?;
+    let path = cfg.state_dir.join("booth-conversations.jsonl");
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(&path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| format!("cannot protect {}: {error}", path.display()))?;
+    }
+    file.lock_exclusive()
+        .map_err(|error| format!("cannot lock {}: {error}", path.display()))?;
+    Ok(file)
+}
+
+fn append_archive(file: &mut std::fs::File, entry: &ConversationEntry) -> Result<(), String> {
+    if ends_mid_record(file).map_err(|error| error.to_string())? {
+        file.write_all(b"\n").map_err(|error| error.to_string())?;
+    }
+    let mut bytes = serde_json::to_vec(entry).map_err(|error| error.to_string())?;
+    bytes.push(b'\n');
+    file.write_all(&bytes)
+        .map_err(|error| format!("cannot save conversation: {error}"))
+}
+
+#[derive(Default)]
+struct ArchiveIndex {
+    offset: u64,
+    witness: Vec<u8>,
+    ids: std::collections::HashSet<(String, String)>,
+}
+
+fn archive_indexes() -> &'static std::sync::Mutex<std::collections::HashMap<PathBuf, ArchiveIndex>>
+{
+    static INDEXES: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<PathBuf, ArchiveIndex>>,
+    > = std::sync::OnceLock::new();
+    INDEXES.get_or_init(Default::default)
+}
+
+impl ArchiveIndex {
+    /// Called with the file lock held. Other consoles may have appended since our last write.
+    fn refresh(&mut self, file: &mut std::fs::File) -> std::io::Result<()> {
+        let len = file.metadata()?.len();
+        if len < self.offset
+            || (self.offset > 0
+                && Tail::bytes_before(file, self.offset).as_ref() != Some(&self.witness))
+        {
+            *self = Self::default();
+        }
+        file.seek(SeekFrom::Start(self.offset))?;
+        let mut reader = BufReader::new(&mut *file);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            let count = reader.read_until(b'\n', &mut line)?;
+            if count == 0 {
+                break;
+            }
+            if let Ok(entry) = serde_json::from_slice::<ConversationEntry>(&line) {
+                self.ids.insert((entry.role, entry.id));
+            }
+            if !line.ends_with(b"\n") {
+                break;
+            }
+            self.offset += count as u64;
+        }
+        self.witness = Tail::bytes_before(file, self.offset)
+            .ok_or_else(|| std::io::Error::other("cannot read archive witness"))?;
+        Ok(())
+    }
+}
+
+pub fn archive(cfg: &service::Config, entry: &ConversationEntry) -> Result<(), String> {
+    let mut file = open_archive(cfg)?;
+    let mut indexes = archive_indexes()
+        .lock()
+        .map_err(|error| error.to_string())?;
+    let index = indexes
+        .entry(cfg.state_dir.join("booth-conversations.jsonl"))
+        .or_default();
+    if let Err(error) = index.refresh(&mut file) {
+        *index = ArchiveIndex::default();
+        return Err(format!("cannot read conversation archive: {error}"));
+    }
+    let key = (entry.role.clone(), entry.id.clone());
+    if index.ids.contains(&key) {
+        return Ok(());
+    }
+    if let Err(error) = append_archive(&mut file, entry) {
+        *index = ArchiveIndex::default();
+        return Err(error);
+    }
+    index.ids.insert(key);
+    index.offset = file.metadata().map_err(|error| error.to_string())?.len();
+    index.witness = Tail::bytes_before(&mut file, index.offset)
+        .ok_or_else(|| "cannot read archive witness".to_owned())?;
+    Ok(())
+}
+
+/// Recover complete records from the source logs. A retry skips records already archived.
+/// Streaming and reusing the archive file keep a large first import bounded and fast.
+pub fn recover_conversations(
+    cfg: &service::Config,
+    thread: &str,
+) -> Result<(std::collections::HashSet<String>, Vec<ConversationEntry>), String> {
+    use std::collections::HashSet;
+    let mut entries = Vec::new();
+    let archive_path = cfg.state_dir.join("booth-conversations.jsonl");
+    let mut archive_file = open_archive(cfg)?;
+    let mut seen = HashSet::new();
+    {
+        let mut reader = BufReader::new(&mut archive_file);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if reader
+                .read_until(b'\n', &mut line)
+                .map_err(|error| format!("cannot read {}: {error}", archive_path.display()))?
+                == 0
+            {
+                break;
+            }
+            if let Ok(entry) = serde_json::from_slice::<ConversationEntry>(&line) {
+                if seen.insert((entry.role.clone(), entry.id.clone())) && entry.thread == thread {
+                    entries.push(entry);
+                }
+            }
+        }
+    }
+    for (path, role) in [(inbox(cfg), "user"), (outbox(cfg), "agent")] {
+        let file = match std::fs::File::open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(format!("cannot read {}: {error}", path.display())),
+        };
+        let mut reader = BufReader::new(file);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if reader
+                .read_until(b'\n', &mut line)
+                .map_err(|error| format!("cannot read {}: {error}", path.display()))?
+                == 0
+            {
+                break;
+            }
+            // A writer may still be completing the last line.
+            if !line.ends_with(b"\n") {
+                break;
+            }
+            let Ok(value) = serde_json::from_slice::<Value>(&line) else {
+                continue;
+            };
+            let (Some(id), Some(body)) = (
+                value.get("id").and_then(Value::as_str),
+                value.get("text").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if id.is_empty() || seen.contains(&(role.to_owned(), id.to_owned())) {
+                continue;
+            }
+            let entry_thread = value
+                .get("thread")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    if role == "user" {
+                        format!("t-{id}")
+                    } else {
+                        "legacy-unthreaded".into()
+                    }
+                });
+            let reply = if role == "agent" {
+                parse_replies(&String::from_utf8_lossy(&line))
+                    .into_iter()
+                    .next()
+            } else {
+                None
+            };
+            let entry = ConversationEntry {
+                thread: entry_thread,
+                id: id.into(),
+                role: role.into(),
+                text: body.into(),
+                reply,
+            };
+            append_archive(&mut archive_file, &entry)?;
+            if entry.thread == thread {
+                entries.push(entry);
+            }
+            seen.insert((role.into(), id.into()));
+        }
+    }
+    // Reuse the scan for the first live write instead of parsing the archive again.
+    if !ends_mid_record(&mut archive_file).map_err(|error| error.to_string())? {
+        let offset = archive_file
+            .metadata()
+            .map_err(|error| error.to_string())?
+            .len();
+        let witness = Tail::bytes_before(&mut archive_file, offset)
+            .ok_or_else(|| "cannot read archive witness".to_owned())?;
+        let mut indexes = archive_indexes()
+            .lock()
+            .map_err(|error| error.to_string())?;
+        indexes.insert(
+            archive_path,
+            ArchiveIndex {
+                offset,
+                witness,
+                ids: seen.clone(),
+            },
+        );
+    }
+    Ok((
+        seen.into_iter()
+            .filter_map(|(role, id)| (role == "agent").then_some(id))
+            .collect(),
+        entries,
+    ))
+}
+
+pub fn conversation(cfg: &service::Config, thread: &str) -> Vec<ConversationEntry> {
+    std::fs::read_to_string(cfg.state_dir.join("booth-conversations.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<ConversationEntry>(line).ok())
+        .filter(|entry| entry.thread == thread)
+        .collect()
+}
+
+pub fn conversations(cfg: &service::Config) -> Vec<String> {
+    let mut threads = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for entry in std::fs::read_to_string(cfg.state_dir.join("booth-conversations.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<ConversationEntry>(line).ok())
+    {
+        if seen.insert(entry.thread.clone()) {
+            threads.push(entry.thread);
+        }
+    }
+    threads.reverse();
+    threads
+}
+
+pub fn select_conversation(cfg: &service::Config, thread: &str) -> Result<(), String> {
+    if !conversations(cfg)
+        .iter()
+        .any(|candidate| candidate == thread)
+    {
+        return Err("conversation not found; use /sessions to list saved conversations".into());
+    }
+    let path = cfg.state_dir.join("booth-conversation");
+    let temp = cfg
+        .state_dir
+        .join(format!(".booth-conversation-{}", oauth::uuid_v4()));
+    std::fs::write(&temp, thread)
+        .map_err(|error| format!("cannot select conversation: {error}"))?;
+    std::fs::rename(&temp, &path).map_err(|error| format!("cannot select conversation: {error}"))
 }
 
 /// Appends one instruction for the Source and returns its id; `thread` continues a ticket's thread.
@@ -147,7 +429,7 @@ const WITNESS: usize = 32;
 /// old one, so an offset kept from the old file would land in the middle of the new one. The
 /// bytes just before the offset are the witness — an append leaves them in place, a rewrite
 /// does not — so the next read knows whether to continue or start over.
-#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Tail {
     offset: u64,
     witness: Vec<u8>,
@@ -1059,6 +1341,237 @@ mod tests {
         assert_eq!(fresh[0].id, "new-1");
         assert_eq!(fresh[0].text, "hello");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn archive_index_tracks_external_appends_and_rewrites() {
+        let cfg = config(scratch("archive-index"));
+        let entry = |id: &str| ConversationEntry {
+            thread: "t".into(),
+            id: id.into(),
+            role: "user".into(),
+            text: id.into(),
+            reply: None,
+        };
+        archive(&cfg, &entry("one")).unwrap();
+        let path = cfg.state_dir.join("booth-conversations.jsonl");
+        let other = serde_json::to_string(&entry("two")).unwrap() + "\n";
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(other.as_bytes())
+            .unwrap();
+        archive(&cfg, &entry("two")).unwrap();
+        assert_eq!(conversation(&cfg, "t").len(), 2);
+        std::fs::write(&path, serde_json::to_string(&entry("new")).unwrap() + "\n").unwrap();
+        archive(&cfg, &entry("one")).unwrap();
+        let ids: Vec<_> = conversation(&cfg, "t")
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect();
+        assert_eq!(ids, vec!["new", "one"]);
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    #[ignore = "manual performance measurement"]
+    fn measure_recovery_and_incremental_archive() {
+        let cfg = config(scratch("archive-benchmark"));
+        let body = (0..20_000)
+            .map(|id| {
+                format!("{{\"id\":\"old-{id}\",\"text\":\"example message\",\"thread\":\"t\"}}\n")
+            })
+            .collect::<String>();
+        std::fs::write(inbox(&cfg), body).unwrap();
+        let start = Instant::now();
+        let (_, entries) = recover_conversations(&cfg, "t").unwrap();
+        let recovery = start.elapsed();
+        assert_eq!(entries.len(), 20_000);
+        let start = Instant::now();
+        for id in 0..500 {
+            archive(
+                &cfg,
+                &ConversationEntry {
+                    thread: "t".into(),
+                    id: format!("new-{id}"),
+                    role: "user".into(),
+                    text: "example".into(),
+                    reply: None,
+                },
+            )
+            .unwrap();
+        }
+        eprintln!(
+            "20,000 imported records: {recovery:?}; 500 incremental writes: {:?}",
+            start.elapsed()
+        );
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn separate_processes_serialize_recovery_and_writes() {
+        const CHILD_DIR: &str = "BOOTH_TEST_ARCHIVE_CHILD_DIR";
+        if let Some(dir) = std::env::var_os(CHILD_DIR) {
+            let cfg = config(PathBuf::from(dir));
+            recover_conversations(&cfg, "t").unwrap();
+            for id in 0..40 {
+                archive(
+                    &cfg,
+                    &ConversationEntry {
+                        thread: "t".into(),
+                        id: format!("shared-{id}"),
+                        role: "user".into(),
+                        text: format!("message {id}"),
+                        reply: None,
+                    },
+                )
+                .unwrap();
+            }
+            return;
+        }
+        let dir = scratch("process-recovery");
+        let cfg = config(dir.clone());
+        let inbox_body = (0..200)
+            .map(|id| format!("{{\"id\":\"old-{id}\",\"text\":\"old\",\"thread\":\"t\"}}\n"))
+            .collect::<String>();
+        std::fs::write(inbox(&cfg), inbox_body).unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let mut children = Vec::new();
+        for _ in 0..4 {
+            children.push(
+                Command::new(&executable)
+                    .args([
+                        "--exact",
+                        "intake::tests::separate_processes_serialize_recovery_and_writes",
+                    ])
+                    .env(CHILD_DIR, &dir)
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap(),
+            );
+        }
+        for mut child in children {
+            assert!(child.wait().unwrap().success());
+        }
+        let entries = conversation(&cfg, "t");
+        assert_eq!(entries.len(), 240);
+        let ids: std::collections::HashSet<_> = entries.iter().map(|entry| &entry.id).collect();
+        assert_eq!(ids.len(), 240);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_import_and_live_archive_do_not_duplicate_records() {
+        let cfg = config(scratch("concurrent-recovery"));
+        std::fs::write(
+            inbox(&cfg),
+            "{\"id\":\"user-1\",\"text\":\"hello\",\"thread\":\"t\"}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            outbox(&cfg),
+            "{\"id\":\"reply-1\",\"text\":\"hi\",\"thread\":\"t\"}\n",
+        )
+        .unwrap();
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let mut workers = Vec::new();
+        for worker in 0..4 {
+            let cfg = cfg.clone();
+            let gate = gate.clone();
+            workers.push(std::thread::spawn(move || {
+                gate.wait();
+                if worker < 2 {
+                    recover_conversations(&cfg, "t").unwrap();
+                } else {
+                    let reply = Reply {
+                        id: "reply-1".into(),
+                        kind: "reply".into(),
+                        text: "hi".into(),
+                        ticket: None,
+                        thread: Some("t".into()),
+                    };
+                    archive(
+                        &cfg,
+                        &ConversationEntry {
+                            thread: "t".into(),
+                            id: "reply-1".into(),
+                            role: "agent".into(),
+                            text: "hi".into(),
+                            reply: Some(reply),
+                        },
+                    )
+                    .unwrap();
+                    archive(
+                        &cfg,
+                        &ConversationEntry {
+                            thread: "t".into(),
+                            id: "user-1".into(),
+                            role: "user".into(),
+                            text: "hello".into(),
+                            reply: None,
+                        },
+                    )
+                    .unwrap();
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let entries = conversation(&cfg, "t");
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.iter().filter(|e| e.id == "user-1").count(), 1);
+        assert_eq!(entries.iter().filter(|e| e.id == "reply-1").count(), 1);
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn recovery_skips_invalid_bytes_without_losing_later_records() {
+        let cfg = config(scratch("recover-invalid"));
+        std::fs::write(inbox(&cfg), b"\xff\n{\"id\":\"good\",\"text\":\"kept\"}\n").unwrap();
+        recover_conversations(&cfg, "t-one").unwrap();
+        let entries = conversation(&cfg, "t-good");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "kept");
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
+    }
+
+    #[test]
+    fn recovery_imports_legacy_logs_idempotently_and_waits_for_partial_lines() {
+        let cfg = config(scratch("recover-legacy"));
+        std::fs::create_dir_all(&cfg.state_dir).unwrap();
+        std::fs::write(
+            inbox(&cfg),
+            "{\"id\":\"one\",\"text\":\"hello\"}\n{\"id\":\"two\",\"text\":\"later\"}",
+        )
+        .unwrap();
+        std::fs::write(
+            outbox(&cfg),
+            "{\"id\":\"answer\",\"text\":\"hi\",\"thread\":\"t-one\"}\n",
+        )
+        .unwrap();
+        let (seen, imported) = recover_conversations(&cfg, "t-one").unwrap();
+        assert!(seen.contains("answer"));
+        assert_eq!(imported.len(), 2);
+        let (seen, restored) = recover_conversations(&cfg, "t-one").unwrap();
+        assert!(seen.contains("answer"));
+        assert_eq!(restored.len(), 2);
+        assert_eq!(
+            restored.iter().map(|entry| &entry.id).collect::<Vec<_>>(),
+            imported.iter().map(|entry| &entry.id).collect::<Vec<_>>()
+        );
+        assert_eq!(conversation(&cfg, "t-one").len(), 2);
+        assert!(conversation(&cfg, "t-two").is_empty());
+        OpenOptions::new()
+            .append(true)
+            .open(inbox(&cfg))
+            .unwrap()
+            .write_all(b"\n")
+            .unwrap();
+        recover_conversations(&cfg, "t-one").unwrap();
+        assert_eq!(conversation(&cfg, "t-two").len(), 1);
+        std::fs::remove_dir_all(&cfg.state_dir).unwrap();
     }
 
     #[test]

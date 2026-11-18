@@ -247,12 +247,9 @@ fn main() {
     let result = match cli.command {
         None => {
             if remote {
-                app::run(Api::new(&url))
+                app::run(Api::new(&url), false)
             } else {
-                service::Config::from_env().and_then(|cfg| {
-                    service::start(&cfg)?;
-                    app::run(Api::new(&url))
-                })
+                app::run(Api::new(&url), true)
             }
         }
         Some(command) => run(api, command),

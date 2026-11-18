@@ -1,6 +1,6 @@
 [package]
 name = "dsh-booth"
-version = "0.3.70"
+version = "0.3.71"
 edition = "2021"
 description = "A terminal console for dsh-superagent: tickets, threads and the people who are waiting"
 license = "GPL-3.0-only"
@@ -15,6 +15,7 @@ name = "booth"
 path = "src/main.rs"
 
 [dependencies]
+fs2 = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 ratatui = { version = "0.30", features = ["unstable-rendered-line-info"] }
 serde = { version = "1", features = ["derive"] }

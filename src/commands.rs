@@ -41,6 +41,8 @@ pub const PALETTE: &[(&str, &str)] = &[
         "send an instruction; bare text does the same",
     ),
     ("/new", "start a new conversation"),
+    ("/sessions", "list locally saved conversations"),
+    ("/session <id>", "open a saved conversation"),
     ("/search <text>", "find tickets, threads and messages"),
     ("/stop <id>", "withdraw a ticket's mandate"),
     ("/retry <id>", "start a fresh assignment"),
@@ -227,8 +229,8 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
 
 /// Palette entries whose first word fuzzy-matches what the user typed, an exact command first.
 pub fn matches(input: &str) -> Vec<(&'static str, &'static str)> {
-    let token = query(input);
-    if token.is_empty() {
+    let search = query(input);
+    if search.is_empty() {
         return PALETTE.to_vec();
     }
     let mut scored: Vec<(i32, usize, &'static str, &'static str)> = PALETTE
@@ -236,11 +238,11 @@ pub fn matches(input: &str) -> Vec<(&'static str, &'static str)> {
         .enumerate()
         .filter_map(|(index, (name, description))| {
             let word = name.split_whitespace().next().unwrap_or("");
-            fuzzy(word, &token).map(|(score, _)| {
+            fuzzy(word, &search).map(|(score, _)| {
                 // The completer takes the first row, so a command the person typed in full must
                 // beat a longer command that merely contains it: `/thread` completes to
                 // `/threads` otherwise, a different command with a different argument.
-                let exact = word.trim_start_matches('/').eq_ignore_ascii_case(&token);
+                let exact = word.trim_start_matches('/').eq_ignore_ascii_case(&search);
                 (
                     score + if exact { 100 } else { 0 },
                     index,

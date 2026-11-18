@@ -79,6 +79,15 @@ developed and reviewed without a configured GitHub account or a running service.
 
 ## Usage
 
+The console opens while the team service starts in the background. Booth keeps local conversation
+messages in `booth-conversations.jsonl` under its state directory; `/sessions` lists saved
+conversations and `/session <id>` restores one. `/new` starts another conversation without deleting
+the earlier ones. Existing messages are recovered from `booth-inbox.jsonl` and
+`booth-outbox.jsonl`; their original files are retained. Older records without timestamps cannot
+always be reconstructed in their original interleaved order.
+The archive is independent of DSH's model sessions, but the agent still needs DSH and
+dsh-superagent running to process messages.
+
 ```sh
 booth                              # the console
 booth init                         # prepare the profile and build (once)
