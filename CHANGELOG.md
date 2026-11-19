@@ -1,9 +1,9 @@
 # Changelog
 
 Published release history is limited to the release lines still tagged and published:
-`v0.4.0`, `v0.3.0`, `v0.2.0` and `v0.1.0`.
+`v0.4.1`, `v0.4.0`, `v0.3.0`, `v0.2.0` and `v0.1.0`.
 
-## [Unreleased]
+## [0.4.1] — 2026-11-19
 
 ### Fixes
 
