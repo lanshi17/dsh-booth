@@ -7,11 +7,11 @@ Published release history is limited to the release lines still tagged and publi
 
 ### Fixes
 
-- **The console starts from the checkout it was launched in**: opening `booth` inside a Git
-  checkout sets the ticket-directory root to that checkout's top level, so a root left over from
-  another project no longer receives the work. The binding is shown in the transcript and agent
-  instructions wait for it; an explicit `/setup owner/name <directory>` still chooses a different
-  root until the next console launch.
+- **The console starts from the directory it was launched in**: opening `booth` binds the
+  ticket-directory root to that exact working directory, so a root left over from an earlier
+  launch elsewhere no longer receives the work. No Git checkout is required. The binding is shown
+  in the transcript and agent instructions wait for it; an explicit
+  `/setup owner/name <directory>` still chooses a different root until the next console launch.
 
 ## [0.4.0] — 2026-11-19
 

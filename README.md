@@ -331,13 +331,12 @@ API: the GitHub Source (repository, CLI, new Issues on), the Policy (that accoun
 repository can be inferred: `/setup`. An optional second argument moves the ticket directories:
 `/setup owner/name ~/src/work`. `booth setup owner/name` does the same from a shell.
 
-Opening the console (`booth`, including when `booth up` already started the service) inside a
-Git checkout also binds the ticket-directory root to that checkout's top level before any
-instruction can open a ticket.
-A root left over from an earlier launch in another project therefore no longer receives this
-project's work; the transcript prints the bound directory. Run `booth` outside a checkout to
-leave the configured root alone. `/setup owner/name <directory>` still chooses an explicit root
-for the current session, until the next console launch binds its own checkout.
+Opening the console (`booth`, including when `booth up` already started the service) binds the
+ticket-directory root to the exact working directory before any instruction can open a ticket.
+A root left over from an earlier launch elsewhere therefore no longer receives this directory's
+work; the transcript prints the bound directory. No Git checkout is required, and a nested
+directory is used as given. `/setup owner/name <directory>` still chooses an explicit root for
+the current session, until the next console launch binds its own working directory.
 
 The bundle's GitHub reads use `gh api --slurp`, which CLIs before 2.57 reject. When the system
 `gh` is older, `/setup` downloads a pinned release into `<state>/bin/gh`, checks it against the
