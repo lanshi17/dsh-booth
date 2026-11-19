@@ -1,7 +1,17 @@
 # Changelog
 
-Only the release lines still published as tags and GitHub Releases are kept here:
+Published release history is limited to the release lines still tagged and published:
 `v0.4.0`, `v0.3.0`, `v0.2.0` and `v0.1.0`.
+
+## [Unreleased]
+
+### Fixes
+
+- **The console starts from the checkout it was launched in**: opening `booth` inside a Git
+  checkout sets the ticket-directory root to that checkout's top level, so a root left over from
+  another project no longer receives the work. The binding is shown in the transcript and agent
+  instructions wait for it; an explicit `/setup owner/name <directory>` still chooses a different
+  root until the next console launch.
 
 ## [0.4.0] — 2026-11-19
 

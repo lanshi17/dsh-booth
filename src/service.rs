@@ -648,6 +648,80 @@ pub fn session_root(cfg: &Config) -> PathBuf {
     sessions_root(cfg).join(router_key(cfg))
 }
 
+/// The top level of the Git checkout containing the current directory.
+///
+/// A console launched from a checkout names the project it is about. `git rev-parse` resolves a
+/// nested directory back to the checkout root, which is also the directory DSH keys sessions by.
+fn current_checkout_root() -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(&cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    if text.is_empty() {
+        return None;
+    }
+    Some(real_path(Path::new(&text)))
+}
+
+/// Makes the checkout this console was launched from the ticket directory root.
+///
+/// A deployment keeps one `executor.directory` for every source, so a root left over from an
+/// earlier launch in another project silently sent every new ticket there. The console names its
+/// own checkout on startup instead; an explicit `/setup … <directory>` still wins for the current
+/// session, and a directory outside a Git checkout leaves the configured root alone.
+///
+/// Returns the new root, or `None` when the launch directory is not a checkout or already bound.
+pub fn bind_execution_root(api: &Api) -> Result<Option<PathBuf>, String> {
+    let Some(root) = current_checkout_root() else {
+        return Ok(None);
+    };
+    let root_text = root.display().to_string();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match api.block("executor") {
+            Ok((mut executor, revision)) => {
+                let current = executor
+                    .get("directory")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default();
+                if !current.trim().is_empty() && real_path(Path::new(current)) == root {
+                    return Ok(None);
+                }
+                executor["directory"] = serde_json::json!(root_text);
+                match api.save("executor", &executor, revision) {
+                    Ok(_) => return Ok(Some(root)),
+                    Err(crate::api::ApiError::Status(409, _)) if Instant::now() < deadline => {
+                        sleep(Duration::from_millis(150));
+                    }
+                    Err(error) => {
+                        return Err(format!(
+                            "cannot set the ticket directory to {root_text}: {error}"
+                        ))
+                    }
+                }
+            }
+            Err(error) if Instant::now() < deadline => {
+                let _ = error;
+                sleep(Duration::from_millis(300));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "cannot read the executor settings while binding {root_text}: {error}"
+                ))
+            }
+        }
+    }
+}
+
 /// Where the service puts a ticket's worktree, and with it that ticket's worker Session.
 ///
 /// The profile's `executor.directory` wins; an unset directory or an unreachable service means
@@ -2656,6 +2730,46 @@ mod tests {
         // A service that is down must not hide the default.
         let down = Api::new("http://127.0.0.1:1");
         assert_eq!(execution_root(&down, &cfg), cfg.state_dir.join("work"));
+    }
+
+    #[test]
+    fn binds_the_execution_root_to_the_launch_checkout() {
+        let _env = crate::testkit::env_lock();
+        let fake = crate::testkit::FakeApi::start();
+        let api = Api::new(&fake.base);
+        let repo = std::env::temp_dir().join(format!(
+            "booth-bind-checkout-{}-{}",
+            std::process::id(),
+            crate::oauth::uuid_v4()
+        ));
+        fs::create_dir_all(&repo).unwrap();
+        let status = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let root = real_path(&repo);
+        fake.settings.lock().unwrap()["blocks"]["executor"]["value"]["directory"] =
+            serde_json::json!("/srv/some-other-checkout");
+
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&repo).unwrap();
+        let result = bind_execution_root(&api);
+        std::env::set_current_dir(&previous).unwrap();
+
+        assert_eq!(result.unwrap(), Some(root.clone()));
+        assert_eq!(
+            fake.settings.lock().unwrap()["blocks"]["executor"]["value"]["directory"],
+            serde_json::json!(root.display().to_string())
+        );
+        assert_eq!(fake.last_put().unwrap().0, "executor");
+        // The same checkout is not saved twice.
+        std::env::set_current_dir(&repo).unwrap();
+        let again = bind_execution_root(&api);
+        std::env::set_current_dir(&previous).unwrap();
+        assert_eq!(again.unwrap(), None);
+        let _ = fs::remove_dir_all(&repo);
     }
 
     #[test]

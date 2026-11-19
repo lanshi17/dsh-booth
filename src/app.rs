@@ -211,6 +211,8 @@ enum Msg {
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
+    /// The local console bound the ticket root to its launch checkout (or failed to).
+    Bound(Result<Option<std::path::PathBuf>, String>),
 }
 
 enum Modal {
@@ -487,10 +489,14 @@ pub struct App {
     view: Vec<Vec<String>>,
     /// Where the transcript was drawn, for translating mouse cells to transcript rows.
     body: Rect,
-    /// Mouse text selection, cleared once its text is on the clipboard.
+    /// A mouse text selection, cleared once its text is on the clipboard.
     text_selection: Option<TextSelection>,
     /// A short-lived note in the alert row (copy results, empty clipboard).
     notice: Option<(String, Instant)>,
+    /// A local console binds the ticket root to the checkout it was launched from.
+    bind_cwd: bool,
+    /// True until that binding finishes; agent instructions wait for it.
+    binding: bool,
     quit: bool,
     status: Status,
     started: Instant,
@@ -561,6 +567,7 @@ pub fn run(api: Api, start_service: bool) -> Result<(), String> {
     let mut guard = TerminalGuard(true);
     let mut terminal = setup_terminal().map_err(|error| error.to_string())?;
     let mut app = App::new(api);
+    app.bind_cwd = start_service;
     if start_service {
         app.start_service_in_background();
     }
@@ -693,6 +700,8 @@ impl App {
             body: Rect::default(),
             text_selection: None,
             notice: None,
+            bind_cwd: false,
+            binding: false,
             quit: false,
             status,
             started: Instant::now(),
@@ -727,6 +736,16 @@ impl App {
     }
 
     fn bootstrap(&mut self) {
+        if self.bind_cwd {
+            // A local console is a statement about the checkout it was started in. Bind before
+            // any instruction can open a ticket somewhere else; the service may still be starting.
+            self.binding = true;
+            let api = self.api.clone();
+            let tx = self.tx.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(Msg::Bound(service::bind_execution_root(&api)));
+            });
+        }
         if let Some(config) = self.config.clone() {
             self.recovering = true;
             let tx = self.tx.clone();
@@ -907,6 +926,21 @@ impl App {
                 Msg::Css(status, feed) => {
                     self.subagents.css = Some(*status);
                     self.subagents.feed = Some(*feed);
+                }
+                Msg::Bound(result) => {
+                    self.binding = false;
+                    match result {
+                        Ok(Some(root)) => self.push(Line::from(vec![
+                            Span::styled("  ◇ ", Style::default().fg(FAINT)),
+                            Span::styled("ticket directories ", Style::default().fg(FAINT)),
+                            Span::styled(root.display().to_string(), Style::default().fg(MUTED)),
+                            Span::styled(" · this checkout", Style::default().fg(FAINT)),
+                        ])),
+                        Ok(None) => {}
+                        Err(error) => self.push(warn_line(&format!(
+                            "could not bind this checkout as the ticket directory: {error}"
+                        ))),
+                    }
                 }
                 Msg::Replies(replies, checkpoint) => {
                     if self.recovering {
@@ -2182,6 +2216,15 @@ impl App {
 
     fn submit(&mut self) {
         let line = self.input.trim().to_string();
+        if self.binding
+            && !line.is_empty()
+            && (!line.starts_with('/') || line == "/send" || line.starts_with("/send "))
+        {
+            self.push(warn_line(
+                "binding this checkout as the ticket directory; your draft is preserved",
+            ));
+            return;
+        }
         if self.recovering
             && (!line.starts_with('/')
                 || line == "/sessions"
@@ -6158,6 +6201,30 @@ mod editor_tests {
         );
         app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
         assert!(app.quit);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_instruction_waits_until_the_launch_checkout_is_bound() {
+        let (mut app, dir, _env) = editor("binding-gate");
+        app.binding = true;
+        app.input = "check this checkout".into();
+        app.submit();
+        assert!(
+            !dir.join("booth-inbox.jsonl").exists(),
+            "nothing reaches the portal before the ticket root is bound"
+        );
+        assert_eq!(app.input, "check this checkout", "the draft is preserved");
+        assert!(
+            rendered(&app).contains("binding this checkout"),
+            "{}",
+            rendered(&app)
+        );
+
+        app.binding = false;
+        app.submit();
+        let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
+        assert!(inbox.contains("check this checkout"), "{inbox}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
