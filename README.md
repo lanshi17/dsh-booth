@@ -196,8 +196,9 @@ possible. `/new` starts a fresh portal conversation.
 | `Tab` | Complete the selected palette entry |
 | `↑` `↓` | Move in the palette, or walk the command history when it is closed |
 | `PgUp` `PgDn` | Scroll the transcript; follow new output again at the bottom. `↑` `↓` stay with the command history |
+| `Ctrl+G` | Copy mode: arrows move, `Space` marks a range, `Enter` copies; `/copy all` copies the whole transcript |
 | Mouse | The terminal owns selection, copy and scrolling; booth does not capture the mouse |
-| `Esc` | Clear the line and close the palette |
+| `Esc` | Clear the line and close the palette; leave copy mode |
 | `Ctrl+L` | Clear the transcript |
 | `Ctrl+D` | Quit on an empty line; delete at the caret otherwise |
 | `Ctrl+C` | Quit immediately |
@@ -207,6 +208,19 @@ mouse uncaptured, so a drag can cross the window and copy from the visible termi
 terminal's paste shortcut works. Inside the console, `PgUp`/`PgDn` scroll the transcript, while
 `↑`/`↓` keep walking the command history. When the view is scrolled up, the alert line says so and
 how to return to the newest output.
+
+Copying does not depend on the terminal's mouse. `Ctrl+G` (or `/copy`) walks the transcript with
+the arrow keys: `Space` marks where the range starts, `↑`/`↓`/`←`/`→` and `PgUp`/`PgDn` move the
+cursor, `Enter` copies the marked cells and leaves copy mode, and `Esc` cancels. `Enter` without a
+mark copies the cursor's line; `/copy all` copies the whole transcript unwrapped.
+
+Every copy route sends the text to the terminal itself with an OSC 52 escape sequence. That sequence
+travels back with the session's output, so over ssh or tmux the clipboard that changes is the one
+on the machine you are sitting at — not the remote host's. The terminal must allow OSC 52 writes;
+inside tmux, keep `set-clipboard` at its `external`/`on` default (or set it explicitly) so tmux
+forwards the sequence to the client terminal. When the terminal rejects or ignores the sequence
+booth falls back to `wl-copy`, `xclip`, `xsel` or `pbcopy`, which only fills the host's clipboard.
+
 Pasting uses the terminal's bracketed-paste mode. A pasted paragraph stays as one editable draft;
 line breaks are retained and long lines wrap. The composer shows up to five rows around the cursor.
 

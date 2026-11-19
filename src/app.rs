@@ -445,6 +445,23 @@ struct Awaiting {
     stale: bool,
 }
 
+/// One cell in the transcript's rendered rows: `row` is absolute (not scrolled), `col` is a cell
+/// offset inside the transcript area. Keeping both absolute lets a copy read the same rows while
+/// the view is frozen during a selection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SelPoint {
+    row: usize,
+    col: u16,
+}
+
+/// Keyboard copy mode: a cursor over the drawn transcript and, once Space marks it, the anchor
+/// the selection starts at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CopyMode {
+    cursor: SelPoint,
+    anchor: Option<SelPoint>,
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -460,6 +477,17 @@ pub struct App {
     busy: bool,
     follow: bool,
     scroll: u16,
+    /// The transcript as last drawn, one entry per cell; a wide character's continuation cells
+    /// are empty. Filled only while copy mode is open, so an idle console allocates nothing.
+    view: Vec<Vec<String>>,
+    /// Where the transcript was drawn, for translating selection cells to transcript rows.
+    body: Rect,
+    /// How many rows the transcript currently wraps into, for the copy cursor's bounds.
+    rendered_rows: u16,
+    /// A keyboard copy selection over the transcript.
+    copy: Option<CopyMode>,
+    /// A short-lived note in the alert row (the result of a copy).
+    notice: Option<(String, Instant)>,
     /// A local console binds the ticket root to the directory it was launched from.
     bind_cwd: bool,
     /// True until that binding finishes; agent instructions wait for it.
@@ -656,6 +684,11 @@ impl App {
             busy: false,
             follow: true,
             scroll: 0,
+            view: Vec::new(),
+            body: Rect::default(),
+            rendered_rows: 0,
+            copy: None,
+            notice: None,
             bind_cwd: false,
             binding: false,
             quit: false,
@@ -1635,8 +1668,15 @@ impl App {
             self.modal_key(key);
             return;
         }
+        // Copy mode owns the keyboard: a stray letter must not land in the composer while the
+        // cursor walks the transcript.
+        if self.copy.is_some() {
+            self.copy_key(key);
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
+                KeyCode::Char('g') => self.open_copy(),
                 KeyCode::Char('d') => {
                     // Match the familiar terminal behavior: an empty composer exits; with a
                     // draft, delete the character under the caret so a shortcut never discards
@@ -1748,6 +1788,232 @@ impl App {
         } else {
             self.scroll = self.scroll.saturating_add(rows as u16);
         }
+    }
+
+    /// Start copy mode over the transcript, with the cursor at the top of the visible rows.
+    fn open_copy(&mut self) {
+        if self.lines.is_empty() {
+            self.notify("the transcript is empty; nothing to copy");
+            return;
+        }
+        let last = self.rendered_rows.saturating_sub(1);
+        let row = usize::from(self.scroll).min(usize::from(last));
+        self.copy = Some(CopyMode {
+            cursor: SelPoint { row, col: 0 },
+            anchor: None,
+        });
+        self.follow = false;
+        self.notice = None;
+    }
+
+    /// Print a short result in the alert row.
+    fn notify(&mut self, note: impl Into<String>) {
+        self.notice = Some((note.into(), Instant::now()));
+    }
+
+    /// Keys copy mode owns. Anything unlisted is ignored rather than leaking into the composer.
+    fn copy_key(&mut self, key: KeyEvent) {
+        let Some(mode) = self.copy else {
+            return;
+        };
+        let last = self.rendered_rows.saturating_sub(1);
+        let page = usize::from(self.body.height.max(1));
+        let width = self.body.width.saturating_sub(1);
+        let mut cursor = mode.cursor;
+        match key.code {
+            KeyCode::Esc => {
+                self.copy = None;
+                self.follow = true;
+                return;
+            }
+            KeyCode::Up => cursor.row = cursor.row.saturating_sub(1),
+            KeyCode::Down => cursor.row = (cursor.row + 1).min(usize::from(last)),
+            KeyCode::Left => cursor.col = cursor.col.saturating_sub(1),
+            KeyCode::Right => cursor.col = (cursor.col + 1).min(width),
+            KeyCode::PageUp => cursor.row = cursor.row.saturating_sub(page),
+            KeyCode::PageDown => cursor.row = (cursor.row + page).min(usize::from(last)),
+            KeyCode::Home => cursor.col = 0,
+            KeyCode::End => cursor.col = width,
+            KeyCode::Char(' ') => {
+                // Space marks where the selection starts; a second press drops the mark so the
+                // cursor can be parked on another line first.
+                self.copy = Some(CopyMode {
+                    cursor: mode.cursor,
+                    anchor: if mode.anchor.is_some() {
+                        None
+                    } else {
+                        Some(mode.cursor)
+                    },
+                });
+                return;
+            }
+            KeyCode::Enter | KeyCode::Char('y') => {
+                self.copy_selection();
+                return;
+            }
+            _ => return,
+        }
+        self.copy = Some(CopyMode {
+            cursor,
+            anchor: mode.anchor,
+        });
+        self.reveal_copy_cursor();
+    }
+
+    /// Keep the copy cursor inside the drawn window, scrolling one row at a time.
+    fn reveal_copy_cursor(&mut self) {
+        let Some(mode) = self.copy else {
+            return;
+        };
+        let height = usize::from(self.body.height.max(1));
+        let row = mode.cursor.row;
+        let mut scroll = usize::from(self.scroll);
+        if row < scroll {
+            scroll = row;
+        } else if row >= scroll + height {
+            scroll = row + 1 - height;
+        }
+        self.scroll = scroll.min(usize::from(u16::MAX)) as u16;
+        self.follow = false;
+    }
+
+    /// Copy the marked range (or the cursor's line) to the terminal clipboard and leave copy mode.
+    fn copy_selection(&mut self) {
+        let Some(mode) = self.copy else {
+            return;
+        };
+        let (start, end, line_only) = match mode.anchor {
+            Some(anchor) if anchor != mode.cursor => {
+                if anchor <= mode.cursor {
+                    (anchor, mode.cursor, false)
+                } else {
+                    (mode.cursor, anchor, false)
+                }
+            }
+            _ => (
+                SelPoint {
+                    row: mode.cursor.row,
+                    col: 0,
+                },
+                SelPoint {
+                    row: mode.cursor.row,
+                    col: self.body.width.saturating_sub(1),
+                },
+                true,
+            ),
+        };
+        self.copy = None;
+        let Some(mut text) = self.selected_text(start, end) else {
+            self.notify("nothing to copy · arrows move, Space marks a range, Enter copies");
+            return;
+        };
+        if line_only {
+            text = text.trim().to_owned();
+        }
+        if text.is_empty() {
+            self.notify("nothing to copy · the selected cells are blank");
+            return;
+        }
+        let lines = text.lines().count().max(1);
+        let what = if lines == 1 {
+            format!("{} characters", text.chars().count())
+        } else {
+            format!("{lines} lines")
+        };
+        let note = match copy_to_clipboard(&text) {
+            Clipboard::Terminal => format!("copied {what} · terminal clipboard (OSC 52)"),
+            Clipboard::Host => format!("copied {what} · host clipboard"),
+            Clipboard::TooLarge => {
+                format!("could not copy {what} · past the terminal's 100 KB clipboard limit")
+            }
+            Clipboard::Unavailable => format!(
+                "could not copy {what} · the terminal ignored OSC 52 and no clipboard tool exists"
+            ),
+        };
+        self.notify(note);
+    }
+
+    /// The text of the drawn rows between two cells, inclusive. Rows are the cells the terminal
+    /// actually shows, so a hard-wrapped line copies with its visible breaks. A wide character is
+    /// stored once and its continuation cell is empty; empty cells are skipped instead of turning
+    /// the character into a space.
+    fn selected_text(&self, start: SelPoint, end: SelPoint) -> Option<String> {
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        let scroll = usize::from(self.scroll);
+        let mut rows = Vec::new();
+        for absolute in start.row..=end.row {
+            let Some(index) = absolute.checked_sub(scroll) else {
+                continue;
+            };
+            let Some(line) = self.view.get(index) else {
+                continue;
+            };
+            let from = if absolute == start.row {
+                usize::from(start.col)
+            } else {
+                0
+            }
+            .min(line.len());
+            let to = if absolute == end.row {
+                usize::from(end.col) + 1
+            } else {
+                line.len()
+            }
+            .min(line.len())
+            .max(from);
+            let text: String = line[from..to]
+                .iter()
+                .filter(|cell| !cell.is_empty())
+                .map(String::as_str)
+                .collect();
+            rows.push(text.trim_end().to_owned());
+        }
+        while rows.first().is_some_and(String::is_empty) {
+            rows.remove(0);
+        }
+        while rows.last().is_some_and(String::is_empty) {
+            rows.pop();
+        }
+        let text = rows.join("\n");
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Copy the whole transcript, unwrapped, without entering copy mode.
+    fn copy_transcript(&mut self) {
+        let text = self
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        if text.trim().is_empty() {
+            self.notify("the transcript is empty; nothing to copy");
+            return;
+        }
+        let note = match copy_to_clipboard(&text) {
+            Clipboard::Terminal => "copied the transcript · terminal clipboard (OSC 52)".to_owned(),
+            Clipboard::Host => "copied the transcript · host clipboard".to_owned(),
+            Clipboard::TooLarge => {
+                "the transcript is past the terminal's 100 KB clipboard limit; clear it and copy a range"
+                    .to_owned()
+            }
+            Clipboard::Unavailable => {
+                "could not copy the transcript · the terminal ignored OSC 52 and no clipboard tool exists"
+                    .to_owned()
+            }
+        };
+        self.notify(note);
     }
 
     fn insert(&mut self, ch: char) {
@@ -2037,6 +2303,23 @@ impl App {
         }
         if line == "/model" {
             self.open_model();
+            return;
+        }
+        if line == "/copy" {
+            self.push_input(&line);
+            self.open_copy();
+            return;
+        }
+        if let Some(rest) = line.strip_prefix("/copy ") {
+            self.push_input(&line);
+            if rest.trim() == "all" {
+                self.copy_transcript();
+            } else {
+                self.push(warn_line(
+                    "`/copy` selects text in copy mode; `/copy all` copies the whole transcript",
+                ));
+                self.restore_draft(&line);
+            }
             return;
         }
         if line == "/keys" || line == "/hotkeys" {
@@ -2518,10 +2801,12 @@ impl App {
     fn oauth_key(&mut self, key: KeyEvent, mut state: OAuthState) {
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('y') {
             if !state.url.is_empty() {
-                state.status = if copy_to_clipboard(&state.url) {
-                    "the URL is on the clipboard".into()
-                } else {
-                    "could not copy; open oauth-url.txt from the state directory".into()
+                state.status = match copy_to_clipboard(&state.url) {
+                    Clipboard::Terminal => "the URL is on the terminal clipboard".into(),
+                    Clipboard::Host => "the URL is on this host's clipboard".into(),
+                    Clipboard::TooLarge | Clipboard::Unavailable => {
+                        "could not copy; open oauth-url.txt from the state directory".into()
+                    }
                 };
             }
             self.modal = Some(Modal::OAuth(state));
@@ -2870,6 +3155,14 @@ impl App {
 
     fn alert_text(&self, width: u16) -> Option<String> {
         let room = (width as usize).saturating_sub(4);
+        if let Some((note, shown)) = &self.notice {
+            if shown.elapsed() < Duration::from_secs(6) {
+                return Some(format::clip(note, room));
+            }
+        }
+        if self.copy.is_some() {
+            return Some("copy mode · ↑↓←→ move · Space mark · Enter copy · Esc cancel".into());
+        }
         if let Some(note) = &self.status.note {
             return Some(format::clip(note, room));
         }
@@ -3125,13 +3418,19 @@ impl App {
             );
         }
 
+        self.body = body;
         let height = body.height.max(1);
         // Scroll by what the paragraph actually renders, not by structural lines: a long line
         // wraps into several rows, and counting it once would stop short of the newest row.
         let transcript = Paragraph::new(self.lines.clone()).wrap(Wrap { trim: false });
         let total = transcript.line_count(body.width).min(usize::from(u16::MAX)) as u16;
+        self.rendered_rows = total;
         let max_scroll = total.saturating_sub(height);
-        if self.follow {
+        if self.copy.is_some() {
+            // Freeze the window under the selection: new output must not slide the selected
+            // cells away while the operator is still choosing them.
+            self.scroll = self.scroll.min(max_scroll);
+        } else if self.follow {
             self.scroll = max_scroll;
         } else {
             self.scroll = self.scroll.min(max_scroll);
@@ -3150,6 +3449,15 @@ impl App {
             );
         } else {
             frame.render_widget(transcript.scroll((self.scroll, 0)), body);
+        }
+        if self.copy.is_some() {
+            self.paint_copy(frame);
+            // Only a selection reads the cells back; an idle console must not allocate a row
+            // snapshot on every 120 ms frame.
+            self.view = view_rows(frame.buffer_mut(), body);
+        } else if !self.view.is_empty() {
+            self.view.clear();
+            self.view.shrink_to_fit();
         }
 
         self.draw_composer(frame, top, bottom);
@@ -3231,6 +3539,71 @@ impl App {
             );
         }
     }
+
+    /// Reverse the copy cursor and marked range in the already drawn transcript. Coordinates are
+    /// absolute rows, so the highlight follows the text when the view is scrolled.
+    fn paint_copy(&self, frame: &mut Frame) {
+        let Some(mode) = self.copy else {
+            return;
+        };
+        let body = self.body;
+        if body.width == 0 || body.height == 0 {
+            return;
+        }
+        let scroll = usize::from(self.scroll);
+        let (start, end) = match mode.anchor {
+            Some(anchor) if anchor <= mode.cursor => (anchor, mode.cursor),
+            Some(anchor) => (mode.cursor, anchor),
+            None => (mode.cursor, mode.cursor),
+        };
+        let buffer = frame.buffer_mut();
+        for absolute in start.row..=end.row {
+            let Some(index) = absolute.checked_sub(scroll) else {
+                continue;
+            };
+            if index >= usize::from(body.height) {
+                continue;
+            }
+            let y = body.y + index as u16;
+            let (from, to) = if start.row == end.row {
+                (start.col, end.col.saturating_add(1))
+            } else if absolute == start.row {
+                (start.col, body.width)
+            } else if absolute == end.row {
+                (0, end.col.saturating_add(1))
+            } else {
+                (0, body.width)
+            };
+            for col in from..to.min(body.width) {
+                buffer[(body.x + col, y)]
+                    .modifier
+                    .insert(Modifier::REVERSED);
+            }
+        }
+    }
+}
+
+/// The transcript cells a frame actually drew, one entry per cell. A wide character occupies its
+/// leading cell; its continuation cells are empty, so copying skips them instead of inserting a
+/// space between the halves.
+fn view_rows(buffer: &ratatui::buffer::Buffer, body: Rect) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(usize::from(body.height));
+    for y in body.top()..body.bottom() {
+        let mut row = Vec::with_capacity(usize::from(body.width));
+        let mut continuation = 0usize;
+        for x in body.left()..body.right() {
+            if continuation > 0 {
+                continuation -= 1;
+                row.push(String::new());
+                continue;
+            }
+            let symbol = buffer[(x, y)].symbol();
+            continuation = UnicodeWidthStr::width(symbol).saturating_sub(1);
+            row.push(symbol.to_owned());
+        }
+        rows.push(row);
+    }
+    rows
 }
 
 fn draw_modal(
@@ -3393,6 +3766,10 @@ const KEYS: &[(&str, &str)] = &[
     ("Ctrl+Y", "paste the last deleted text"),
     ("↑ ↓", "pick in the palette, or walk the history"),
     ("PgUp / PgDn", "scroll the transcript"),
+    (
+        "Ctrl+G",
+        "copy mode: arrows select, Space marks, Enter copies",
+    ),
     ("Ctrl+L", "clear the transcript"),
     (
         "Ctrl+D",
@@ -3783,8 +4160,64 @@ fn draw_oauth(frame: &mut Frame, area: Rect, state: &OAuthState) {
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
-/// Copies through whichever clipboard tool the session has; false when none works.
-fn copy_to_clipboard(text: &str) -> bool {
+/// Where a copy went. `Terminal` is the one that crosses an ssh or tmux session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Clipboard {
+    /// An OSC 52 sequence was written to the terminal's output.
+    Terminal,
+    /// A local helper filled the clipboard of the host booth runs on.
+    Host,
+    /// The text is larger than a terminal clipboard sequence may be.
+    TooLarge,
+    /// Neither route worked.
+    Unavailable,
+}
+
+/// The largest base64 payload most terminals accept for one OSC 52 sequence. iTerm2 stops at
+/// 100 KB; larger requests are dropped, so a huge transcript falls back to a local tool instead.
+const OSC52_LIMIT: usize = 100_000;
+
+/// OSC 52's encoding of `text` for the system clipboard (`c`), or `None` when empty or too large.
+///
+/// The sequence travels back with the session's output, so the client terminal — not the host
+/// booth runs on — puts the text in its clipboard. That is the only route that works through
+/// ssh and tmux, where a local helper would fill the wrong machine's clipboard.
+fn osc52_sequence(text: &str) -> Option<String> {
+    use base64::Engine as _;
+    if text.is_empty() {
+        return None;
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    (encoded.len() <= OSC52_LIMIT).then(|| format!("\x1b]52;c;{encoded}\x07"))
+}
+
+fn copy_to_clipboard(text: &str) -> Clipboard {
+    let sequence = osc52_sequence(text);
+    let too_large = sequence.is_none() && !text.is_empty();
+    if io::stdout().is_terminal() {
+        if let Some(sequence) = sequence {
+            let mut stdout = io::stdout();
+            if stdout
+                .write_all(sequence.as_bytes())
+                .and_then(|()| stdout.flush())
+                .is_ok()
+            {
+                return Clipboard::Terminal;
+            }
+        }
+    }
+    if copy_to_host_clipboard(text) {
+        Clipboard::Host
+    } else if too_large {
+        Clipboard::TooLarge
+    } else {
+        Clipboard::Unavailable
+    }
+}
+
+/// Copies through whichever local clipboard tool the session has; this only ever fills the
+/// clipboard of the machine `booth` runs on, which is why OSC 52 above is tried first.
+fn copy_to_host_clipboard(text: &str) -> bool {
     let mut candidates: Vec<(&str, Vec<&str>)> = Vec::new();
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
         candidates.push(("wl-copy", Vec::new()));
@@ -6874,6 +7307,138 @@ mod editor_tests {
             hosted.key.is_empty(),
             "a hosted vendor waits for the real key"
         );
+    }
+
+    #[test]
+    fn osc52_carries_the_text_and_refuses_an_oversized_payload() {
+        assert_eq!(
+            osc52_sequence("hi").unwrap(),
+            "\u{1b}]52;c;aGk=\u{7}",
+            "the sequence carries the base64 text and the clipboard selector"
+        );
+        assert!(osc52_sequence("").is_none());
+        assert!(
+            osc52_sequence(&"x".repeat(70_000)).is_some(),
+            "under the limit the terminal gets the whole payload"
+        );
+        assert!(
+            osc52_sequence(&"x".repeat(80_000)).is_none(),
+            "past the limit terminals drop the request, so it must not be sent"
+        );
+    }
+
+    #[test]
+    fn a_keyboard_selection_reads_the_drawn_rows() {
+        let (mut app, dir, _env) = editor("copy-selection");
+        app.body = Rect::new(0, 0, 12, 3);
+        app.view = vec![
+            vec!["第".into(), String::new(), "一".into(), String::new()],
+            vec!["行".into(), String::new(), " ".into(), " ".into()],
+        ];
+        assert_eq!(
+            app.selected_text(SelPoint { row: 0, col: 0 }, SelPoint { row: 1, col: 4 })
+                .as_deref(),
+            Some("第一\n行")
+        );
+
+        // Selecting upwards keeps the transcript order and skips wide-character padding.
+        assert_eq!(
+            app.selected_text(SelPoint { row: 1, col: 4 }, SelPoint { row: 0, col: 2 })
+                .as_deref(),
+            Some("一\n行")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_copy_selection_highlights_and_reads_the_drawn_transcript() {
+        let (mut app, dir, _env) = editor("copy-drawn");
+        app.push(Line::from("第一行"));
+        app.push(Line::from("second line"));
+        let backend = ratatui::backend::TestBackend::new(30, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        app.copy = Some(CopyMode {
+            anchor: Some(SelPoint { row: 0, col: 0 }),
+            cursor: SelPoint { row: 0, col: 0 },
+        });
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        assert!(
+            app.view.iter().flatten().any(|cell| cell == "第"),
+            "a live selection captures the transcript cells"
+        );
+        let y = app.body.y;
+        assert!(
+            terminal.backend().buffer()[(app.body.x, y)]
+                .modifier
+                .contains(Modifier::REVERSED),
+            "the selected cell is reversed on screen"
+        );
+        assert_eq!(
+            app.selected_text(SelPoint { row: 0, col: 0 }, SelPoint { row: 0, col: 30 })
+                .as_deref(),
+            Some("第一行")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ctrl_g_selects_and_enter_copies_without_reaching_the_service() {
+        let (mut app, dir, _env) = editor("copy-mode-keys");
+        app.push(Line::from("first"));
+        app.push(Line::from("second"));
+        let backend = ratatui::backend::TestBackend::new(30, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        app.on_key(ctrl('g'));
+        let mode = app.copy.expect("Ctrl+G opens copy mode");
+        assert_eq!(mode.anchor, None, "the first move only places the cursor");
+        app.on_key(ctrl('g'));
+        assert_eq!(
+            app.copy.expect("Ctrl+G again is ignored").anchor,
+            None,
+            "copy mode owns the keyboard; an unlisted key changes nothing"
+        );
+
+        app.on_key(key(KeyCode::Char(' ')));
+        assert!(app.copy.unwrap().anchor.is_some(), "Space starts the mark");
+        app.on_key(key(KeyCode::Down));
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let mode = app.copy.unwrap();
+        let (start, end) = (
+            mode.anchor.unwrap(),
+            SelPoint {
+                row: mode.cursor.row,
+                col: app.body.width.saturating_sub(1),
+            },
+        );
+        assert_eq!(
+            app.selected_text(start, end).as_deref(),
+            Some("first\nsecond")
+        );
+
+        app.on_key(key(KeyCode::Enter));
+        assert!(app.copy.is_none(), "Enter leaves copy mode");
+        let note = &app.notice.as_ref().expect("the result is reported").0;
+        assert!(
+            note.contains("copied") || note.contains("could not copy"),
+            "{note}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_copy_command_opens_copy_mode_instead_of_reaching_the_service() {
+        let (mut app, dir, _env) = editor("copy-command");
+        app.push(Line::from("output"));
+        app.input = "/copy".into();
+        app.submit();
+        assert!(app.copy.is_some(), "/copy opens copy mode");
+        assert!(rendered(&app).contains("/copy"));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 

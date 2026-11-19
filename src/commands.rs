@@ -66,6 +66,10 @@ pub const PALETTE: &[(&str, &str)] = &[
     ),
     ("/pause", "stop the executor from taking work"),
     ("/resume", "let the executor take work"),
+    (
+        "/copy [all]",
+        "select transcript text for your terminal clipboard, or copy it all",
+    ),
     ("/help", "the commands on this screen (also /?)"),
     ("/keys", "the keyboard shortcuts, on one screen"),
     ("/history", "search what you typed before (Ctrl+R)"),

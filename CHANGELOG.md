@@ -12,13 +12,19 @@ Published release history is limited to the release lines still tagged and publi
   launch elsewhere no longer receives the work. No Git checkout is required. The binding is shown
   in the transcript and agent instructions wait for it; an explicit
   `/setup owner/name <directory>` still chooses a different root until the next console launch.
+- **Copying reaches the operator's clipboard over ssh and tmux**: copies are sent to the terminal
+  with an OSC 52 sequence, so the clipboard that changes is the client machine's, not the remote
+  host's. `Ctrl+G` (or `/copy`) enters copy mode — arrows move, `Space` marks a range, `Enter`
+  copies, `Esc` cancels — and `/copy all` copies the whole transcript. A terminal that ignores
+  OSC 52 still falls back to `wl-copy`/`xclip`/`xsel`/`pbcopy` on the host.
 
 ### Changes
 
-- **Copy and paste belong to the terminal**: the mouse is no longer captured and the in-app
-  transcript selection, clipboard helper commands and `Ctrl+V` fallback are gone. The terminal's
-  own selection, copy shortcuts, scrolling and bracketed paste work directly, including a drag
-  that crosses the window. `PgUp`/`PgDn` remain for scrolling the transcript itself.
+- **The mouse belongs to the terminal**: the mouse is no longer captured, so the terminal's own
+  selection, copy shortcuts, wheel handling and bracketed paste work directly, including a drag
+  that crosses the window. In-app mouse selection and the `Ctrl+V` clipboard fallback are gone;
+  `PgUp`/`PgDn` scroll the transcript, and key-driven copy mode handles text that the terminal's
+  selection cannot reach.
 
 ## [0.4.0] — 2026-11-19
 
