@@ -195,24 +195,20 @@ possible. `/new` starts a fresh portal conversation.
 | `Ctrl+Y` | Paste the last deleted text |
 | `Tab` | Complete the selected palette entry |
 | `↑` `↓` | Move in the palette, or walk the command history when it is closed |
-| `Mouse wheel` / `PgUp` `PgDn` | Scroll the transcript; follow new output again at the bottom. `↑` `↓` stay with the command history |
-| Drag over the transcript | Select output; releasing copies it to the system clipboard |
-| `Ctrl+Shift+C` / `Ctrl+Insert` | Copy the current transcript selection again |
-| `Ctrl+V` / `Shift+Insert` | Paste from the system clipboard (bracketed paste still works) |
+| `PgUp` `PgDn` | Scroll the transcript; follow new output again at the bottom. `↑` `↓` stay with the command history |
+| Mouse | The terminal owns selection, copy and scrolling; booth does not capture the mouse |
 | `Esc` | Clear the line and close the palette |
 | `Ctrl+L` | Clear the transcript |
 | `Ctrl+D` | Quit on an empty line; delete at the caret otherwise |
 | `Ctrl+C` | Quit immediately |
 
-The transcript scrolls with the mouse wheel or `PgUp`/`PgDn`; the arrow keys never scroll it, so
+The terminal keeps its own mouse selection, copy shortcuts and wheel/scrolling; booth leaves the
+mouse uncaptured, so a drag can cross the window and copy from the visible terminal, and the
+terminal's paste shortcut works. Inside the console, `PgUp`/`PgDn` scroll the transcript, while
 `↑`/`↓` keep walking the command history. When the view is scrolled up, the alert line says so and
 how to return to the newest output.
 Pasting uses the terminal's bracketed-paste mode. A pasted paragraph stays as one editable draft;
 line breaks are retained and long lines wrap. The composer shows up to five rows around the cursor.
-`Ctrl+V`/`Shift+Insert` additionally reads the system clipboard through `wl-paste`, `xclip`, `xsel`
-or `pbpaste`, which covers terminals that do not send a bracketed-paste event. Copying a transcript
-selection uses `wl-copy`, `xclip`, `xsel` or `pbcopy`; the alert row reports when no tool is
-installed.
 
 Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/portal`, `/tickets`,
 `/subagents`, `/css`, `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`,
