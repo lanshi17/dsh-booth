@@ -195,12 +195,15 @@ possible. `/new` starts a fresh portal conversation.
 | `Ctrl+Y` | Paste the last deleted text |
 | `Tab` | Complete the selected palette entry |
 | `↑` `↓` | Move in the palette, or walk the command history when it is closed |
-| `PgUp` `PgDn` | Scroll the transcript; follow new output again at the bottom |
+| `Mouse wheel` / `PgUp` `PgDn` | Scroll the transcript; follow new output again at the bottom. `↑` `↓` stay with the command history |
 | `Esc` | Clear the line and close the palette |
 | `Ctrl+L` | Clear the transcript |
 | `Ctrl+D` | Quit on an empty line; delete at the caret otherwise |
 | `Ctrl+C` | Quit immediately |
 
+The transcript scrolls with the mouse wheel or `PgUp`/`PgDn`; the arrow keys never scroll it, so
+`↑`/`↓` keep walking the command history. When the view is scrolled up, the alert line says so and
+how to return to the newest output.
 Pasting uses the terminal's bracketed-paste mode. A pasted paragraph stays as one editable draft;
 line breaks are retained and long lines wrap. The composer shows up to five rows around the cursor.
 

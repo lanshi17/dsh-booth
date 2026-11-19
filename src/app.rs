@@ -9,8 +9,8 @@ use crate::provider::{self, Catalog};
 use crate::service;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -566,6 +566,7 @@ impl Drop for TerminalGuard {
             let _ = execute!(
                 io::stdout(),
                 DisableBracketedPaste,
+                DisableMouseCapture,
                 LeaveAlternateScreen,
                 ratatui::crossterm::cursor::Show
             );
@@ -575,7 +576,12 @@ impl Drop for TerminalGuard {
 
 fn setup_terminal() -> io::Result<Terminal<CrosstermBackend<Stdout>>> {
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableBracketedPaste)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableBracketedPaste,
+        EnableMouseCapture
+    )?;
     Terminal::new(CrosstermBackend::new(stdout))
 }
 
@@ -584,6 +590,7 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<Stdout>>) -> io::Re
     execute!(
         terminal.backend_mut(),
         DisableBracketedPaste,
+        DisableMouseCapture,
         LeaveAlternateScreen
     )?;
     terminal.show_cursor()
@@ -725,6 +732,7 @@ impl App {
             if event::poll(Duration::from_millis(120))? {
                 match event::read()? {
                     Event::Key(key) if key.kind == KeyEventKind::Press => self.on_key(key),
+                    Event::Mouse(mouse) => self.on_mouse(mouse),
                     Event::Paste(text) => self.paste_event(&text),
                     _ => {}
                 }
@@ -1698,14 +1706,33 @@ impl App {
             KeyCode::End => self.cursor = self.input.chars().count(),
             KeyCode::Up => self.up(),
             KeyCode::Down => self.down(),
-            KeyCode::PageUp => {
-                self.follow = false;
-                self.scroll = self.scroll.saturating_sub(10);
-            }
-            KeyCode::PageDown => {
-                self.scroll = self.scroll.saturating_add(10);
-            }
+            KeyCode::PageUp => self.scroll_by(-10),
+            KeyCode::PageDown => self.scroll_by(10),
             KeyCode::Char(ch) => self.insert(ch),
+            _ => {}
+        }
+    }
+
+    /// Move the transcript window. Positive rows scroll towards newer output; the
+    /// draw pass clamps the offset and follows again at the bottom.
+    fn scroll_by(&mut self, rows: i16) {
+        self.follow = false;
+        if rows.is_negative() {
+            self.scroll = self.scroll.saturating_sub(rows.unsigned_abs());
+        } else {
+            self.scroll = self.scroll.saturating_add(rows as u16);
+        }
+    }
+
+    /// The wheel scrolls the transcript; the arrow keys never do. A modal owns the
+    /// screen while it is open, so the wheel leaves it alone.
+    fn on_mouse(&mut self, mouse: MouseEvent) {
+        if self.modal.is_some() {
+            return;
+        }
+        match mouse.kind {
+            MouseEventKind::ScrollUp => self.scroll_by(-3),
+            MouseEventKind::ScrollDown => self.scroll_by(3),
             _ => {}
         }
     }
@@ -2833,8 +2860,13 @@ impl App {
         if self.status.errors > 0 {
             return Some(format!("{} health error(s) — /status", self.status.errors));
         }
-        if self.unread > 0 && !self.follow {
-            return Some(format!("{} new line(s) · PgDn scrolls down", self.unread));
+        if !self.follow {
+            let new = if self.unread > 0 {
+                format!("{} new line(s) · ", self.unread)
+            } else {
+                String::new()
+            };
+            return Some(format!("{new}scrolled · wheel or PgDn goes down"));
         }
         None
     }
@@ -3337,7 +3369,7 @@ const KEYS: &[(&str, &str)] = &[
     ("Ctrl+U / Ctrl+K", "delete to the start / end"),
     ("Ctrl+Y", "paste the last deleted text"),
     ("↑ ↓", "pick in the palette, or walk the history"),
-    ("PgUp / PgDn", "scroll the transcript"),
+    ("Wheel / PgUp / PgDn", "scroll the transcript"),
     ("Ctrl+L", "clear the transcript"),
     (
         "Ctrl+D",
@@ -5692,6 +5724,65 @@ mod editor_tests {
         assert_eq!(app.input, "second");
         app.on_key(key(KeyCode::Down));
         assert_eq!(app.input, "", "past the newest is an empty line");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_wheel_scrolls_and_the_arrows_stay_with_history() {
+        let (mut app, dir, _env) = editor("scroll");
+        app.history = vec!["first".into(), "second".into()];
+        app.scroll = 20;
+        app.follow = false;
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.scroll, 17, "the wheel moves the transcript three rows");
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollDown,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.scroll, 20);
+
+        // The arrows recall history and leave the window where it was.
+        app.on_key(key(KeyCode::Up));
+        assert_eq!(app.input, "second");
+        assert_eq!(app.scroll, 20, "an arrow never scrolls the transcript");
+
+        // Scrolling past the top clamps; the alert says how to come back.
+        app.scroll = 1;
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.scroll, 0);
+        assert!(
+            app.alert_text(120)
+                .is_some_and(|text| text.contains("wheel or PgDn")),
+            "{:?}",
+            app.alert_text(120)
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_wheel_leaves_an_open_modal_alone() {
+        let (mut app, dir, _env) = editor("scroll-modal");
+        app.scroll = 8;
+        app.modal = Some(Modal::Keys);
+        app.on_mouse(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 0,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.scroll, 8);
         std::fs::remove_dir_all(dir).unwrap();
     }
 

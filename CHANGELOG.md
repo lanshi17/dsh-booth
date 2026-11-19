@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.74] — 2026-11-19
+
+### Improvements
+
+- **Scrollable transcript**: the mouse wheel scrolls the console three rows at a time, alongside
+  `PgUp`/`PgDn`; an open modal keeps the wheel. The alert line reports a scrolled view and how to
+  return to the newest output.
+- **Arrows stay with history**: `↑`/`↓` browse recalled commands and never move the transcript.
+
+[0.3.74]: https://github.com/lanshi17/dsh-booth/compare/v0.3.73...v0.3.74
+
 ## [0.3.73] — 2026-11-19
 
 ### New features
