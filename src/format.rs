@@ -1048,6 +1048,243 @@ fn message_line(item: &SearchItem) -> L {
     Line::from(spans)
 }
 
+/// `/subagents`: what each worker is doing right now, from the stage and the latest
+/// report the management API already carries.
+pub fn subagents(view: &crate::subagents::Snapshot) -> Vec<L> {
+    let css_live = view.css_live();
+    let mut lines = vec![section(format!(
+        "subagents · {} working · {} waiting for a person{}",
+        view.running(),
+        view.waiting(),
+        if css_live > 0 {
+            format!(" · {css_live} css")
+        } else {
+            String::new()
+        }
+    ))];
+    if let Some(error) = &view.error {
+        lines.push(Line::from(span(
+            error.clone(),
+            Style::default().fg(Color::Red),
+        )));
+    }
+    if view.rows.is_empty() {
+        lines.push(bullet("no worker is running"));
+    }
+    for row in &view.rows {
+        lines.extend(subagent_lines(row));
+    }
+    if let Some(feed) = &view.feed {
+        let css_rows = crate::subagents::rows_from_feed(feed);
+        if !css_rows.is_empty() {
+            lines.push(blank());
+            lines.push(section(format!(
+                "css agent · {} live ticket(s)",
+                css_rows.len()
+            )));
+            for row in &css_rows {
+                lines.extend(subagent_lines(row));
+            }
+        }
+        if let Some(error) = feed.error.as_deref().filter(|_| feed.configured) {
+            lines.push(muted(format!("  css feed · {} · {error}", feed.path)));
+        }
+    }
+    if let Some(status) = &view.css {
+        lines.push(blank());
+        lines.push(css_health_line(status));
+    }
+    lines.push(blank());
+    lines.push(muted(
+        "ticket detail: /ticket <id> · stop /retry by id · /css for the CSS Agent service",
+    ));
+    lines
+}
+
+fn subagent_lines(row: &crate::subagents::Row) -> Vec<L> {
+    let (marker, color) = match row.stage.as_str() {
+        "working" if row.action.as_deref() == Some("queued") => ("○", Color::DarkGray),
+        "working" => ("●", Color::Cyan),
+        "person" => ("?", Color::Yellow),
+        _ => ("·", Color::DarkGray),
+    };
+    let stage = match row.action.as_deref() {
+        Some(action) if !action.is_empty() => format!("{} · {action}", row.stage),
+        _ => row.stage.clone(),
+    };
+    let mut lines = vec![Line::from(vec![
+        span(format!("  {marker} "), Style::default().fg(color)),
+        span(
+            format!("{:<16}", clip(&stage, 16)),
+            Style::default().fg(color),
+        ),
+        span(
+            format!("{:<9}", short_id(&row.id)),
+            Style::default().fg(Color::DarkGray),
+        ),
+        span(clip(&row.title, 70), Style::default()),
+    ])];
+    let mut facts = vec![row.source.label().to_owned()];
+    if let Some(session) = &row.session {
+        facts.push(session.clone());
+    }
+    if let Some(updated) = &row.updated_at {
+        facts.push(format!("updated {}", short_at(updated)));
+    }
+    lines.push(muted(format!("      {}", clip(&facts.join(" · "), 120))));
+    if !row.summary.is_empty() {
+        lines.push(Line::from(vec![
+            span("      report: ", Style::default().fg(Color::DarkGray)),
+            span(clip(&row.summary, 160), Style::default()),
+        ]));
+    }
+    if let Some(question) = &row.question {
+        lines.push(Line::from(vec![
+            span("      question: ", Style::default().fg(Color::Yellow)),
+            span(clip(question, 160), Style::default()),
+        ]));
+    }
+    lines
+}
+
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
+fn css_health_line(status: &crate::cssagent::Status) -> L {
+    let (state, color) = if status.reachable {
+        ("reachable", Color::Green)
+    } else {
+        ("down", Color::DarkGray)
+    };
+    let version = status
+        .version
+        .as_deref()
+        .map(|version| format!(" · {version}"))
+        .unwrap_or_default();
+    Line::from(vec![
+        span("  css agent ", Style::default().fg(Color::DarkGray)),
+        span(status.base.clone(), Style::default()),
+        span(format!("  {state}{version}"), Style::default().fg(color)),
+        span(
+            status
+                .error
+                .as_deref()
+                .map(|error| format!(" · {}", clip(error, 80)))
+                .unwrap_or_default(),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ])
+}
+
+/// `/css`: the CSS Agent service, the contract it publishes, and its snapshot.
+pub fn css(
+    status: &crate::cssagent::Status,
+    feed: &crate::cssagent::Feed,
+    start_hint: &str,
+) -> Vec<L> {
+    let mut lines = vec![
+        section("css agent"),
+        kv("service", status.base.clone()),
+        kv(
+            "state",
+            if status.reachable {
+                format!(
+                    "reachable{}",
+                    status
+                        .version
+                        .as_deref()
+                        .map(|version| format!(" · {version}"))
+                        .unwrap_or_default()
+                )
+            } else {
+                "down".into()
+            },
+        ),
+    ];
+    if let Some(error) = &status.error {
+        lines.push(kv(
+            "error",
+            if status.reachable {
+                clip(error, 110)
+            } else {
+                format!("{} · start it: {}", clip(error, 60), start_hint)
+            },
+        ));
+    }
+    if !status.reachable {
+        lines.push(kv("start", start_hint));
+    }
+    if let Some(protocol) = &status.protocol {
+        let compatible = if status.compatible.is_empty() {
+            String::new()
+        } else {
+            format!(" · compatible {}", status.compatible.join(", "))
+        };
+        lines.push(kv("protocol", format!("{protocol}{compatible}")));
+    }
+    if !status.roles.is_empty() {
+        lines.push(kv("roles", status.roles.join(", ")));
+    }
+    if !status.report_states.is_empty() {
+        lines.push(kv("reports", status.report_states.join(", ")));
+    }
+    if status.max_active.is_some() || status.max_depth.is_some() {
+        lines.push(kv(
+            "limits",
+            format!(
+                "{} active · depth {}",
+                status
+                    .max_active
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "?".into()),
+                status
+                    .max_depth
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "?".into())
+            ),
+        ));
+    }
+    lines.push(blank());
+    lines.push(section("snapshot"));
+    if !feed.configured {
+        lines.push(bullet(format!(
+            "not configured · set {} or {}",
+            crate::cssagent::DIR_ENV,
+            crate::cssagent::FEED_ENV
+        )));
+    } else {
+        lines.push(kv("path", feed.path.clone()));
+        if let Some(protocol) = &feed.protocol {
+            lines.push(kv("protocol", protocol.clone()));
+        }
+        if let Some(error) = &feed.error {
+            lines.push(kv("state", error.clone()));
+        } else {
+            lines.push(kv(
+                "tickets",
+                format!(
+                    "{} live · {} total",
+                    feed.live().count(),
+                    feed.tickets.len()
+                ),
+            ));
+            for ticket in feed.live() {
+                lines.push(bullet(format!(
+                    "{} · {} · {}",
+                    clip(&ticket.id, 20),
+                    ticket.stage,
+                    clip(&ticket.title, 60)
+                )));
+                if !ticket.summary.is_empty() {
+                    lines.push(muted(format!("      {}", clip(&ticket.summary, 140))));
+                }
+            }
+        }
+    }
+    lines
+}
+
 pub fn help() -> Vec<L> {
     let mut lines = vec![section("commands")];
     for &(name, description) in crate::commands::PALETTE {
@@ -1065,8 +1302,8 @@ pub fn help() -> Vec<L> {
 #[cfg(test)]
 mod tests {
     use super::{
-        clip, overview, portal, reason, short_at, thread_detail, ticket_detail, ticket_list,
-        SearchView,
+        clip, css, overview, portal, reason, short_at, subagents, thread_detail, ticket_detail,
+        ticket_list, SearchView,
     };
     use crate::model::{DecisionList, Overview, Page, ThreadDetail, TicketDetail, TicketRow};
     use serde_json::json;
@@ -1537,5 +1774,97 @@ mod tests {
                 .any(|line| line == "  · outgoing message failed: request failed"),
             "a problem without a channel keeps its error and gains no separators: {shown:?}"
         );
+    }
+
+    #[test]
+    fn subagents_names_each_worker_with_its_latest_report() {
+        let snapshot = crate::subagents::Snapshot {
+            rows: vec![crate::subagents::Row {
+                source: crate::subagents::Source::Team,
+                id: "abcdef1234567890".into(),
+                title: "fix the installer".into(),
+                stage: "working".into(),
+                action: None,
+                summary: "reading the install guide".into(),
+                question: None,
+                session: Some("worker-abcdef1234567890".into()),
+                updated_at: Some("2026-11-19T10:20:30Z".into()),
+            }],
+            feed: Some(crate::cssagent::Feed::parse(
+                "feed.json",
+                &json!({
+                    "tickets": [{
+                        "id": "css-1", "title": "compile the bundle",
+                        "assignments": [{ "id": "a1", "state": "running",
+                                          "report": { "state": "progress", "summary": "resolving roles" } }]
+                    }]
+                })
+                .to_string(),
+            )),
+            ..crate::subagents::Snapshot::default()
+        };
+        let shown: Vec<String> = subagents(&snapshot)
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let text = shown.join("\n");
+        assert!(text.contains("2 working"), "{text}");
+        assert!(text.contains("● working"), "{text}");
+        assert!(
+            text.contains("abcdef12"),
+            "the short id reaches the row: {text}"
+        );
+        assert!(text.contains("fix the installer"), "{text}");
+        assert!(text.contains("worker-abcdef1234567890"), "{text}");
+        assert!(text.contains("report: reading the install guide"), "{text}");
+        assert!(text.contains("css agent · 1 live ticket(s)"), "{text}");
+        assert!(text.contains("compile the bundle"), "{text}");
+    }
+
+    #[test]
+    fn css_reports_the_contract_the_service_published() {
+        let status = crate::cssagent::Status::from_views(
+            "http://127.0.0.1:8765",
+            &json!({ "status": "ok", "service": "css-agent", "version": "0.1.0" }),
+            &json!({
+                "protocolVersion": "subagent/1",
+                "compatibleProtocols": ["subagent/1", "dsh-superagent/1"],
+                "roles": ["orchestrator", "worker"],
+                "reportStates": ["progress", "waiting"],
+                "activation": { "limits": { "maxActiveSubagents": 8, "maxDepth": 1 } }
+            }),
+        );
+        let feed = crate::cssagent::Feed::default();
+        let shown: Vec<String> = css(&status, &feed, "python3 -m css_agent api")
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let text = shown.join("\n");
+        assert!(text.contains("reachable · 0.1.0"), "{text}");
+        assert!(text.contains("subagent/1"), "{text}");
+        assert!(text.contains("orchestrator, worker"), "{text}");
+        assert!(text.contains("8 active · depth 1"), "{text}");
+        assert!(text.contains("not configured"), "{text}");
+    }
+
+    #[test]
+    fn a_down_css_agent_shows_how_to_start_it() {
+        let status =
+            crate::cssagent::Status::from_views("http://127.0.0.1:8765", &json!({}), &json!({}));
+        assert!(status.reachable);
+        let mut down = status.clone();
+        down.reachable = false;
+        down.error = Some("connection refused".into());
+        let text = css(
+            &down,
+            &crate::cssagent::Feed::default(),
+            "python3 -m css_agent api",
+        )
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+        assert!(text.contains("down"), "{text}");
+        assert!(text.contains("python3 -m css_agent api"), "{text}");
     }
 }

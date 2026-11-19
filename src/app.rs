@@ -206,6 +206,8 @@ enum Msg {
     /// The service's model catalog, fetched with every poll so the view is never stale.
     Catalog(Box<Catalog>),
     Tickets(TicketPoll),
+    /// CSS Agent's probe and published snapshot, read beside the team poll.
+    Css(Box<crate::cssagent::Status>, Box<crate::cssagent::Feed>),
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
@@ -498,9 +500,19 @@ pub struct App {
     tail: Arc<std::sync::Mutex<intake::Tail>>,
     /// When the current activity began, for the working row's elapsed time.
     work_since: Option<Instant>,
+    /// The label the elapsed time belongs to, so a new activity starts its own clock.
+    work_label: Option<String>,
     /// Open tickets and those waiting for a person, from the last ticket poll.
     open: u32,
     person: u32,
+    /// What the team's workers and CSS Agent's tickets are doing right now.
+    subagents: crate::subagents::Snapshot,
+    /// Where CSS Agent is and where its optional snapshot lives.
+    css: crate::cssagent::Config,
+    /// The report summary already shown for a ticket, so a poll does not repeat it.
+    reported: std::collections::HashMap<String, String>,
+    /// What the working row names while a foreground command runs.
+    busy_label: Option<String>,
     /// Test-only diagnostic rendering; normal portal mode hides worker details.
     show_worker_details: bool,
 }
@@ -659,8 +671,13 @@ impl App {
             unread: 0,
             tail,
             work_since: None,
+            work_label: None,
             open: 0,
             person: 0,
+            subagents: crate::subagents::Snapshot::default(),
+            css: crate::cssagent::Config::from_env(),
+            reported: std::collections::HashMap::new(),
+            busy_label: None,
             show_worker_details: false,
         }
     }
@@ -743,11 +760,13 @@ impl App {
             match message {
                 Msg::Lines(lines) => {
                     self.busy = false;
+                    self.busy_label = None;
                     self.push_lines(lines);
                     self.refresh_status();
                 }
                 Msg::Error(error) => {
                     self.busy = false;
+                    self.busy_label = None;
                     self.push(Line::from(Span::styled(
                         format!("! {error}"),
                         Style::default().fg(RED),
@@ -836,7 +855,14 @@ impl App {
                 }
                 // Worker tickets and executor stages are implementation details. The main
                 // transcript is the portal conversation; inspect the team with explicit commands.
-                Msg::Tickets(poll) => self.show_tickets_if_enabled(poll),
+                Msg::Tickets(poll) => {
+                    self.show_tickets_if_enabled(poll);
+                    self.show_progress();
+                }
+                Msg::Css(status, feed) => {
+                    self.subagents.css = Some(*status);
+                    self.subagents.feed = Some(*feed);
+                }
                 Msg::Replies(replies, checkpoint) => {
                     if self.recovering {
                         self.deferred_replies.push((replies, checkpoint));
@@ -972,6 +998,10 @@ impl App {
     /// Reports the stage of the tickets this console opened, once per change; a report the agent
     /// did not also send as a reply is shown as a short fallback.
     fn show_tickets_if_enabled(&mut self, poll: TicketPoll) {
+        // The same page feeds the live board, so a working worker is visible without
+        // opening `/subagents`; the stage lines below stay for tickets this console opened.
+        self.subagents.rows = crate::subagents::rows_from_tickets(&poll.rows);
+        self.subagents.total = poll.open_total;
         if self.show_worker_details {
             self.show_tickets(poll);
         } else {
@@ -1049,6 +1079,41 @@ impl App {
         for id in done {
             self.tracked.remove(&id);
         }
+    }
+
+    /// Says what a followed worker reported, once per new summary, while it works.
+    ///
+    /// `show_tickets` only reports stage *changes*; between "working" and "closed" a
+    /// worker can produce several progress reports. The console follows only tickets it
+    /// opened, so unrelated workers do not turn the transcript into a log.
+    fn show_progress(&mut self) {
+        let mut lines = Vec::new();
+        let mut finished = Vec::new();
+        for row in &self.subagents.rows {
+            if !self.tracked.contains_key(&row.id) {
+                continue;
+            }
+            if row.stage == "ended" || row.stage == "idle" {
+                finished.push(row.id.clone());
+                continue;
+            }
+            if row.stage != "working" || row.summary.is_empty() {
+                continue;
+            }
+            if self.reported.get(&row.id) == Some(&row.summary) {
+                continue;
+            }
+            lines.push(ticket_line(&format!("{} · progress", short_id(&row.id))));
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(format::clip(&row.summary, 240), Style::default().fg(TEXT)),
+            ]));
+            self.reported.insert(row.id.clone(), row.summary.clone());
+        }
+        for id in finished {
+            self.reported.remove(&id);
+        }
+        self.push_lines(lines);
     }
 
     /// Shows why the agent did not take an instruction; silence is the one answer a console cannot show.
@@ -1169,6 +1234,10 @@ impl App {
 
     fn spawn(&mut self, line: String) {
         self.busy = true;
+        self.busy_label = Some(format!(
+            "loading {}",
+            line.split_whitespace().next().unwrap_or("/")
+        ));
         let api = self.api.clone();
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -1198,6 +1267,7 @@ impl App {
         let (who, text) = crate::worker::split(text);
         if who != crate::worker::Who::Dsh {
             self.busy = true;
+            self.busy_label = Some("running the named worker".into());
             let tx = self.tx.clone();
             std::thread::spawn(move || {
                 let message = match crate::worker::run(who, &text) {
@@ -1280,6 +1350,7 @@ impl App {
 
     fn spawn_setup(&mut self, argument: String) {
         self.busy = true;
+        self.busy_label = Some("preparing the profile".into());
         let api = self.api.clone();
         let config = self.config.clone();
         let tx = self.tx.clone();
@@ -1401,6 +1472,7 @@ impl App {
         let pending = !self.pending.is_empty();
         let tracked: Vec<String> = self.tracked.keys().cloned().collect();
         let polled = self.api.clone();
+        let css = self.css.clone();
         std::thread::spawn(move || {
             // These reads are independent of the ticket page. Start them now so a slow ticket
             // endpoint cannot delay decisions or the model picker.
@@ -1419,6 +1491,14 @@ impl App {
                 if let Ok(models) = model_api.models() {
                     let _ = model_tx.send(Msg::Catalog(Box::new(Catalog::parse(&models))));
                 }
+            });
+            // CSS Agent is optional: its read runs beside the team's, and a timeout here
+            // cannot hold back the management API poll.
+            let css_tx = tx.clone();
+            let css_job = std::thread::spawn(move || {
+                let status = crate::cssagent::Client::new(&css.base).probe();
+                let feed = crate::cssagent::Feed::read(&css);
+                let _ = css_tx.send(Msg::Css(Box::new(status), Box::new(feed)));
             });
             // Open tickets are the header's counts as well as the followed tickets' stages.
             let mut rows = Vec::new();
@@ -1469,6 +1549,7 @@ impl App {
                 let _ = job.join();
             }
             let _ = model_job.join();
+            let _ = css_job.join();
             polling.store(false, Ordering::SeqCst);
         });
     }
@@ -2689,6 +2770,7 @@ impl App {
 
     fn restart_service(&mut self) {
         self.busy = true;
+        self.busy_label = Some("restarting the service".into());
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let mut lines = Vec::new();
@@ -2879,6 +2961,24 @@ impl App {
         if self.person > 0 {
             return (format!("team · {} needs you", self.person), TIP);
         }
+        if self.subagents.css_waiting() > 0 {
+            return (
+                format!("css · {} needs you", self.subagents.css_waiting()),
+                TIP,
+            );
+        }
+        if self.subagents.team_running() > 0 {
+            return (
+                format!("team · {} running", self.subagents.team_running()),
+                CYAN,
+            );
+        }
+        if self.subagents.css_running() > 0 {
+            return (
+                format!("css · {} running", self.subagents.css_running()),
+                CYAN,
+            );
+        }
         if self.open > 0 {
             return (format!("team · {} active", self.open), CYAN);
         }
@@ -2886,24 +2986,45 @@ impl App {
     }
 
     /// What the console is waiting on, in booth's working-row shape: spinner, elapsed, label.
+    ///
+    /// The label names the action (`loading /subagents`) and, when nothing is being
+    /// submitted, the worker that is actually producing output. A spinner with only
+    /// "working" left the operator guessing which of several workers was alive.
     fn activity(&mut self) -> Option<(String, Instant)> {
-        let active = if self.busy {
-            Some("working".to_owned())
-        } else if !self.pending.is_empty() || self.busy {
-            Some("working…".to_owned())
+        let label = if self.busy {
+            self.busy_label
+                .clone()
+                .unwrap_or_else(|| "working".to_owned())
+        } else if !self.pending.is_empty() {
+            format!("portal · {} waiting for a judgement", self.pending.len())
+        } else if let Some(row) = self.subagents.focus() {
+            let running = self.subagents.running();
+            if running == 0 {
+                // A person is needed; counting zero subagents would make the wait look idle.
+                format!(
+                    "waiting for a person · {} · {}",
+                    short_id(&row.id),
+                    format::clip(&row.title, 42)
+                )
+            } else {
+                format!(
+                    "{} subagent{} · {} · {}",
+                    running,
+                    if running == 1 { "" } else { "s" },
+                    short_id(&row.id),
+                    format::clip(&row.title, 42)
+                )
+            }
         } else {
-            None
+            self.work_since = None;
+            self.work_label = None;
+            return None;
         };
-        match active {
-            Some(label) => {
-                let since = *self.work_since.get_or_insert_with(Instant::now);
-                Some((label, since))
-            }
-            None => {
-                self.work_since = None;
-                None
-            }
+        if self.work_label.as_deref() != Some(label.as_str()) {
+            self.work_label = Some(label.clone());
+            self.work_since = Some(Instant::now());
         }
+        Some((label, *self.work_since.get_or_insert_with(Instant::now)))
     }
 
     fn draw(&mut self, frame: &mut Frame) {
@@ -4057,6 +4178,9 @@ mod transcript_tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("BOOTH_STATE_DIR", &dir);
         std::env::set_var("DSH_HOME", &dir);
+        std::env::set_var("BOOTH_CSS_URL", "http://127.0.0.1:9");
+        std::env::remove_var("BOOTH_CSS_DIR");
+        std::env::remove_var("BOOTH_CSS_FEED");
         let api = FakeApi::start();
         let mut app = App::new(Api::new(&api.base));
         app.show_worker_details = true;
@@ -4121,6 +4245,39 @@ mod transcript_tests {
             "{}",
             text(&app)
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_followed_worker_reports_new_progress_once() {
+        let (mut app, dir, _env) = console("progress");
+        app.tracked.insert(
+            "abcdef1234567890".into(),
+            Tracked {
+                stage: "working".into(),
+            },
+        );
+        app.subagents.rows = crate::subagents::rows_from_tickets(&[TicketRow {
+            id: "abcdef1234567890".into(),
+            title: "fix the installer".into(),
+            state: "open".into(),
+            stage: "working".into(),
+            summary: Some("reading the install guide".into()),
+            ..TicketRow::default()
+        }]);
+        app.show_progress();
+        let shown = text(&app);
+        assert!(shown.contains("abcdef12 · progress"), "{shown}");
+        assert!(shown.contains("reading the install guide"), "{shown}");
+
+        // The same summary on the next poll says nothing new.
+        let before = app.lines.len();
+        app.show_progress();
+        assert_eq!(app.lines.len(), before);
+
+        app.subagents.rows[0].summary = "writing the fix".into();
+        app.show_progress();
+        assert!(text(&app).contains("writing the fix"), "{}", text(&app));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -4798,6 +4955,9 @@ mod editor_tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("BOOTH_STATE_DIR", &dir);
         std::env::set_var("DSH_HOME", &dir);
+        std::env::set_var("BOOTH_CSS_URL", "http://127.0.0.1:9");
+        std::env::remove_var("BOOTH_CSS_DIR");
+        std::env::remove_var("BOOTH_CSS_FEED");
         let api = FakeApi::start();
         let mut app = App::new(Api::new(&api.base));
         app.show_worker_details = true;
@@ -4819,6 +4979,9 @@ mod editor_tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::env::set_var("BOOTH_STATE_DIR", &dir);
         std::env::set_var("DSH_HOME", &dir);
+        std::env::set_var("BOOTH_CSS_URL", "http://127.0.0.1:9");
+        std::env::remove_var("BOOTH_CSS_DIR");
+        std::env::remove_var("BOOTH_CSS_FEED");
         let api = FakeApi::start();
         let mut app = App::new(Api::new(&api.base));
         app.show_worker_details = true;
@@ -5821,7 +5984,55 @@ mod editor_tests {
         }
         app.status.paused = true;
         let label = app.activity().unwrap().0;
-        assert_eq!(label, "working…");
+        assert_eq!(label, "portal · 2 waiting for a judgement");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn activity_names_the_worker_that_is_running() {
+        let (mut app, dir, _env) = editor("live-activity");
+        app.subagents.rows = crate::subagents::rows_from_tickets(&[TicketRow {
+            id: "abcdef1234567890".into(),
+            title: "fix the installer".into(),
+            state: "open".into(),
+            stage: "working".into(),
+            summary: Some("reading the install guide".into()),
+            ..TicketRow::default()
+        }]);
+        let label = app.activity().unwrap().0;
+        assert!(
+            label.starts_with("1 subagent · abcdef12 · fix the installer"),
+            "{label}"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_css_probe_updates_the_board_without_hiding_the_team() {
+        let (mut app, dir, _env) = editor("css-board");
+        app.subagents.rows = crate::subagents::rows_from_tickets(&[TicketRow {
+            id: "team-1".into(),
+            title: "team work".into(),
+            state: "open".into(),
+            stage: "working".into(),
+            ..TicketRow::default()
+        }]);
+        let status = crate::cssagent::Status::from_views(
+            "http://127.0.0.1:8765",
+            &json!({ "version": "0.1.0" }),
+            &json!({ "protocolVersion": "subagent/1" }),
+        );
+        let feed = crate::cssagent::Feed::parse(
+            "feed.json",
+            &json!({ "tickets": [{ "id": "css-1", "title": "css work", "assignments": [
+                { "id": "a1", "state": "running", "report": { "state": "progress", "summary": "compiling" } }
+            ] }] })
+            .to_string(),
+        );
+        app.apply(Msg::Css(Box::new(status), Box::new(feed)));
+        assert_eq!(app.subagents.rows.len(), 1, "the team's row survives");
+        assert_eq!(app.subagents.css_live(), 1);
+        assert!(app.subagents.focus().is_some());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -5952,6 +6163,14 @@ mod editor_tests {
         app.open = 4;
         assert_eq!(app.team_pulse().0, "team · 4 active");
 
+        app.subagents.rows = crate::subagents::rows_from_tickets(&[TicketRow {
+            id: "t-running".into(),
+            state: "open".into(),
+            stage: "working".into(),
+            ..TicketRow::default()
+        }]);
+        assert_eq!(app.team_pulse().0, "team · 1 running");
+
         app.person = 1;
         assert_eq!(app.team_pulse().0, "team · 1 needs you");
 
@@ -5964,6 +6183,23 @@ mod editor_tests {
             },
         );
         assert_eq!(app.team_pulse().0, "portal · 1 queued");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn css_work_surfaces_in_the_pulse_when_the_team_is_idle() {
+        let (mut app, dir, _env) = editor("css-pulse");
+        app.status.runtime = "ready".into();
+        assert_eq!(app.team_pulse().0, "team · ready");
+        let feed = crate::cssagent::Feed::parse(
+            "feed.json",
+            &json!({ "tickets": [{ "id": "css-1", "title": "review", "attention": { "id": "n1", "question": "which tag?" } }] })
+                .to_string(),
+        );
+        let status =
+            crate::cssagent::Status::from_views("http://127.0.0.1:8765", &json!({}), &json!({}));
+        app.apply(Msg::Css(Box::new(status), Box::new(feed)));
+        assert_eq!(app.team_pulse().0, "css · 1 needs you");
         std::fs::remove_dir_all(dir).unwrap();
     }
 

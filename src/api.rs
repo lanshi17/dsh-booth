@@ -183,6 +183,43 @@ impl Api {
         self.get_as(&format!("/tickets?state={}&limit=50", enc(state)))
     }
 
+    /// One page of tickets in `state`, following the service's own limit.
+    pub fn tickets_page(
+        &self,
+        state: &str,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Page<TicketRow>, ApiError> {
+        self.get_as(&format!(
+            "/tickets?state={}&limit={}&offset={}",
+            enc(state),
+            limit,
+            offset
+        ))
+    }
+
+    /// Every ticket in `state`, following `next_offset` the way the console follows
+    /// `/threads`. A cursor that does not advance stops the walk instead of looping.
+    pub fn all_tickets(&self, state: &str) -> Result<Page<TicketRow>, ApiError> {
+        let mut items = Vec::new();
+        let mut offset = 0u32;
+        loop {
+            let page = self.tickets_page(state, offset, 1000)?;
+            let total = page.total;
+            items.extend(page.items);
+            match page.next_offset {
+                Some(next) if next > offset => offset = next,
+                _ => {
+                    return Ok(Page {
+                        items,
+                        total,
+                        next_offset: None,
+                    })
+                }
+            }
+        }
+    }
+
     pub fn ticket(&self, id: &str) -> Result<TicketDetail, ApiError> {
         self.get_as(&format!("/tickets/{}", enc(id)))
     }
@@ -569,5 +606,48 @@ mod tests {
         assert_eq!(sources.len(), 2);
         assert_eq!(sources[0].title.text(), "GitHub");
         assert_eq!(sources[1].title.text(), "飞书");
+    }
+
+    #[test]
+    fn all_tickets_follows_the_served_cursor() {
+        let service = FakeApi::start();
+        service.set_route(
+            "/tickets?state=working&limit=1000&offset=0",
+            json!({
+                "items": [{ "id": "a", "title": "first", "state": "open", "stage": "working" }],
+                "total": 2,
+                "next_offset": 1
+            }),
+        );
+        service.set_route(
+            "/tickets?state=working&limit=1000&offset=1",
+            json!({
+                "items": [{ "id": "b", "title": "second", "state": "open", "stage": "working" }],
+                "total": 2
+            }),
+        );
+        let page = Api::new(&service.base)
+            .all_tickets("working")
+            .expect("both pages decode");
+        let ids: Vec<&str> = page.items.iter().map(|row| row.id.as_str()).collect();
+        assert_eq!(ids, ["a", "b"]);
+        assert_eq!(page.total, 2);
+    }
+
+    #[test]
+    fn a_cursor_that_does_not_advance_does_not_loop() {
+        let service = FakeApi::start();
+        service.set_route(
+            "/tickets?state=person&limit=1000&offset=0",
+            json!({
+                "items": [{ "id": "a", "title": "first", "state": "open", "stage": "person" }],
+                "total": 1,
+                "next_offset": 0
+            }),
+        );
+        let page = Api::new(&service.base)
+            .all_tickets("person")
+            .expect("one page is enough");
+        assert_eq!(page.items.len(), 1);
     }
 }

@@ -28,6 +28,14 @@ pub const PALETTE: &[(&str, &str)] = &[
         "sign in: the DeepSeek account, or a vendor's API key",
     ),
     ("/tickets [state]", "open | person | working | idle | ended"),
+    (
+        "/subagents",
+        "what each worker is doing now: stage, latest report, session",
+    ),
+    (
+        "/css",
+        "CSS Agent service, subagent/1 contract, and its published snapshot",
+    ),
     ("/ticket <id>", "mandate, assignments, inputs, threads"),
     (
         "/threads [filter]",
@@ -161,6 +169,16 @@ pub fn execute(api: &Api, raw: &str) -> Result<Vec<L>, String> {
             format::ticket_list(&api.tickets(state)?, state)
         }
         "/ticket" => format::ticket_detail(&api.ticket(need("/ticket", argument)?)?),
+        "/subagents" => {
+            let css = crate::cssagent::Config::from_env();
+            format::subagents(&crate::subagents::collect(api, &css))
+        }
+        "/css" => {
+            let css = crate::cssagent::Config::from_env();
+            let status = crate::cssagent::Client::new(&css.base).probe();
+            let feed = crate::cssagent::Feed::read(&css);
+            format::css(&status, &feed, &css.start_hint())
+        }
         "/threads" => {
             let filter = choice(argument, "recent", &THREAD_FILTERS, "thread filter")?;
             format::thread_list(&api.threads(filter)?, filter)
@@ -491,5 +509,25 @@ mod tests {
         // The palette and the grammar agree on what counts as the exact command.
         let first = matches("/TICKETS").first().map(|(name, _)| *name);
         assert_eq!(first, Some("/tickets [state]"));
+    }
+
+    #[test]
+    fn the_palette_reaches_the_subagent_board_and_css_agent() {
+        let help: String = format::help()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n");
+        for command in ["/subagents", "/css"] {
+            assert!(
+                help.contains(command),
+                "{command} missing from /help:\n{help}"
+            );
+            let first = matches(command)
+                .first()
+                .map(|(name, _)| name.split_whitespace().next().unwrap_or_default())
+                .unwrap_or_default();
+            assert_eq!(first, command, "{command} is not the palette's answer");
+        }
     }
 }

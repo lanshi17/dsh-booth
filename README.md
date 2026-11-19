@@ -118,6 +118,8 @@ booth status                       # one shot: health, pause, setup, accounts
 booth overview                     # problems, people waiting, executor load
 booth portal                       # portal conversations and delegated tasks
 booth tickets --state person       # open | person | working | idle | ended
+booth subagents                    # what each worker is doing now
+booth css                          # the CSS Agent service and its snapshot
 booth ticket t-7f3a9c2e1b          # mandate, basis, assignments, inputs, threads
 booth threads --filter recent      # recent | subscribed | evaluating | all
 booth thread 'github:owner/repo#12'
@@ -164,6 +166,9 @@ still receives live @mentions, but `booth sources` reports the failed backfill.
 | `BOOTH_SUPERAGENT_DIR` | the repository's `superagent/` | Checkout to build and link |
 | `BOOTH_SUPERVISOR_PORT` | `3081` | Loopback supervisor registry port |
 | `FEISHU_APP_ID`, `FEISHU_APP_SECRET` | — | The app `booth feishu login` configures |
+| `BOOTH_CSS_URL` | `http://127.0.0.1:8765` | CSS Agent's loopback API (`/v1/health`, `/v1/subagent/manifest`) |
+| `BOOTH_CSS_DIR` | — | CSS Agent checkout; also locates its default snapshot feed |
+| `BOOTH_CSS_FEED` | `$BOOTH_CSS_DIR/.css-runs/booth/subagents.json` | Explicit CSS `SubagentProtocol.snapshot()` file |
 | `DSH_HOME` | `~/.dsh` | Where profiles and state live |
 
 Every read command takes `--json` and prints the view as served, for scripts and the hourly
@@ -200,14 +205,45 @@ Pasting uses the terminal's bracketed-paste mode. A pasted paragraph stays as on
 line breaks are retained and long lines wrap. The composer shows up to five rows around the cursor.
 
 Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/portal`, `/tickets`,
-`/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`, `/search <text>`,
-`/stop`, `/retry`, `/pause`, `/resume`, `/send`, `/setup`, `/agents`, `/eval` and `/provider`.
+`/subagents`, `/css`, `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`,
+`/search <text>`, `/stop`, `/retry`, `/pause`, `/resume`, `/send`, `/setup`, `/agents`, `/eval`
+and `/provider`.
 The console adds `/requeue`, `/dismiss`, `/unsubscribe`, `/new`,
 `/model`, `/login`, `/keys`, `/history`, `/refresh`, `/clear` and `/quit`.
 
 The palette is fuzzy and scrolls: `/ti` ranks `/tickets` and `/ticket`, matched letters are
 highlighted, and a selection past the eighth entry scrolls the window the way booth's lists do.
 `/keys` lists every shortcut on one screen.
+
+### What each worker is doing
+
+`/subagents` (or `booth subagents`) answers one question without opening a ticket: which of the
+portal's subagent Sessions are running, what each reported last, which Session it is, and who
+is waiting for a person. The rows come from `GET /tickets?state=working` and `state=person`, so
+a worker that reported `progress` shows that report instead of a generic "working" label. A
+worker's own DSH subagents stay inside its Session; the board shows that worker's latest report,
+not each internal turn.
+
+The console uses the same page for its working row. While a command runs it says what is
+loading (`loading /subagents`); while the portal decides it says `portal · 2 waiting for a
+judgement`; while workers are busy it names one: `2 subagents · t-7f3a9c · fix the installer`.
+A ticket this console opened also prints a new `◇ … · progress` line when its worker's latest
+report changes, once per summary, so progress between `working` and `closed` is visible.
+
+CSS Agent is read the same way when it is running. Its loopback API publishes the
+`subagent/1` contract; `booth css` shows the service, protocol, roles, report states, activation
+limits and the snapshot feed. Point booth at the checkout with `BOOTH_CSS_DIR`, or at a feed
+with `BOOTH_CSS_FEED`; a CSS host publishes it with `SubagentProtocol.snapshot()`:
+
+```sh
+python3 -m css_agent api --port 8765
+BOOTH_CSS_DIR=~/src/css-agent booth css
+```
+
+A snapshot is a normal JSON document; the ticket's latest report provides the state and
+summary, and an attention question or a `waiting`/`blocked` report makes it wait for a person.
+Without a feed, `/css` still reports the live service and `/subagents` shows only the team.
+The CSS service is optional: an outage there never hides the team's own rows.
 
 ## What the console keeps
 
@@ -303,6 +339,7 @@ web panel.
 | The portal answers but starts no worker | Conversation and simple questions do not require a worker |
 | `⋯ no decision yet` | The Source has not produced a judgement after 20 s; `/sources` shows whether it is polling and `/status` shows health |
 | `◇ ticket … · needs a person` | The worker is waiting for an answer; `/ticket <id>` shows the question, and you can reply in the portal conversation |
+| `subagents · 0 working` but work is queued | No worker holds a slot yet; `/overview` shows the queue and `/status` the executor |
 | `↑ queued …` and no further line | The console wrote the instruction but the service may be down or still starting; check `booth status` and `booth logs` |
 | `◇ agent · could not judge  timeout` | The assessment ran past the Eval timeout; the panel's Eval block raises `timeoutSeconds`, and `/requeue <id>` puts the instruction back |
 | `no adapter registered for provider …` in a session | The profile layer no longer registers that provider; `/login` adds it back, or `booth reset-sessions` starts fresh sessions — the second costs the conversation history, so prefer the first |
@@ -395,6 +432,8 @@ routes listed above. If a route moves, `api.rs` is the only file to change; the 
 
 Not implemented: live push (SSE/WebSocket), editing prompts or the policy rules from the
 console, Feishu-specific reads, attaching to a worker Session, Windows service control.
+CSS Agent is observed, not driven: booth reads its discovery routes and snapshot and does not
+start or stop that service or submit CSS tickets.
 
 The console and `dsh-superagent` versions are those the submodule pins. The console depends
 only on the management API and does not modify `dsh-superagent`'s source.

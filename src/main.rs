@@ -7,6 +7,7 @@
 mod api;
 mod app;
 mod commands;
+mod cssagent;
 mod decider;
 mod feishu;
 mod format;
@@ -16,6 +17,7 @@ mod model;
 mod oauth;
 mod provider;
 mod service;
+mod subagents;
 mod supervisor;
 #[cfg(test)]
 mod testkit;
@@ -153,6 +155,16 @@ enum Command {
     Tickets {
         #[arg(long, default_value = "open")]
         state: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// What each worker is doing now: stage, latest report and session.
+    Subagents {
+        #[arg(long)]
+        json: bool,
+    },
+    /// The CSS Agent service, its subagent/1 contract and its snapshot.
+    Css {
         #[arg(long)]
         json: bool,
     },
@@ -547,6 +559,31 @@ fn run(api: Api, command: Command) -> Result<(), String> {
             api.state().map_err(String::from)?,
             format::status,
         ),
+        Command::Subagents { json } => {
+            let css = cssagent::Config::from_env();
+            let view = subagents::collect(&api, &css);
+            if json {
+                print_json(&view)
+            } else {
+                print_lines(format::subagents(&view));
+                Ok(())
+            }
+        }
+        Command::Css { json } => {
+            let css = cssagent::Config::from_env();
+            let status = cssagent::Client::new(&css.base).probe();
+            let feed = cssagent::Feed::read(&css);
+            if json {
+                print_json(&serde_json::json!({
+                    "status": status,
+                    "feed": feed,
+                    "startHint": css.start_hint()
+                }))
+            } else {
+                print_lines(format::css(&status, &feed, &css.start_hint()));
+                Ok(())
+            }
+        }
         Command::Agents { json } => {
             let cfg = service::Config::from_env()?;
             let view = api.overview().map_err(String::from)?;
@@ -808,6 +845,20 @@ mod tests {
         assert!(matches!(
             Cli::try_parse_from(["booth", "feishu", "chat", "oc_chat", "--all"]).unwrap().command,
             Some(Command::Feishu { command: FeishuCommand::Chat { chat_id, all: true } }) if chat_id == "oc_chat"
+        ));
+    }
+
+    #[test]
+    fn subagents_and_css_are_one_shot_commands() {
+        assert!(matches!(
+            Cli::try_parse_from(["booth", "subagents", "--json"])
+                .unwrap()
+                .command,
+            Some(Command::Subagents { json: true })
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["booth", "css"]).unwrap().command,
+            Some(Command::Css { json: false })
         ));
     }
 

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.3.73] — 2026-11-19
+
+### New features
+
+- **CSS Agent support**: `booth css` and `/css` read CSS Agent's loopback `/v1/health` and
+  `/v1/subagent/manifest`, and an optional `SubagentProtocol.snapshot()` feed
+  (`BOOTH_CSS_DIR`, `BOOTH_CSS_FEED`). Protocol, roles, report states, activation limits and
+  live CSS tickets are shown; an outage never hides the team's own work.
+- **Subagent board**: `booth subagents` and `/subagents` list every working and waiting worker
+  Session with its stage, latest report summary, worker Session and update time. Pages follow
+  the service's cursor instead of the first 50 rows; CSS Agent's `subagent/1` tickets appear
+  beside them when a snapshot feed is configured.
+
+### Improvements
+
+- **Specific interaction feedback**: the working row names the action (`loading /subagents`,
+  `restarting the service`, `portal · 2 waiting for a judgement`) and, when idle, the worker
+  that is producing output. The team pulse distinguishes `running` from `active`.
+- **Progress between stages**: a followed ticket prints each new worker report summary once,
+  so work between `working` and `closed` is no longer silent.
+
+### Migration notes
+
+- CSS Agent reads are optional and loopback-only; without `BOOTH_CSS_URL` booth probes the
+  documented default `http://127.0.0.1:8765` and reports it down until a service answers.
+
+[0.3.73]: https://github.com/lanshi17/dsh-booth/compare/v0.3.72...v0.3.73
+
 ## [0.3.72] — 2026-11-19
 
 ### New features
