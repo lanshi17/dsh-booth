@@ -211,7 +211,7 @@ enum Msg {
     OAuthReady(Box<oauth::Attempt>),
     OAuthCode(String),
     OAuthResult(Result<(), String>),
-    /// The local console bound the ticket root to its launch checkout (or failed to).
+    /// The local console bound the ticket root to its launch directory (or failed to).
     Bound(Result<Option<std::path::PathBuf>, String>),
 }
 
@@ -493,7 +493,7 @@ pub struct App {
     text_selection: Option<TextSelection>,
     /// A short-lived note in the alert row (copy results, empty clipboard).
     notice: Option<(String, Instant)>,
-    /// A local console binds the ticket root to the checkout it was launched from.
+    /// A local console binds the ticket root to the directory it was launched from.
     bind_cwd: bool,
     /// True until that binding finishes; agent instructions wait for it.
     binding: bool,
@@ -737,7 +737,7 @@ impl App {
 
     fn bootstrap(&mut self) {
         if self.bind_cwd {
-            // A local console is a statement about the checkout it was started in. Bind before
+            // A local console is a statement about the directory it was started in. Bind before
             // any instruction can open a ticket somewhere else; the service may still be starting.
             self.binding = true;
             let api = self.api.clone();
@@ -934,11 +934,11 @@ impl App {
                             Span::styled("  ◇ ", Style::default().fg(FAINT)),
                             Span::styled("ticket directories ", Style::default().fg(FAINT)),
                             Span::styled(root.display().to_string(), Style::default().fg(MUTED)),
-                            Span::styled(" · this checkout", Style::default().fg(FAINT)),
+                            Span::styled(" · launch directory", Style::default().fg(FAINT)),
                         ])),
                         Ok(None) => {}
                         Err(error) => self.push(warn_line(&format!(
-                            "could not bind this checkout as the ticket directory: {error}"
+                            "could not bind this directory as the ticket directory: {error}"
                         ))),
                     }
                 }
@@ -2221,7 +2221,7 @@ impl App {
             && (!line.starts_with('/') || line == "/send" || line.starts_with("/send "))
         {
             self.push(warn_line(
-                "binding this checkout as the ticket directory; your draft is preserved",
+                "binding this directory as the ticket directory; your draft is preserved",
             ));
             return;
         }
@@ -6205,18 +6205,18 @@ mod editor_tests {
     }
 
     #[test]
-    fn an_instruction_waits_until_the_launch_checkout_is_bound() {
+    fn an_instruction_waits_until_the_launch_directory_is_bound() {
         let (mut app, dir, _env) = editor("binding-gate");
         app.binding = true;
-        app.input = "check this checkout".into();
+        app.input = "check this directory".into();
         app.submit();
         assert!(
             !dir.join("booth-inbox.jsonl").exists(),
             "nothing reaches the portal before the ticket root is bound"
         );
-        assert_eq!(app.input, "check this checkout", "the draft is preserved");
+        assert_eq!(app.input, "check this directory", "the draft is preserved");
         assert!(
-            rendered(&app).contains("binding this checkout"),
+            rendered(&app).contains("binding this directory"),
             "{}",
             rendered(&app)
         );
@@ -6224,7 +6224,7 @@ mod editor_tests {
         app.binding = false;
         app.submit();
         let inbox = std::fs::read_to_string(dir.join("booth-inbox.jsonl")).unwrap();
-        assert!(inbox.contains("check this checkout"), "{inbox}");
+        assert!(inbox.contains("check this directory"), "{inbox}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
