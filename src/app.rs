@@ -10,7 +10,7 @@ use crate::service;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -443,6 +443,31 @@ struct Awaiting {
     stale: bool,
 }
 
+/// One cell in the transcript's rendered rows: `row` is absolute (not scrolled), `col` is a cell
+/// offset inside the transcript area. Keeping both absolute lets a copy read the same rows while
+/// the view is frozen during a drag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SelPoint {
+    row: usize,
+    col: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TextSelection {
+    anchor: SelPoint,
+    focus: SelPoint,
+}
+
+impl TextSelection {
+    fn ordered(self) -> (SelPoint, SelPoint) {
+        if self.anchor <= self.focus {
+            (self.anchor, self.focus)
+        } else {
+            (self.focus, self.anchor)
+        }
+    }
+}
+
 pub struct App {
     api: Api,
     lines: Vec<L>,
@@ -458,6 +483,14 @@ pub struct App {
     busy: bool,
     follow: bool,
     scroll: u16,
+    /// The transcript as last drawn, one entry per cell; emptied on wide-char continuation cells.
+    view: Vec<Vec<String>>,
+    /// Where the transcript was drawn, for translating mouse cells to transcript rows.
+    body: Rect,
+    /// Mouse text selection, cleared once its text is on the clipboard.
+    text_selection: Option<TextSelection>,
+    /// A short-lived note in the alert row (copy results, empty clipboard).
+    notice: Option<(String, Instant)>,
     quit: bool,
     status: Status,
     started: Instant,
@@ -656,6 +689,10 @@ impl App {
             busy: false,
             follow: true,
             scroll: 0,
+            view: Vec::new(),
+            body: Rect::default(),
+            text_selection: None,
+            notice: None,
             quit: false,
             status,
             started: Instant::now(),
@@ -1599,6 +1636,20 @@ impl App {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
+        // The transcript owns mouse selection, so its copy chord must be read before the global
+        // Ctrl+C quit. An open modal keeps the selection untouched; only the console copies.
+        if is_copy_key(&key) {
+            if self.modal.is_none() {
+                self.copy_selection();
+            }
+            return;
+        }
+        if is_paste_key(&key) {
+            self.paste_clipboard();
+            return;
+        }
+        // Any other key dismisses the highlight: it belongs to the last drag, not to typing.
+        let had_selection = self.text_selection.take().is_some();
         // Ctrl+C is the documented quit, so a modal must not consume it: the history search
         // would otherwise take the 'c' as its query and the login form as the field's text.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
@@ -1689,6 +1740,9 @@ impl App {
             }
             KeyCode::Tab => self.complete(),
             KeyCode::Esc => {
+                if had_selection {
+                    return;
+                }
                 self.input.clear();
                 self.cursor = 0;
                 self.selection = 0;
@@ -1724,16 +1778,161 @@ impl App {
         }
     }
 
-    /// The wheel scrolls the transcript; the arrow keys never do. A modal owns the
+    /// The wheel scrolls the transcript; the left button selects text. A modal owns the
     /// screen while it is open, so the wheel leaves it alone.
     fn on_mouse(&mut self, mouse: MouseEvent) {
         if self.modal.is_some() {
             return;
         }
         match mouse.kind {
-            MouseEventKind::ScrollUp => self.scroll_by(-3),
-            MouseEventKind::ScrollDown => self.scroll_by(3),
+            MouseEventKind::ScrollUp => {
+                self.text_selection = None;
+                self.scroll_by(-3);
+            }
+            MouseEventKind::ScrollDown => {
+                self.text_selection = None;
+                self.scroll_by(3);
+            }
+            // The splash has no transcript text to copy.
+            MouseEventKind::Down(MouseButton::Left) if !self.lines.is_empty() || self.busy => {
+                self.text_selection =
+                    self.cell_point(mouse.column, mouse.row, true)
+                        .map(|point| TextSelection {
+                            anchor: point,
+                            focus: point,
+                        });
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if self.text_selection.is_some() {
+                    if let Some(point) = self.cell_point(mouse.column, mouse.row, false) {
+                        if let Some(selection) = &mut self.text_selection {
+                            selection.focus = point;
+                        }
+                    }
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.text_selection.is_some() {
+                    if let Some(point) = self.cell_point(mouse.column, mouse.row, false) {
+                        if let Some(selection) = &mut self.text_selection {
+                            selection.focus = point;
+                        }
+                    }
+                }
+                // A click without a drag selects nothing; leave the highlight off.
+                if self
+                    .text_selection
+                    .is_some_and(|selection| selection.anchor != selection.focus)
+                {
+                    self.copy_selection();
+                } else {
+                    self.text_selection = None;
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// Translate a mouse cell into the transcript's absolute row and column. `inside` rejects a
+    /// press outside the transcript; a drag clamps to its edge so a selection can end there.
+    fn cell_point(&self, column: u16, row: u16, inside: bool) -> Option<SelPoint> {
+        let body = self.body;
+        if body.width == 0 || body.height == 0 {
+            return None;
+        }
+        if inside && !body.contains(Position::new(column, row)) {
+            return None;
+        }
+        let x = column.clamp(body.left(), body.right().saturating_sub(1));
+        let y = row.clamp(body.top(), body.bottom().saturating_sub(1));
+        Some(SelPoint {
+            row: usize::from(self.scroll) + usize::from(y - body.top()),
+            col: x - body.left(),
+        })
+    }
+
+    /// Put the selected transcript cells on the clipboard and say so in the alert row.
+    fn copy_selection(&mut self) {
+        let Some(text) = self.selected_text() else {
+            self.text_selection = None;
+            self.notice = Some((
+                "nothing selected · drag over the transcript".into(),
+                Instant::now(),
+            ));
+            return;
+        };
+        let lines = text.lines().count().max(1);
+        let notice = if copy_to_clipboard(&text) {
+            if lines == 1 {
+                format!("copied {} characters", text.chars().count())
+            } else {
+                format!("copied {lines} lines")
+            }
+        } else {
+            "no clipboard tool found · install wl-clipboard, xclip or xsel".to_owned()
+        };
+        self.text_selection = None;
+        self.notice = Some((notice, Instant::now()));
+    }
+
+    /// The selected text from the last drawn transcript rows.
+    ///
+    /// Rows are the cells the terminal actually shows, so a hard-wrapped line copies with its
+    /// visible breaks. A wide character is stored once and its continuation cell is empty; the
+    /// empty cells are skipped instead of turning the character into a space.
+    fn selected_text(&self) -> Option<String> {
+        let (start, end) = self.text_selection?.ordered();
+        if start == end {
+            return None;
+        }
+        let scroll = usize::from(self.scroll);
+        let mut rows = Vec::new();
+        for absolute in start.row..=end.row {
+            let Some(index) = absolute.checked_sub(scroll) else {
+                continue;
+            };
+            let Some(line) = self.view.get(index) else {
+                continue;
+            };
+            let from = if absolute == start.row {
+                usize::from(start.col)
+            } else {
+                0
+            }
+            .min(line.len());
+            let to = if absolute == end.row {
+                usize::from(end.col)
+            } else {
+                line.len()
+            }
+            .min(line.len())
+            .max(from);
+            let text: String = line[from..to]
+                .iter()
+                .filter(|cell| !cell.is_empty())
+                .map(String::as_str)
+                .collect();
+            rows.push(text.trim_end().to_owned());
+        }
+        while rows.first().is_some_and(String::is_empty) {
+            rows.remove(0);
+        }
+        while rows.last().is_some_and(String::is_empty) {
+            rows.pop();
+        }
+        let text = rows.join("\n");
+        (!text.is_empty()).then_some(text)
+    }
+
+    fn paste_clipboard(&mut self) {
+        match paste_from_clipboard() {
+            Some(text) => self.paste_event(&text),
+            None => {
+                self.notice = Some((
+                    "clipboard is empty · or install wl-clipboard, xclip or xsel".into(),
+                    Instant::now(),
+                ));
+            }
         }
     }
 
@@ -2848,6 +3047,9 @@ impl App {
 
     fn alert_text(&self, width: u16) -> Option<String> {
         let room = (width as usize).saturating_sub(4);
+        if let Some((note, _)) = &self.notice {
+            return Some(format::clip(note, room));
+        }
         if let Some(note) = &self.status.note {
             return Some(format::clip(note, room));
         }
@@ -3017,40 +3219,41 @@ impl App {
         ("team · ready".into(), GREEN)
     }
 
-    /// What the console is waiting on, in booth's working-row shape: spinner, elapsed, label.
+    /// What the console is working on, in booth's working-row shape: spinner, elapsed, label.
     ///
-    /// The label names the action (`loading /subagents`) and, when nothing is being
-    /// submitted, the worker that is actually producing output. A spinner with only
-    /// "working" left the operator guessing which of several workers was alive.
+    /// Only work actually in flight earns a timer: a foreground command, or a subagent whose
+    /// stage is `working`. A pending portal judgement and a ticket waiting for a person are
+    /// idle waits; the header pulse and the transcript report them without a spinner.
     fn activity(&mut self) -> Option<(String, Instant)> {
         let label = if self.busy {
             self.busy_label
                 .clone()
                 .unwrap_or_else(|| "working".to_owned())
-        } else if !self.pending.is_empty() {
-            format!("portal · {} waiting for a judgement", self.pending.len())
-        } else if let Some(row) = self.subagents.focus() {
+        } else {
+            // The spinner is a claim that work is in flight. A portal judgement still pending
+            // and a ticket waiting for a person are both states without a running worker, so
+            // they belong to the header pulse and the transcript, not to a timer that never stops.
             let running = self.subagents.running();
             if running == 0 {
-                // A person is needed; counting zero subagents would make the wait look idle.
-                format!(
-                    "waiting for a person · {} · {}",
-                    short_id(&row.id),
-                    format::clip(&row.title, 42)
-                )
-            } else {
-                format!(
+                self.work_since = None;
+                self.work_label = None;
+                return None;
+            }
+            match self.subagents.focus().filter(|row| row.stage == "working") {
+                Some(row) => format!(
                     "{} subagent{} · {} · {}",
                     running,
                     if running == 1 { "" } else { "s" },
                     short_id(&row.id),
                     format::clip(&row.title, 42)
-                )
+                ),
+                // Only CSS Agent is running: the team page has no row to name.
+                None => format!(
+                    "{} subagent{} · CSS Agent",
+                    running,
+                    if running == 1 { "" } else { "s" }
+                ),
             }
-        } else {
-            self.work_since = None;
-            self.work_label = None;
-            return None;
         };
         if self.work_label.as_deref() != Some(label.as_str()) {
             self.work_label = Some(label.clone());
@@ -3060,6 +3263,13 @@ impl App {
     }
 
     fn draw(&mut self, frame: &mut Frame) {
+        if self
+            .notice
+            .as_ref()
+            .is_some_and(|(_, shown)| shown.elapsed() > Duration::from_secs(4))
+        {
+            self.notice = None;
+        }
         let area = frame.area();
         self.composer_width = area.width;
         let alert = self.alert_text(area.width);
@@ -3087,6 +3297,7 @@ impl App {
             Constraint::Length(composer_height),
         ])
         .areas(area);
+        self.body = body;
 
         if let Some((label, since)) = working.filter(|_| !palette_open) {
             draw_working(frame, working_area, &label, since);
@@ -3108,7 +3319,10 @@ impl App {
         let transcript = Paragraph::new(self.lines.clone()).wrap(Wrap { trim: false });
         let total = transcript.line_count(body.width).min(usize::from(u16::MAX)) as u16;
         let max_scroll = total.saturating_sub(height);
-        if self.follow {
+        if self.text_selection.is_some() {
+            // Freeze the window under a drag: new output must not slide the selected cells away.
+            self.scroll = self.scroll.min(max_scroll);
+        } else if self.follow {
             self.scroll = max_scroll;
         } else {
             self.scroll = self.scroll.min(max_scroll);
@@ -3127,6 +3341,15 @@ impl App {
             );
         } else {
             frame.render_widget(transcript.scroll((self.scroll, 0)), body);
+        }
+        self.paint_selection(frame);
+        if self.text_selection.is_some() {
+            // Only a selection reads the cells back; an idle console must not allocate a row
+            // snapshot on every 120 ms frame.
+            self.view = view_rows(frame.buffer_mut(), body);
+        } else {
+            self.view.clear();
+            self.view.shrink_to_fit();
         }
 
         self.draw_composer(frame, top, bottom);
@@ -3208,6 +3431,66 @@ impl App {
             );
         }
     }
+
+    /// Reverse the selected cells in the already drawn transcript. Selection coordinates are
+    /// absolute rows, so the same paint follows the text when the view is scrolled.
+    fn paint_selection(&self, frame: &mut Frame) {
+        let Some(selection) = self.text_selection else {
+            return;
+        };
+        let (start, end) = selection.ordered();
+        if start == end {
+            return;
+        }
+        let scroll = usize::from(self.scroll);
+        let body = self.body;
+        let buffer = frame.buffer_mut();
+        for absolute in start.row..=end.row {
+            let Some(index) = absolute.checked_sub(scroll) else {
+                continue;
+            };
+            if index >= usize::from(body.height) {
+                continue;
+            }
+            let y = body.y + index as u16;
+            let (from, to) = if start.row == end.row {
+                (start.col, end.col)
+            } else if absolute == start.row {
+                (start.col, body.width)
+            } else if absolute == end.row {
+                (0, end.col)
+            } else {
+                (0, body.width)
+            };
+            for col in from..to.min(body.width) {
+                let x = body.x + col;
+                buffer[(x, y)].modifier.insert(Modifier::REVERSED);
+            }
+        }
+    }
+}
+
+/// The transcript cells a frame actually drew, one entry per cell. A wide character occupies its
+/// leading cell; its continuation cells are empty, so copying skips them instead of inserting a
+/// space between the halves.
+fn view_rows(buffer: &ratatui::buffer::Buffer, body: Rect) -> Vec<Vec<String>> {
+    let mut rows = Vec::with_capacity(usize::from(body.height));
+    for y in body.top()..body.bottom() {
+        let mut row = Vec::with_capacity(usize::from(body.width));
+        let mut continuation = 0usize;
+        for x in body.left()..body.right() {
+            if continuation > 0 {
+                continuation -= 1;
+                row.push(String::new());
+                continue;
+            }
+            let symbol = buffer[(x, y)].symbol();
+            continuation = UnicodeWidthStr::width(symbol).saturating_sub(1);
+            row.push(symbol.to_owned());
+        }
+        rows.push(row);
+    }
+    rows
 }
 
 fn draw_modal(
@@ -3369,6 +3652,8 @@ const KEYS: &[(&str, &str)] = &[
     ("Ctrl+U / Ctrl+K", "delete to the start / end"),
     ("Ctrl+Y", "paste the last deleted text"),
     ("↑ ↓", "pick in the palette, or walk the history"),
+    ("Drag / Ctrl+Shift+C", "copy selected transcript text"),
+    ("Ctrl+V / Shift+Insert", "paste from the clipboard"),
     ("Wheel / PgUp / PgDn", "scroll the transcript"),
     ("Ctrl+L", "clear the transcript"),
     (
@@ -3792,6 +4077,37 @@ fn copy_to_clipboard(text: &str) -> bool {
     false
 }
 
+/// Reads the system clipboard through the same tools the console copies with.
+fn paste_from_clipboard() -> Option<String> {
+    let mut candidates: Vec<(&str, Vec<&str>)> = Vec::new();
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        candidates.push(("wl-paste", vec!["--no-newline"]));
+    }
+    if std::env::var_os("DISPLAY").is_some() {
+        candidates.push(("xclip", vec!["-selection", "clipboard", "-o"]));
+        candidates.push(("xsel", vec!["--clipboard", "--output"]));
+    }
+    if cfg!(target_os = "macos") {
+        candidates.push(("pbpaste", Vec::new()));
+    }
+    for (program, args) in candidates {
+        let output = std::process::Command::new(program)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output();
+        if let Ok(output) = output {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout).into_owned();
+                if !text.is_empty() {
+                    return Some(text);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// How many terminal rows `text` needs at `width` columns, at least one.
 fn wrapped_rows(text: &str, width: usize) -> usize {
     if text.is_empty() {
@@ -3885,6 +4201,22 @@ fn is_control_letter(key: &KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL)
         && !key.modifiers.contains(KeyModifiers::ALT)
         && matches!(key.code, KeyCode::Char(_))
+}
+
+/// The transcript's copy chord. Plain Ctrl+C still quits, so the shift is part of the binding;
+/// Ctrl+Insert is the classic terminal spelling.
+fn is_copy_key(key: &KeyEvent) -> bool {
+    (key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.modifiers.contains(KeyModifiers::SHIFT)
+        && key.code == KeyCode::Char('c'))
+        || (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Insert)
+}
+
+/// Paste from the system clipboard when the terminal does not turn the chord into a bracketed
+/// paste event. Ctrl+Shift+V arrives as the same letter in terminals without the kitty protocol.
+fn is_paste_key(key: &KeyEvent) -> bool {
+    (key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('v'))
+        || (key.modifiers.contains(KeyModifiers::SHIFT) && key.code == KeyCode::Insert)
 }
 
 fn insert_char(text: &mut String, cursor: usize, ch: char) {
@@ -5787,6 +6119,101 @@ mod editor_tests {
     }
 
     #[test]
+    fn a_mouse_selection_copies_the_drawn_rows() {
+        let (mut app, dir, _env) = editor("copy-selection");
+        app.body = Rect::new(0, 0, 12, 3);
+        app.view = vec![
+            vec!["第".into(), String::new(), "一".into(), String::new()],
+            vec!["行".into(), String::new(), " ".into(), " ".into()],
+        ];
+        app.text_selection = Some(TextSelection {
+            anchor: SelPoint { row: 0, col: 0 },
+            focus: SelPoint { row: 1, col: 4 },
+        });
+        assert_eq!(app.selected_text().as_deref(), Some("第一\n行"));
+
+        // Dragging upwards keeps the transcript order and skips the wide-character padding.
+        app.text_selection = Some(TextSelection {
+            anchor: SelPoint { row: 1, col: 4 },
+            focus: SelPoint { row: 0, col: 2 },
+        });
+        assert_eq!(app.selected_text().as_deref(), Some("一\n行"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_copy_chord_does_not_quit_and_plain_ctrl_c_still_does() {
+        let (mut app, dir, _env) = editor("copy-chord");
+        app.on_key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ));
+        assert!(!app.quit, "Ctrl+Shift+C copies instead of quitting");
+        assert!(
+            app.notice
+                .as_ref()
+                .is_some_and(|(note, _)| note.contains("nothing selected")),
+            "{:?}",
+            app.notice
+        );
+        app.on_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.quit);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_wide_character_keeps_one_cell_and_an_empty_padding_cell() {
+        let mut buffer = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 4, 1));
+        buffer.set_stringn(0, 0, "你a", 4, Style::default());
+        let rows = view_rows(&buffer, Rect::new(0, 0, 4, 1));
+        assert_eq!(rows[0][0], "你");
+        assert_eq!(
+            rows[0][1], "",
+            "the wide character's second cell is padding"
+        );
+        assert_eq!(rows[0][2], "a");
+    }
+
+    #[test]
+    fn a_selection_highlights_and_reads_the_drawn_transcript() {
+        let (mut app, dir, _env) = editor("copy-drawn");
+        app.push(Line::from("第一行"));
+        app.push(Line::from("second line"));
+        let backend = ratatui::backend::TestBackend::new(30, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        // The transcript is shorter than the body, so its first line sits at the top.
+        let row = 0usize;
+        let absolute = app.scroll as usize + row;
+        app.text_selection = Some(TextSelection {
+            anchor: SelPoint {
+                row: absolute,
+                col: 0,
+            },
+            focus: SelPoint {
+                row: absolute,
+                col: 6,
+            },
+        });
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+
+        assert!(
+            app.view.iter().flatten().any(|cell| cell == "第"),
+            "a live selection captures the transcript cells"
+        );
+        let y = app.body.y + row as u16;
+        assert!(
+            terminal.backend().buffer()[(app.body.x, y)]
+                .modifier
+                .contains(Modifier::REVERSED),
+            "the selected row is reversed on screen"
+        );
+        assert_eq!(app.selected_text().as_deref(), Some("第一行"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn multiline_history_can_be_navigated_and_the_draft_restored() {
         let (mut app, dir, _env) = editor("history-multiline");
         app.history = vec!["older".into(), "first\nsecond".into()];
@@ -6061,7 +6488,7 @@ mod editor_tests {
     }
 
     #[test]
-    fn activity_names_the_number_of_waiting_messages_and_a_paused_service() {
+    fn a_pending_judgement_does_not_keep_the_working_row_spinning() {
         let (mut app, dir, _env) = editor("pending-activity");
         for id in ["local-a", "local-b"] {
             app.pending.insert(
@@ -6074,8 +6501,28 @@ mod editor_tests {
             );
         }
         app.status.paused = true;
-        let label = app.activity().unwrap().0;
-        assert_eq!(label, "portal · 2 waiting for a judgement");
+        assert!(
+            app.activity().is_none(),
+            "waiting for a judgement is not running work"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_person_stage_does_not_keep_the_working_row_spinning() {
+        let (mut app, dir, _env) = editor("person-activity");
+        app.subagents.rows = crate::subagents::rows_from_tickets(&[TicketRow {
+            id: "abcdef1234567890".into(),
+            title: "fix the installer".into(),
+            state: "open".into(),
+            stage: "person".into(),
+            note: Some("which tag?".into()),
+            ..TicketRow::default()
+        }]);
+        assert!(
+            app.activity().is_none(),
+            "a ticket waiting for a person has no worker to time"
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

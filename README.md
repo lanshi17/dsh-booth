@@ -196,6 +196,9 @@ possible. `/new` starts a fresh portal conversation.
 | `Tab` | Complete the selected palette entry |
 | `↑` `↓` | Move in the palette, or walk the command history when it is closed |
 | `Mouse wheel` / `PgUp` `PgDn` | Scroll the transcript; follow new output again at the bottom. `↑` `↓` stay with the command history |
+| Drag over the transcript | Select output; releasing copies it to the system clipboard |
+| `Ctrl+Shift+C` / `Ctrl+Insert` | Copy the current transcript selection again |
+| `Ctrl+V` / `Shift+Insert` | Paste from the system clipboard (bracketed paste still works) |
 | `Esc` | Clear the line and close the palette |
 | `Ctrl+L` | Clear the transcript |
 | `Ctrl+D` | Quit on an empty line; delete at the caret otherwise |
@@ -206,6 +209,10 @@ The transcript scrolls with the mouse wheel or `PgUp`/`PgDn`; the arrow keys nev
 how to return to the newest output.
 Pasting uses the terminal's bracketed-paste mode. A pasted paragraph stays as one editable draft;
 line breaks are retained and long lines wrap. The composer shows up to five rows around the cursor.
+`Ctrl+V`/`Shift+Insert` additionally reads the system clipboard through `wl-paste`, `xclip`, `xsel`
+or `pbpaste`, which covers terminals that do not send a bracketed-paste event. Copying a transcript
+selection uses `wl-copy`, `xclip`, `xsel` or `pbcopy`; the alert row reports when no tool is
+installed.
 
 Commands the one-shot CLI also has keep the same names: `/overview`, `/status`, `/portal`, `/tickets`,
 `/subagents`, `/css`, `/ticket <id>`, `/threads`, `/thread <key>`, `/decisions`, `/sources`,
@@ -228,8 +235,11 @@ worker's own DSH subagents stay inside its Session; the board shows that worker'
 not each internal turn.
 
 The console uses the same page for its working row. While a command runs it says what is
-loading (`loading /subagents`); while the portal decides it says `portal · 2 waiting for a
-judgement`; while workers are busy it names one: `2 subagents · t-7f3a9c · fix the installer`.
+loading (`loading /subagents`); while workers are busy it names one:
+`2 subagents · t-7f3a9c · fix the installer`. Only work in flight earns the spinner and its
+timer: a pending portal judgement and a ticket waiting for a person are reported by the header
+pulse and the transcript, so the bottom-left counter does not keep running while nothing is
+being worked on.
 A ticket this console opened also prints a new `◇ … · progress` line when its worker's latest
 report changes, once per summary, so progress between `working` and `closed` is visible.
 

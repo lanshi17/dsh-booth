@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.0] — 2026-11-19
+
+### New features
+
+- **Transcript copy and paste**: dragging over the transcript selects output and puts it on the
+  system clipboard on release (`Ctrl+Shift+C` or `Ctrl+Insert` copies again); the alert row
+  reports the result. `Ctrl+V`/`Shift+Insert` read the clipboard through
+  `wl-paste`/`xclip`/`xsel`/`pbpaste` when the terminal does not send a bracketed-paste event.
+  Wide CJK characters and wrapped rows copy as they appear on screen.
+
+### Improvements
+
+- **The working row times only real work**: the bottom-left spinner now appears for a foreground
+  command or a subagent whose stage is `working`. A portal judgement still pending and a ticket
+  waiting for a person no longer leave a counter running; the header pulse and transcript still
+  report those states.
+
+[0.4.0]: https://github.com/lanshi17/dsh-booth/releases/tag/v0.4.0
+
 ## [0.3.74] — 2026-11-19
 
 ### Improvements
