@@ -51,13 +51,15 @@ clipboard with OSC 52 (tmux passthrough included); `/export [path]` writes the f
 (`booth.editor` in `keybindings.yml` moves that key), `PageUp`/`PageDown` or the wheel browse the transcript, `Shift+Tab` cycles dsh's reasoning effort; a permission card accepts
 `y` (once), `a` (always), `n` (deny once), `d` (deny always).
 Commands: `/status`, `/model`, `/sessions`, `/close`, `/copy`, `/clear`, `/retry`, `/export`,
-`/help`, `/quit`. `/copy`, `/clear`, `/export`, `/status`, `/help` and `/quit` stay available while a turn
+`/help`, `/quit` (`/exit` is an alias). `/copy`, `/clear`, `/export`, `/status`, `/help` and `/quit` stay available while a turn
 is running; a
 plain prompt typed during a run is queued and sent when the run ends.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
 through the ACP config option. `/sessions` lists saved sessions: Enter resumes, `r` refreshes, `c` closes the active
-session. Type `/` for the command menu: ↑/↓ selects, Tab completes, Enter runs the selection. The
-wheel also moves the model and session pickers.
+session. Type `/` for the fuzzy command menu below the input: names, aliases and descriptions all
+match. ↑/↓ or the wheel moves, PgUp/PgDn/Home/End jump, Tab completes, Enter runs the selection
+and Esc dismisses the menu without clearing the draft. The wheel also moves the model and session
+pickers.
 
 ## Environment
 

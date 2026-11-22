@@ -77,8 +77,10 @@ booth_warnings(booth_supervisor)
 
 add_library(booth_interaction STATIC
   src/interaction/state.cpp
+  src/interaction/commands.cpp
   src/interaction/scroll.cpp
   src/interaction/worker.cpp
+  src/interaction/ticker.cpp
   src/interaction/keymap.cpp
   src/interaction/history.cpp
   src/interaction/editor.cpp

@@ -396,6 +396,7 @@ ftxui::Element help_view() {
   body.push_back(ftxui::text("booth — keys and commands") | ftxui::bold | ftxui::color(kAccent));
   body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
   body.push_back(ftxui::text("Enter send · ↑/↓ history · Tab complete · ^G editor · ^C cancel · ^D quit"));
+  body.push_back(ftxui::text("/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"));
   body.push_back(ftxui::text("PageUp/PageDown or wheel  browse the transcript"));
   body.push_back(ftxui::text("/copy /clear /export /status /help /quit work during a run; Enter queues"));
   body.push_back(ftxui::text("/status  show phase, session and model"));
@@ -437,27 +438,6 @@ ftxui::Element permission_view(const PermissionRequest& request) {
   }));
   return ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
          ftxui::bgcolor(kPanel);
-}
-
-constexpr CommandHint kCommandHints[] = {
-    {"/help", "keys and commands"},
-    {"/model", "switch the session model"},
-    {"/status", "phase, session and model"},
-    {"/copy", "copy the last answer"},
-    {"/export", "write the transcript as markdown"},
-    {"/sessions", "resume a saved session"},
-    {"/close", "close the active session"},
-    {"/quit", "leave"},
-};
-
-std::vector<const CommandHint*> matching_commands(const std::string& composer) {
-  std::vector<const CommandHint*> matches;
-  if (composer.empty() || composer.front() != '/') return matches;
-  if (composer.find(' ') != std::string::npos) return matches;
-  for (const auto& hint : kCommandHints) {
-    if (std::string(hint.name).rfind(composer, 0) == 0) matches.push_back(&hint);
-  }
-  return matches;
 }
 
 void collect_model_options(const nlohmann::json& option, std::vector<ModelChoice>& out,

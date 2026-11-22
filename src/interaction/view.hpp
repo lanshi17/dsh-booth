@@ -1,7 +1,9 @@
 #pragma once
 
 #include "contract/options.hpp"
+#include "interaction/commands.hpp"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -54,14 +56,6 @@ std::string status_text(const AppState& state);
 /// Prints the omp-style splash once, before the inline app starts.
 void print_splash();
 
-struct CommandHint {
-  const char* name;
-  const char* description;
-};
-
-/// Commands matching a `/` prefix, in display order.
-std::vector<const CommandHint*> matching_commands(const std::string& composer);
-
 /// Flattens dsh model config options into display-name/wire-value pairs.
 void collect_model_options(const nlohmann::json& option, std::vector<ModelChoice>& out,
                            const std::string& provider = {});
@@ -83,8 +77,26 @@ ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions, std:
 
 enum class SlashAction { None, Handled, Submit };
 
-/// Handles ↑/↓/Tab/Enter while the slash menu is open; updates the composer for Tab/Enter.
-SlashAction slash_menu_key(const ftxui::Event& event, AppState& state, std::size_t& index);
+/// The inline slash-command menu: filter, selection, completion and dismissal state.
+class SlashMenu {
+ public:
+  /// Reopens the menu and resets the selection when the composer text changes.
+  void sync(const std::string& composer);
+
+  /// Whether the dropdown should be drawn for this composer text.
+  [[nodiscard]] bool visible(const std::string& composer) const;
+
+  /// Handles navigation, Tab/Enter completion and Esc dismissal.
+  SlashAction key(ftxui::Event& event, AppState& state);
+
+  [[nodiscard]] std::size_t index() const { return index_; }
+
+ private:
+  bool hidden_{false};
+  bool moved_{false};
+  std::string seen_;
+  std::size_t index_{0};
+};
 
 /// The slash-command menu rows.
 ftxui::Element command_menu_view(const std::string& composer, std::size_t index);

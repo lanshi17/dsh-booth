@@ -41,6 +41,7 @@
 #include "interaction/prompt.hpp"
 #include "interaction/scroll.hpp"
 #include "interaction/state.hpp"
+#include "interaction/ticker.hpp"
 #include "interaction/worker.hpp"
 #include "interaction/view.hpp"
 #include "subagent/acp/messages.hpp"
@@ -83,12 +84,7 @@ class Root : public ComponentBase {
         keys_(keys) {
     history_ = booth::load_history(history_file_);
     git_ = booth::read_git(cwd_);
-    ticker_ = std::thread([this] {
-      while (alive_) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(120));
-        if (animate_) screen_.PostEvent(ftxui::Event::Custom);
-      }
-    });
+    ticker_ = booth::start_ticker(screen_, animate_, alive_);
   }
   void shutdown() {
     cancel();
@@ -200,6 +196,15 @@ class Root : public ComponentBase {
       }
       return true;
     }
+    slash_.sync(state_.composer);
+    if (slash_.visible(state_.composer)) {
+      const auto action = slash_.key(event, state_);
+      if (action != booth::SlashAction::None) {
+        editor_.SetContent(state_.composer);
+        if (action == booth::SlashAction::Submit) submit();
+        return true;
+      }
+    }
     if (event.is_mouse()) {
       const auto& mouse = event.mouse();
       if (mouse.button == ftxui::Mouse::WheelUp) { scroll_.up(state_.entries.size(), 3); return true; }
@@ -221,12 +226,6 @@ class Root : public ComponentBase {
     }
     if (matches_chord(keys_.quit, event) && state_.composer.empty()) {
       screen_.Exit();
-      return true;
-    }
-    const auto slash = booth::slash_menu_key(event, state_, slash_index_);
-    if (slash != booth::SlashAction::None) {
-      editor_.SetContent(state_.composer);
-      if (slash == booth::SlashAction::Submit) submit();
       return true;
     }
     if (event == ftxui::Event::ArrowUp && state_.composer.empty() && !history_.empty()) {
@@ -257,9 +256,6 @@ class Root : public ComponentBase {
     }
     if (window.scroll == 0 && !state_.streaming.empty()) {
       lines.push_back(booth::markdown_view(state_.streaming, false));
-    }
-    if (!booth::matching_commands(state_.composer).empty()) {
-      lines.push_back(booth::command_menu_view(state_.composer, slash_index_));
     }
     if (state_.busy && window.scroll == 0) {
       const auto elapsed = std::chrono::steady_clock::now() - busy_since_;
@@ -303,6 +299,10 @@ class Root : public ComponentBase {
     view.push_back(booth::composer_view(state_, cwd_, git_, title, busy_seconds, spinner,
                                         editor_.Lines(), editor_.CursorLine(),
                                         editor_.CursorColumn(), state_.reasoning.current_name));
+    slash_.sync(state_.composer);
+    if (slash_.visible(state_.composer)) {
+      view.push_back(booth::command_menu_view(state_.composer, slash_.index()));
+    }
     return ftxui::vbox(std::move(view));
   }
   void drain() {
@@ -566,7 +566,6 @@ class Root : public ComponentBase {
   bool sessions_open_{false};
   bool sessions_loading_{false};
   std::size_t sessions_index_{0};
-  std::size_t slash_index_{0};
   std::atomic<bool> animate_{false};
   std::atomic<bool> alive_{true};
   std::thread ticker_;
@@ -575,6 +574,7 @@ class Root : public ComponentBase {
   std::size_t history_pos_{0};
   KeyBindings keys_;
   booth::TranscriptScroll scroll_;
+  booth::SlashMenu slash_;
   std::deque<std::string> queued_;
   std::mutex session_mutex_;
   std::string session_;
