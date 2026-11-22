@@ -23,7 +23,7 @@ SlashAction press(SlashMenu& menu, AppState& state, ftxui::Event event) {
 
 TEST_CASE("slash menu lists every command for a bare slash") {
   const auto matches = matching_commands("/");
-  REQUIRE(matches.size() == 10);
+  REQUIRE(matches.size() == 15);
   REQUIRE(matches.front()->name == std::string("/help"));
 }
 
@@ -31,6 +31,7 @@ TEST_CASE("slash menu filters names, aliases and descriptions") {
   auto matches = matching_commands("/co");
   REQUIRE_FALSE(matches.empty());
   REQUIRE(matches[0]->name == std::string("/copy"));
+  REQUIRE(contains(matches, "/context"));
   REQUIRE(contains(matches, "/close"));
 
   matches = matching_commands("/exit");
@@ -62,15 +63,16 @@ TEST_CASE("slash menu navigation wraps and pages") {
   REQUIRE(menu.index() == 0);
 
   REQUIRE(press(menu, state, ftxui::Event::ArrowUp) == SlashAction::Handled);
-  REQUIRE(menu.index() == 9);
+  REQUIRE(menu.index() == 14);
   REQUIRE(press(menu, state, ftxui::Event::ArrowDown) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
   REQUIRE(press(menu, state, ftxui::Event::PageDown) == SlashAction::Handled);
-  REQUIRE(menu.index() == 9);
+  REQUIRE(menu.index() == 10);
+  REQUIRE(menu.index() == 10);
   REQUIRE(press(menu, state, ftxui::Event::PageUp) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
   REQUIRE(press(menu, state, ftxui::Event::End) == SlashAction::Handled);
-  REQUIRE(menu.index() == 9);
+  REQUIRE(menu.index() == 14);
   REQUIRE(press(menu, state, ftxui::Event::Home) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
 }
@@ -78,9 +80,8 @@ TEST_CASE("slash menu navigation wraps and pages") {
 TEST_CASE("Tab completes, Enter submits and Escape dismisses") {
   SlashMenu menu;
   AppState state;
-  state.composer = "/co";
+  state.composer = "/clo";
   menu.sync(state.composer);
-  REQUIRE(press(menu, state, ftxui::Event::ArrowDown) == SlashAction::Handled);
   REQUIRE(press(menu, state, ftxui::Event::Tab) == SlashAction::Handled);
   REQUIRE(state.composer == "/close ");
 

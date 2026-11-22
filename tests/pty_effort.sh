@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# /effort changes the reasoning level and the status band follows.
+set -euo pipefail
+
+booth=$1
+kernel=$2
+state=$(mktemp -d)
+output=$(mktemp)
+cleaned=$(mktemp)
+trap 'rm -rf "$state" "$output" "$cleaned"' EXIT
+
+( printf 'hi\n'; sleep 1; printf '/effort low\n'; sleep 1; printf '\x04' ) |
+  timeout 20 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
+    >"$output" 2>&1 || true
+
+sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' "$output" >"$cleaned"
+grep -aq "reasoning Low" "$cleaned"
+grep -aq "effort Low" "$cleaned"

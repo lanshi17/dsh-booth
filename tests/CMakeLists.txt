@@ -2,7 +2,7 @@ add_executable(fake_kernel fake_kernel.cpp)
 target_link_libraries(fake_kernel PRIVATE nlohmann_json::nlohmann_json)
 booth_warnings(fake_kernel)
 
-add_executable(booth_tests contract_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp keymap_test.cpp editor_test.cpp replay_test.cpp clipboard_test.cpp)
+add_executable(booth_tests contract_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp commands_ui_test.cpp keymap_test.cpp editor_test.cpp replay_test.cpp clipboard_test.cpp)
 target_link_libraries(booth_tests PRIVATE booth_interaction Catch2::Catch2WithMain)
 target_compile_definitions(booth_tests PRIVATE FAKE_KERNEL_PATH="$<TARGET_FILE:fake_kernel>")
 add_dependencies(booth_tests fake_kernel)
@@ -61,6 +61,27 @@ add_test(NAME pty_slash_pages
 add_test(NAME pty_slash_menu
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_slash_menu.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
+
+add_test(NAME pty_new
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_new.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_effort
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_effort.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_queue_command
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_queue_command.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_stats
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_stats.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_context
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_context.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 
 add_test(NAME pty_sessions_pages
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_sessions_pages.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>

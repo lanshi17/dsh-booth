@@ -50,12 +50,19 @@ clipboard with OSC 52 (tmux passthrough included); `/export [path]` writes the f
 `Ctrl+C` cancels the run, `Ctrl+D` quits, `Ctrl+G` opens `$VISUAL`/`$EDITOR` on the prompt
 (`booth.editor` in `keybindings.yml` moves that key), `PageUp`/`PageDown` or the wheel browse the transcript, `Shift+Tab` cycles dsh's reasoning effort; a permission card accepts
 `y` (once), `a` (always), `n` (deny once), `d` (deny always).
-Commands: `/status`, `/model`, `/sessions`, `/close`, `/copy`, `/clear`, `/retry`, `/export`,
-`/help`, `/quit` (`/exit` is an alias). `/copy`, `/clear`, `/export`, `/status`, `/help` and `/quit` stay available while a turn
-is running; a
-plain prompt typed during a run is queued and sent when the run ends.
+Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
+`/export`, `/effort`, `/context`, `/stats`, `/queue`, `/help`, `/quit`.
+Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
+`/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/queue`, `/help` and
+`/quit` stay available while a turn is running; a plain prompt typed during a run is queued and
+sent when the run ends.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
-through the ACP config option. `/sessions` lists saved sessions: Enter resumes, `r` refreshes, `c` closes the active
+through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
+name or wire value selects it, and no argument lists the current value and choices.
+`/context` reports dsh's context window usage; `/stats` counts local transcript entries, tools and
+queued prompts. `/new` closes the current session and leaves a clean transcript, while `/clear`
+only clears the local transcript (dsh has no ACP call that clears a live session's context).
+`/queue <text>` enqueues a prompt for when the active turn ends. `/sessions` lists saved sessions: Enter resumes, `r` refreshes, `c` closes the active
 session. Type `/` for the fuzzy command menu below the input: names, aliases and descriptions all
 match. ↑/↓ or the wheel moves, PgUp/PgDn/Home/End jump, Tab completes, Enter runs the selection
 and Esc dismisses the menu without clearing the draft. The wheel also moves the model and session
@@ -91,3 +98,6 @@ composer.
 - `keybindings.yml` in the state dir maps `booth.cancel`, `booth.quit` and `booth.editor`;
   paging and copy use fixed keys.
 - Only Linux is tested; the process layer uses `posix_spawn` and pipes.
+- OMP commands that manage its own runtime (`/compact`, `/login`, `/mcp`, `/plugins`,
+  `/marketplace`, `/collab`, `/agents`, `/jobs`, `/usage`, `/tools`, `/git`) have no dsh ACP
+  equivalent and are not emulated.

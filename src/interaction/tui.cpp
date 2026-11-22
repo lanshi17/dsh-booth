@@ -40,6 +40,7 @@
 #include "interaction/history.hpp"
 #include "interaction/prompt.hpp"
 #include "interaction/scroll.hpp"
+#include "interaction/commands_ui.hpp"
 #include "interaction/state.hpp"
 #include "interaction/ticker.hpp"
 #include "interaction/worker.hpp"
@@ -59,13 +60,6 @@ using ftxui::Elements;
 using ftxui::ScreenInteractive;
 
 const char* const kSpinner[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"};
-
-/// Commands that only touch the local transcript, so they stay available during a turn.
-bool local_command(const std::string& line) {
-  return line == "/copy" || line == "/clear" || line == "/status" || line == "/help" ||
-         line == "/quit" ||
-         line == "/exit" || line == "/export" || line.rfind("/export ", 0) == 0;
-}
 
 class Root : public ComponentBase {
  public:
@@ -327,9 +321,14 @@ class Root : public ComponentBase {
           sessions_index_ = state_.history.size() - 1;
         }
       }
+      if (std::holds_alternative<Problem>(event.value)) new_after_close_ = false;
       if (closed) {
         session_title_.clear();
         queued_.clear();
+        if (new_after_close_) {
+          state_.notice = "new session";
+          new_after_close_ = false;
+        }
       }
       if (turn_done) {
         animate_ = false;
@@ -364,7 +363,7 @@ class Root : public ComponentBase {
     const bool command = text.front() == '/';
     if (state_.permission) return;
     if (state_.busy) {
-      if (command && local_command(text)) {
+      if (command && booth::local_command(text)) {
         state_.composer.clear();
         editor_.Reset();
         handle_command(text);
@@ -374,7 +373,7 @@ class Root : public ComponentBase {
         queued_.push_back(std::move(text));
         state_.notice = std::to_string(queued_.size()) + " queued";
       } else {
-        state_.notice = "busy: /copy /export /status /help /quit still work";
+        state_.notice = "busy: local commands and /queue still work";
       }
       return;
     }
@@ -402,7 +401,24 @@ class Root : public ComponentBase {
     booth::append_history(history_file_, text);
     worker_.post([this, text = std::move(text)] { run_prompt(text); });
   }
-  void handle_command(const std::string& line) {
+  void handle_command(std::string line) {
+    line = booth::normalize_command(std::move(line));
+    if (booth::handle_local_command(state_, scroll_, queued_.size(), line)) return;
+    if (line == "/queue" || line.rfind("/queue ", 0) == 0) {
+      booth::handle_queue_command(state_, queued_, line);
+      return;
+    }
+    if (line == "/effort" || line.rfind("/effort ", 0) == 0) {
+      booth::handle_effort_command(state_, line, [this](const std::string& id, const ModelChoice& picked) {
+        worker_.post([this, ctx = context(), id, choice = picked]() mutable { booth::set_reasoning(ctx, id, choice); });
+      });
+      return;
+    }
+    if (line == "/new") {
+      if (booth::start_new_session(state_, scroll_, new_after_close_))
+        worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); });
+      return;
+    }
     const auto argument = [&](std::string_view prefix) -> std::optional<std::string> {
       if (line.rfind(prefix, 0) != 0) return std::nullopt;
       std::string rest = line.substr(prefix.size());
@@ -412,32 +428,16 @@ class Root : public ComponentBase {
       const auto last = rest.find_last_not_of(" \t");
       return rest.substr(0, last + 1);
     };
-    if (line == "/quit" || line == "/exit") {
+    if (line == "/quit") {
       screen_.Exit();
       return;
     }
-    if (line == "/help") {
-      state_.help = true;
-      return;
-    }
-    if (line == "/status") {
-      state_.notice = booth::status_text(state_);
-      return;
-    }
-    if (line == "/copy") { booth::copy_answer(state_); return; }
     if (line == "/retry") {
       if (history_.empty()) {
         state_.notice = "nothing to retry";
         return;
       }
       send_prompt(history_.back());
-      return;
-    }
-    if (line == "/clear") {
-      state_.entries.clear();
-      state_.streaming.clear();
-      scroll_.follow();
-      state_.notice = "cleared";
       return;
     }
     if (line == "/export" || line.rfind("/export ", 0) == 0) {
@@ -575,6 +575,7 @@ class Root : public ComponentBase {
   KeyBindings keys_;
   booth::TranscriptScroll scroll_;
   booth::SlashMenu slash_;
+  bool new_after_close_{false};
   std::deque<std::string> queued_;
   std::mutex session_mutex_;
   std::string session_;

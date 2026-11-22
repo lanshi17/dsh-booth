@@ -12,4 +12,5 @@ trap 'rm -rf "$state" "$output"' EXIT
   timeout 20 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
     >"$output" 2>&1 || true
 
+grep -aq "new session" "$output"
 ! grep -aq "booth — keys" "$output"

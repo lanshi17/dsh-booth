@@ -11,8 +11,11 @@ struct CommandHint {
   const char* name;
   const char* description;
   const char* keywords;
-  const char* alias;
+  const char* aliases;  // space-separated, without the leading slash
 };
+
+/// Rewrites a command alias to its canonical name, preserving any arguments.
+std::string normalize_command(std::string line);
 
 /// Lowercased text after the leading slash, or nullopt when this is not a slash token.
 std::optional<std::string> slash_query(const std::string& composer);
