@@ -1,0 +1,32 @@
+#pragma once
+
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "contract/event.hpp"
+
+namespace booth {
+
+struct AppState {
+  Snapshot snapshot;
+  std::vector<TranscriptEntry> entries;
+  std::vector<SessionRow> history;
+  std::string streaming;  // assistant text not yet committed at a turn end
+  std::string composer;
+  std::string session;
+  std::string title;
+  std::string model{"auto"};
+  std::vector<ModelChoice> models;
+  ReasoningOptions reasoning;
+  bool busy{false};
+  std::optional<PermissionRequest> permission;
+  std::string notice;
+  bool help{false};
+};
+
+/// Apply one event. The only mutation point for the screen.
+void apply(AppState& state, const Event& event);
+
+}  // namespace booth

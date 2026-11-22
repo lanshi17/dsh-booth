@@ -2,3 +2,8 @@
 *.log
 /.env
 /.env.local
+/build/
+
+node_modules/
+/build-asan/
+/build-release/
