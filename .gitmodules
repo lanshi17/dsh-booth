@@ -1,3 +1,15 @@
-[submodule "superagent"]
-	path = superagent
-	url = https://github.com/lanshi17/dsh-superagent-prototype.git
+[submodule "libs/codex"]
+	path = libs/codex
+	url = https://github.com/openai/codex
+[submodule "libs/gemini-cli"]
+	path = libs/gemini-cli
+	url = https://github.com/google-gemini/gemini-cli
+[submodule "libs/qwen-code"]
+	path = libs/qwen-code
+	url = https://github.com/QwenLM/qwen-code
+[submodule "libs/omp"]
+	path = libs/omp
+	url = https://github.com/can1357/oh-my-pi
+[submodule "libs/dsh"]
+	path = libs/dsh
+	url = https://github.com/deepseek-ai/deepseek-harness
