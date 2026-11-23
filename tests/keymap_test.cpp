@@ -55,6 +55,8 @@ TEST_CASE("a missing file keeps the defaults") {
   REQUIRE(bindings->hide_tools.key == 'O');
   REQUIRE(bindings->paste_image.kind == Chord::Kind::Ctrl);
   REQUIRE(bindings->paste_image.key == 'V');
+  REQUIRE(bindings->links.kind == Chord::Kind::Alt);
+  REQUIRE(bindings->links.key == 'L');
 }
 
 TEST_CASE("the file overrides known actions and ignores unknown ones") {

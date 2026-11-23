@@ -134,7 +134,8 @@ Result<KeyBindings> load_keybindings(const std::filesystem::path& path) {
         action != "booth.reasoning" && action != "booth.page_up" &&
         action != "booth.page_down" && action != "booth.dequeue" &&
         action != "booth.help" && action != "booth.model" &&
-        action != "booth.sessions" && action != "booth.copy") {
+        action != "booth.sessions" && action != "booth.copy" &&
+        action != "booth.links") {
       continue;
     }
 
@@ -161,6 +162,7 @@ Result<KeyBindings> load_keybindings(const std::filesystem::path& path) {
     if (action == "booth.model") bindings.model = *chord;
     if (action == "booth.sessions") bindings.sessions = *chord;
     if (action == "booth.copy") bindings.copy = *chord;
+    if (action == "booth.links") bindings.links = *chord;
   }
   return bindings;
 }

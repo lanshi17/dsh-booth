@@ -56,14 +56,14 @@ effort. The editor supports `Ctrl+Z` undo, `Alt+Z` redo, `Ctrl`/`Alt`+`←`/`→
 the editor. Drafts taller than eight rows scroll internally with a `↑N` marker; a permission card accepts
 `y` (once), `a` (always), `n` (deny once), `d` (deny always).
 Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
-`/export`, `/effort`, `/theme`, `/notify`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
+`/export`, `/effort`, `/theme`, `/notify`, `/links`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and
 `/notify off` persist terminal notifications in `$BOOTH_STATE_DIR/notify`. Notifications default to
 on and use OSC 9 for permission requests and turns lasting at least five seconds (tmux passthrough
 is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
-`/session`, `/acp`, `/cancel`, `/notify`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
+`/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
 while a turn is running; a plain prompt typed during a run is queued and sent when the run ends.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
 through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
@@ -81,6 +81,8 @@ effort, context, queue), and `/acp` prints the protocol, phase, connection and s
 `/attach <path>` adds an ACP `resource_link` to the next prompt (shown as a `file N` status chip);
 `/detach [name|all]` clears pending links, and `/cancel` is the explicit ACP cancel command.
 `/find <text>` searches the local transcript and cycles older matches on repeated calls.
+`/links` (or `Alt+L`) lists openable transcript URLs with `a`–`z`/`A`–`Z` hint keys; Enter or a
+hint opens the selection and Esc closes.
 A prompt starting with `!` runs the rest as a local `/bin/sh -c` command in the working directory,
 shows a `bash` tool card, and keeps the command/output out of model context and prompt history.
 `Ctrl+R` searches prompt history; `Ctrl+O` expands tool output, `Ctrl+T` hides or shows thinking,
@@ -150,7 +152,7 @@ composer.
 - `keybindings.yml` in the state dir maps `booth.cancel`, `booth.quit`, `booth.editor`,
   `booth.history`, `booth.tools`, `booth.thinking`, `booth.hide_tools`, `booth.paste_image`,
   `booth.reasoning`, `booth.page_up`, `booth.page_down`, `booth.dequeue`, `booth.help`,
-  `booth.model`, `booth.sessions` and `booth.copy` to `Ctrl`/`Alt`/`Shift` letter chords, `Esc`,
+  `booth.model`, `booth.sessions`, `booth.copy` and `booth.links` to `Ctrl`/`Alt`/`Shift` letter chords, `Esc`,
   `Enter`, `Shift+Tab`, arrows or `PageUp`/`PageDown`.
 - Mouse hit-testing uses each row's final FTXUI box, so resizing and scrolling keep clicks exact.
 - Only Linux is tested; the process layer uses `posix_spawn` and pipes; Vim grapheme clusters use

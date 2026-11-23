@@ -44,6 +44,7 @@
 #include "interaction/prompt.hpp"
 #include "interaction/scroll.hpp"
 #include "interaction/shell_command.hpp"
+#include "interaction/link_picker.hpp"
 #include "interaction/commands_ui.hpp"
 #include "interaction/copy_picker.hpp"
 #include "interaction/draft.hpp"
@@ -89,8 +90,7 @@ class Root : public ComponentBase {
     worker_.post([this, ctx = context()]() mutable { booth::ensure_session(ctx); });
   }
   void shutdown() {
-    booth::save_draft(draft_file_, state_.composer);
-    cancel();
+    booth::save_draft(draft_file_, state_.composer); cancel();
     animate_ = false; alive_ = false; shell_job_.join();
     if (ticker_.joinable()) ticker_.join();
     worker_.stop();
@@ -126,11 +126,7 @@ class Root : public ComponentBase {
           event == ftxui::Event::Character('q')) state_.help = false;
       return true;
     }
-    if (state_.permission) {
-      if (const char* kind = booth::permission_kind(event))
-        booth::answer_permission_choice(supervisor_, state_, kind);
-      return true;
-    }
+    if (state_.permission) { if (const char* kind = booth::permission_kind(event)) booth::answer_permission_choice(supervisor_, state_, kind); return true; }
     if (matches_chord(keys_.reasoning, event)) {
       const auto choice = booth::next_reasoning(state_.reasoning);
       if (!choice) {
@@ -188,6 +184,7 @@ class Root : public ComponentBase {
       case booth::HistorySearch::Result::None: break;
     }
     if (copy_picker_.visible()) { copy_picker_.key(event, state_); return true; }
+    if (links_.visible()) { links_.key(event, state_); return true; }
     mention_menu_.update(editor_.Lines(), editor_.CursorLine(), editor_.CursorColumn(), state_.models, efforts());
     if (!editor_.VimNormal() && mention_menu_.visible()) { if (auto result = mention_menu_.key(event, state_.composer)) { state_.composer = result->content; editor_.SetContent(state_.composer); editor_.SetCursor(result->cursor); return true; } }
     if (event == ftxui::Event::Tab && !slash_.visible(state_.composer) && !files_.visible() && !mention_menu_.visible() && !editor_.VimNormal()) {
@@ -198,6 +195,7 @@ class Root : public ComponentBase {
     if (matches_chord(keys_.model, event)) { if (!state_.models.empty()) model_picker_.open(state_.models, state_.model); return true; }
     if (matches_chord(keys_.sessions, event)) { handle_command("/sessions"); return true; }
     if (matches_chord(keys_.copy, event)) { handle_command("/copy"); return true; }
+    if (matches_chord(keys_.links, event)) { links_.open(state_); return true; }
     if (!matches_chord(keys_.editor, event) &&
         booth::view_toggle(event, keys_, tools_expanded_, tools_hidden_, show_thoughts_, state_)) {
       return true;
@@ -277,6 +275,7 @@ class Root : public ComponentBase {
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
     if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.index(), &mouse_));
+    if (links_.visible()) view.push_back(booth::link_picker_view(links_.items(), links_.index()));
     if (history_search_.visible()) view.push_back(booth::history_search_view(
         history_search_.query(), history_search_.matches(), history_search_.index(), &mouse_));
     if (sessions_.visible()) {
@@ -334,9 +333,7 @@ class Root : public ComponentBase {
         const auto elapsed = std::chrono::steady_clock::now() - busy_since_;
         if (state_.busy && elapsed >= std::chrono::seconds(5) &&
             booth::notifications_enabled(draft_file_.parent_path()))
-          booth::send_notification("booth", std::string("turn ") +
-              (turn_failed_ ? "failed" : "complete") + " · " +
-              std::to_string(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()) + "s");
+          booth::send_notification("booth", std::string("turn ") + (turn_failed_ ? "failed" : "complete") + " · " + std::to_string(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()) + "s");
         turn_failed_ = false;
       }
       const bool closed = std::holds_alternative<SessionClosed>(event.value);
@@ -454,6 +451,7 @@ class Root : public ComponentBase {
     if (line == "/acp") { state_.notice = booth::acp_text(state_, supervisor_.connected(), socket_file_.string()); return; }
     if (line == "/cancel") { cancel(); state_.notice = "cancelled"; return; }
     if (line == "/copy") { if (!copy_picker_.open(state_)) state_.notice = "nothing to copy"; return; }
+    if (line == "/links") { links_.open(state_); return; }
     if (line == "/queue" || line.rfind("/queue ", 0) == 0) { booth::handle_queue_command(state_, queued_, line); return; }
     if (line == "/effort" || line.rfind("/effort ", 0) == 0) {
       booth::handle_effort_command(state_, line, [this](const std::string& id, const ModelChoice& picked) {
@@ -564,6 +562,7 @@ class Root : public ComponentBase {
   booth::ModelPicker model_picker_;
   booth::HistorySearch history_search_;
   booth::CopyPicker copy_picker_;
+  booth::LinkPicker links_;
   booth::FileMenu files_;
   booth::TranscriptSearch transcript_search_;
   bool tools_expanded_{false}, tools_hidden_{false};

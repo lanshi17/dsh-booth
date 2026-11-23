@@ -81,6 +81,7 @@ add_library(booth_interaction STATIC
   src/interaction/commands.cpp
   src/interaction/commands_ui.cpp
   src/interaction/copy_picker.cpp
+  src/interaction/link_picker.cpp
   src/interaction/draft.cpp
   src/interaction/file_menu.cpp
   src/interaction/history_search.cpp

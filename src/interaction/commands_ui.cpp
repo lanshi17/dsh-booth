@@ -114,7 +114,8 @@ bool local_command(const std::string& line) {
   return token == "/help" || token == "/status" || token == "/theme" || token == "/copy" || token == "/clear" ||
          token == "/notify" || token == "/export" || token == "/quit" || token == "/context" || token == "/stats" ||
          token == "/effort" || token == "/queue" || token == "/session" || token == "/acp" ||
-         token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find";
+         token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find" ||
+         token == "/links";
 }
 
 std::string session_text(const AppState& state, std::size_t queued) {

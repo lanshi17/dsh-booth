@@ -16,6 +16,7 @@ constexpr CommandHint kCommandHints[] = {
     {"/context", "context window usage", "tokens window percent usage", ""},
     {"/stats", "transcript and tool counters", "counts entries tools", ""},
     {"/copy", "copy the last answer", "clipboard yank", ""},
+    {"/links", "open a transcript URL", "link url browser hint", ""},
     {"/clear", "clear the local transcript", "reset erase screen", ""},
     {"/retry", "send the last prompt again", "again rerun repeat", ""},
     {"/export", "write the transcript as markdown", "save file markdown", ""},
