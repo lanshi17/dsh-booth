@@ -23,7 +23,7 @@ SlashAction press(SlashMenu& menu, AppState& state, ftxui::Event event) {
 
 TEST_CASE("slash menu lists every command for a bare slash") {
   const auto matches = matching_commands("/");
-  REQUIRE(matches.size() == 24);
+  REQUIRE(matches.size() == 25);
   REQUIRE(matches.front()->name == std::string("/help"));
   REQUIRE(contains(matches, "/theme"));
 }
@@ -64,7 +64,7 @@ TEST_CASE("slash menu navigation wraps and pages") {
   REQUIRE(menu.index() == 0);
 
   REQUIRE(press(menu, state, ftxui::Event::ArrowUp) == SlashAction::Handled);
-  REQUIRE(menu.index() == 23);
+  REQUIRE(menu.index() == 24);
   REQUIRE(press(menu, state, ftxui::Event::ArrowDown) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
   REQUIRE(press(menu, state, ftxui::Event::PageDown) == SlashAction::Handled);
@@ -73,7 +73,7 @@ TEST_CASE("slash menu navigation wraps and pages") {
   REQUIRE(press(menu, state, ftxui::Event::PageUp) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
   REQUIRE(press(menu, state, ftxui::Event::End) == SlashAction::Handled);
-  REQUIRE(menu.index() == 23);
+  REQUIRE(menu.index() == 24);
   REQUIRE(press(menu, state, ftxui::Event::Home) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
 }

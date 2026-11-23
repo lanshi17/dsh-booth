@@ -399,6 +399,7 @@ ftxui::Element help_view(MouseRouter* mouse) {
   body.push_back(ftxui::text("/theme [key=#rrggbb] reload or set a live color"));
   body.push_back(ftxui::text("/notify [on|off] terminal attention alerts"));
   body.push_back(ftxui::text("/links    transcript URLs · Alt+L · a-z hints"));
+  body.push_back(ftxui::text("/mouse [on|off] tmux scrollback/selection vs app mouse"));
   body.push_back(ftxui::text("/status   phase, session and model"));
   body.push_back(ftxui::text("/model    auto|<id>"));
   body.push_back(ftxui::text("/effort   [level|next] · Shift+Tab · /context"));

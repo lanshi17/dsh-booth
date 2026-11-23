@@ -17,6 +17,7 @@ constexpr CommandHint kCommandHints[] = {
     {"/stats", "transcript and tool counters", "counts entries tools", ""},
     {"/copy", "copy the last answer", "clipboard yank", ""},
     {"/links", "open a transcript URL", "link url browser hint", ""},
+    {"/mouse", "terminal/tmux mouse capture", "scroll select copy tmux", ""},
     {"/clear", "clear the local transcript", "reset erase screen", ""},
     {"/retry", "send the last prompt again", "again rerun repeat", ""},
     {"/export", "write the transcript as markdown", "save file markdown", ""},

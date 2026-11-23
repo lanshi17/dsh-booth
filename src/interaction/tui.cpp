@@ -45,6 +45,7 @@
 #include "interaction/scroll.hpp"
 #include "interaction/shell_command.hpp"
 #include "interaction/link_picker.hpp"
+#include "interaction/mouse_mode.hpp"
 #include "interaction/commands_ui.hpp"
 #include "interaction/copy_picker.hpp"
 #include "interaction/draft.hpp"
@@ -83,18 +84,14 @@ class Root : public ComponentBase {
         socket_file_(std::move(socket_file)),
         keys_(keys) {
     state_.composer = booth::load_draft(draft_file_); editor_.SetContent(state_.composer);
+    mouse_enabled_ = booth::load_mouse_enabled(draft_file_.parent_path());
     if (const char* vim = ::getenv("BOOTH_VIM"); vim != nullptr && *vim != '\0' && *vim != '0') editor_.EnableVim(true);
     history_ = booth::load_history(history_file_);
     git_ = booth::read_git(cwd_);
     ticker_ = booth::start_ticker(screen_, animate_, alive_);
     worker_.post([this, ctx = context()]() mutable { booth::ensure_session(ctx); });
   }
-  void shutdown() {
-    booth::save_draft(draft_file_, state_.composer); cancel();
-    animate_ = false; alive_ = false; shell_job_.join();
-    if (ticker_.joinable()) ticker_.join();
-    worker_.stop();
-  }
+  void shutdown() { booth::save_draft(draft_file_, state_.composer); cancel(); animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
   Element OnRender() override {
     mouse_.begin_frame();
     if (state_.permission) return booth::permission_view(*state_.permission, &mouse_) |
@@ -106,6 +103,7 @@ class Root : public ComponentBase {
   bool OnEvent(ftxui::Event event) override {
     if (event == ftxui::Event::Custom) { drain(); return true; }
     if (matches_chord(keys_.cancel, event)) { cancel(); return true; }
+    if (event.is_mouse() && !mouse_enabled_) return true;
     if (event.is_mouse()) {
       const auto in = mouse_.handle(event, &screen_);
       if (in.kind == booth::MouseInput::Kind::Moved) { screen_.PostEvent(ftxui::Event::Custom); return true; }
@@ -452,6 +450,7 @@ class Root : public ComponentBase {
     if (line == "/cancel") { cancel(); state_.notice = "cancelled"; return; }
     if (line == "/copy") { if (!copy_picker_.open(state_)) state_.notice = "nothing to copy"; return; }
     if (line == "/links") { links_.open(state_); return; }
+    if (line == "/mouse" || line.rfind("/mouse ", 0) == 0) { mouse_enabled_ = booth::handle_mouse_command(line, screen_, state_, draft_file_.parent_path()); return; }
     if (line == "/queue" || line.rfind("/queue ", 0) == 0) { booth::handle_queue_command(state_, queued_, line); return; }
     if (line == "/effort" || line.rfind("/effort ", 0) == 0) {
       booth::handle_effort_command(state_, line, [this](const std::string& id, const ModelChoice& picked) {
@@ -553,6 +552,7 @@ class Root : public ComponentBase {
   std::thread ticker_;
   std::chrono::steady_clock::time_point busy_since_{};
   bool turn_failed_{false};
+  bool mouse_enabled_{true};
   std::vector<std::string> history_;
   std::size_t history_pos_{0};
   KeyBindings keys_;
@@ -587,6 +587,8 @@ int tui_loop(ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& 
     bindings = KeyBindings{};
   }
   Worker worker;
+  const bool mouse = booth::load_mouse_enabled(config.state_dir); screen.TrackMouse(mouse);
+  if (!mouse) std::cout << booth::mouse_disable_sequence() << std::flush;
   auto root = ftxui::Make<Root>(screen, kernel, state, inbox, worker,
                                 std::filesystem::current_path().string(), config.history_file,
                                 config.dsh_home / "sessions", config.state_dir / "draft",
