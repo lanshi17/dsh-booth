@@ -12,4 +12,4 @@
 	url = https://github.com/can1357/oh-my-pi
 [submodule "libs/dsh"]
 	path = libs/dsh
-	url = https://github.com/deepseek-ai/deepseek-harness
+	url = https://github.com/lanshi17/deepseek-harness
