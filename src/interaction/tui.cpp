@@ -426,7 +426,11 @@ class Root : public ComponentBase {
   }
   void handle_command(std::string line) {
     line = booth::normalize_command(std::move(line));
-    if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_, line)) return;
+    if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
+                                    draft_file_.parent_path(), line)) {
+      if (line == "/theme" || line.rfind("/theme ", 0) == 0) screen_.PostEvent(ftxui::Event::Custom);
+      return;
+    }
     if (line == "/acp") { state_.notice = booth::acp_text(state_, supervisor_.connected(), socket_file_.string()); return; }
     if (line == "/cancel") { cancel(); state_.notice = "cancelled"; return; }
     if (line == "/copy") { if (!copy_picker_.open(state_)) state_.notice = "nothing to copy"; return; }

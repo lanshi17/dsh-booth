@@ -56,16 +56,19 @@ effort. The editor supports `Ctrl+Z` undo, `Alt+Z` redo, `Ctrl`/`Alt`+`←`/`→
 the editor. Drafts taller than eight rows scroll internally with a `↑N` marker; a permission card accepts
 `y` (once), `a` (always), `n` (deny once), `d` (deny always).
 Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
-`/export`, `/effort`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`, `/find`,
-`/attach`, `/detach`, `/help`, `/quit`.
+`/export`, `/effort`, `/theme`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
+`/find`, `/attach`, `/detach`, `/help`, `/quit`.
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
-`/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/queue`, `/session`,
-`/acp`, `/cancel`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available while a
-turn is running; a plain prompt typed during a run is queued and
-sent when the run ends.
+`/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
+`/session`, `/acp`, `/cancel`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
+while a turn is running; a plain prompt typed during a run is queued and sent when the run ends.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
 through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
-name or wire value selects it, and no argument lists the current value and choices.
+name or wire value selects it, and no argument lists the current value and choices. `/theme`
+reloads `$BOOTH_STATE_DIR/theme.conf` into the running TUI; `/theme key=#rrggbb` validates,
+persists, and applies one color override immediately. Supported keys are `accent`, `text`, `dim`,
+`line`, `panel`, `border`, `green`, `yellow`, `red`, `git`, `gray`, `token`, and `hover`. Invalid
+keys or colors leave the file unchanged and show a notice.
 `/context` reports dsh's context window usage; `/stats` counts local transcript entries, tools and
 queued prompts. `/new` closes the current session and leaves a clean transcript, while `/clear`
 only clears the local transcript (dsh has no ACP call that clears a live session's context).
@@ -119,7 +122,9 @@ model and effort. `tools/patch_dsh_model_mentions.py` applies the same change to
 0.2.1 dsh package (install.sh runs it when Python and dsh are present)
 
 `theme.conf` in the state dir accepts `key=#rrggbb` overrides for `accent`, `text`, `dim`,
-`line`, `panel`, `border`, `green`, `yellow`, `red`, `git`, `gray` and `token`.
+`line`, `panel`, `border`, `green`, `yellow`, `red`, `git`, `gray`, `token`, and `hover`. Use
+`/theme` to reload the file or `/theme key=#rrggbb` to persist and apply one override live; edits
+preserve comments and unrelated lines.
 
 ## Credentials
 

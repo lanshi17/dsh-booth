@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -11,6 +12,7 @@
 #include "interaction/commands_ui.hpp"
 #include "interaction/scroll.hpp"
 #include "interaction/state.hpp"
+#include "interaction/theme.hpp"
 
 using namespace booth;
 
@@ -27,6 +29,7 @@ TEST_CASE("command aliases normalize to canonical names") {
 
 TEST_CASE("local commands include aliases and stay available during a run") {
   REQUIRE(local_command("/status"));
+  REQUIRE(local_command("/theme accent=#123456"));
   REQUIRE(local_command("/hotkeys"));
   REQUIRE(local_command("/q"));
   REQUIRE(local_command("/export out.md"));
@@ -85,15 +88,48 @@ TEST_CASE("attachments resolve paths and detach") {
   AppState state;
   TranscriptScroll scroll;
   TranscriptSearch search;
-  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(),
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir,
                                "/attach " + file.string()));
   REQUIRE(state.attachments.size() == 1);
   REQUIRE(state.attachments[0].name == "notes.txt");
   REQUIRE(state.attachments[0].uri.rfind("file://", 0) == 0);
-  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), "/attach"));
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir, "/attach"));
   REQUIRE(state.notice.find("notes.txt") != std::string::npos);
-  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), "/detach notes.txt"));
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir, "/detach notes.txt"));
   REQUIRE(state.attachments.empty());
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("theme command reloads and persists valid overrides") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-command-theme-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  const auto path = dir / "theme.conf";
+  {
+    std::ofstream out(path);
+    out << "# saved palette\ntext=#abcdef\n";
+  }
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir, "/theme"));
+  REQUIRE(state.notice == "theme reloaded: 1 overrides");
+  REQUIRE(theme_color("text", parse_color("#000000").value()) ==
+          parse_color("#abcdef").value());
+
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir,
+                               "/theme accent=#123456"));
+  REQUIRE(state.notice == "theme accent=#123456");
+  REQUIRE(load_theme(path).at("accent") == "#123456");
+
+  const auto before = load_theme(path);
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir,
+                               "/theme accent=bad"));
+  REQUIRE(state.notice.find("invalid theme color") != std::string::npos);
+  REQUIRE(load_theme(path) == before);
+  unsetenv("BOOTH_THEME_TEXT");
+  unsetenv("BOOTH_THEME_ACCENT");
   std::filesystem::remove_all(dir);
 }
 

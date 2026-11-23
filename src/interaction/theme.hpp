@@ -13,8 +13,20 @@ namespace booth {
 /// Parses `#rrggbb`.
 std::optional<ftxui::Color> parse_color(std::string_view text);
 
-/// Reads `key=#rrggbb` overrides from a theme file.
+/// Result of validating and persisting one theme override.
+struct ThemeUpdateResult {
+  bool success = false;
+  std::string key;
+  std::string color;
+  std::string error;
+};
+
+/// Reads valid, supported `key=#rrggbb` overrides from a theme file.
 std::map<std::string, std::string> load_theme(const std::filesystem::path& path);
+
+/// Validates `key=#rrggbb` and updates the file without disturbing other lines.
+ThemeUpdateResult update_theme_override(const std::filesystem::path& path,
+                                        std::string_view assignment);
 
 /// Publishes overrides as `BOOTH_THEME_<KEY>` for the renderer.
 void apply_theme(const std::map<std::string, std::string>& theme);

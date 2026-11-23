@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "interaction/commands.hpp"
+#include "interaction/theme.hpp"
 #include "interaction/view.hpp"
 #include "subagent/acp/messages.hpp"
 #include "subagent/kernel.hpp"
@@ -109,7 +110,7 @@ void answer_permission_choice(Kernel& kernel, AppState& state, const char* kind)
 
 bool local_command(const std::string& line) {
   const std::string token = first_word(normalize_command(line));
-  return token == "/help" || token == "/status" || token == "/copy" || token == "/clear" ||
+  return token == "/help" || token == "/status" || token == "/theme" || token == "/copy" || token == "/clear" ||
          token == "/export" || token == "/quit" || token == "/context" || token == "/stats" ||
          token == "/effort" || token == "/queue" || token == "/session" || token == "/acp" ||
          token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find";
@@ -134,7 +135,8 @@ std::string acp_text(const AppState& state, bool connected, const std::string& s
 }
 
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
-                          std::size_t queued, const std::string& cwd, const std::string& line) {
+                          std::size_t queued, const std::string& cwd,
+                          const std::filesystem::path& state_dir, const std::string& line) {
   (void)cwd;
   if (line == "/help") {
     state.help = true;
@@ -142,6 +144,25 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
   }
   if (line == "/status") {
     state.notice = status_text(state);
+    return true;
+  }
+  if (line == "/theme" || line.rfind("/theme ", 0) == 0) {
+    const auto path = state_dir / "theme.conf";
+    const std::string assignment = argument_after(line, "/theme");
+    if (assignment.empty()) {
+      const auto theme = load_theme(path);
+      apply_theme(theme);
+      state.notice = theme.empty() ? "no theme overrides"
+                                   : "theme reloaded: " + std::to_string(theme.size()) + " overrides";
+    } else {
+      const auto updated = update_theme_override(path, assignment);
+      if (!updated.success) {
+        state.notice = updated.error;
+      } else {
+        apply_theme(load_theme(path));
+        state.notice = "theme " + updated.key + "=" + updated.color;
+      }
+    }
     return true;
   }
   if (line == "/clear") {

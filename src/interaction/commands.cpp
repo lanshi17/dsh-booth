@@ -11,6 +11,7 @@ constexpr CommandHint kCommandHints[] = {
     {"/help", "keys and commands", "shortcuts keys help", "hotkeys keys"},
     {"/model", "switch the session model", "provider choose config", "models"},
     {"/status", "phase, session and model", "info state session", ""},
+    {"/theme", "reload or set live colors", "palette color accent", ""},
     {"/context", "context window usage", "tokens window percent usage", ""},
     {"/stats", "transcript and tool counters", "counts entries tools", ""},
     {"/copy", "copy the last answer", "clipboard yank", ""},

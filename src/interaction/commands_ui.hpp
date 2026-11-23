@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -36,7 +37,8 @@ std::optional<ModelChoice> next_reasoning(const ReasoningOptions& options);
 
 /// Help, status, copy, clear, context, stats, session info, attachments and ACP info.
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
-                          std::size_t queued, const std::string& cwd, const std::string& line);
+                          std::size_t queued, const std::string& cwd,
+                          const std::filesystem::path& state_dir, const std::string& line);
 
 /// Moves the newest queued prompt back into the composer; false when the queue is empty.
 bool dequeue_prompt(AppState& state, std::deque<std::string>& queued);
