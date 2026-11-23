@@ -172,6 +172,23 @@ void resume_session(PromptContext& context, const SessionRow& selected) {
   }
 }
 
+void cancel_turn(PromptContext& context) {
+  if (context.state.permission) {
+    const auto id = context.state.permission->id.value;
+    context.state.permission.reset();
+    context.kernel.answer_permission(id, std::nullopt);
+  }
+  std::string session;
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    session = context.session;
+  }
+  if (!session.empty()) {
+    context.kernel.notify("session/cancel", acp::cancel_params(session));
+    context.state.notice = "cancelled";
+  }
+}
+
 void close_session(PromptContext& context) {
   std::string session;
   {

@@ -49,4 +49,7 @@ void resume_session(PromptContext& context, const SessionRow& selected);
 /// Closes the active session; the next prompt opens a new one.
 void close_session(PromptContext& context);
 
+/// Cancels the current ACP turn and dismisses an active permission request.
+void cancel_turn(PromptContext& context);
+
 }  // namespace booth

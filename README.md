@@ -81,6 +81,8 @@ effort, context, queue), and `/acp` prints the protocol, phase, connection and s
 `/attach <path>` adds an ACP `resource_link` to the next prompt (shown as a `file N` status chip);
 `/detach [name|all]` clears pending links, and `/cancel` is the explicit ACP cancel command.
 `/find <text>` searches the local transcript and cycles older matches on repeated calls.
+A prompt starting with `!` runs the rest as a local `/bin/sh -c` command in the working directory,
+shows a `bash` tool card, and keeps the command/output out of model context and prompt history.
 `Ctrl+R` searches prompt history; `Ctrl+O` expands tool output, `Ctrl+T` hides or shows thinking,
 and `Alt+O` (or `Ctrl+Shift+O` on terminals that report it) hides or shows tool cards. Clicking a
 tool row toggles tool expansion. Mouse clicks also select and activate slash, file, model,

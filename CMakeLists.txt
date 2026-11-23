@@ -110,6 +110,7 @@ add_library(booth_interaction STATIC
   src/interaction/open_link.cpp
   src/interaction/clipboard.cpp
   src/interaction/notify.cpp
+  src/interaction/shell_command.cpp
   src/interaction/replay.cpp
   src/interaction/pickers.cpp
   src/interaction/export.cpp

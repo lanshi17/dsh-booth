@@ -389,9 +389,11 @@ ftxui::Element help_view(MouseRouter* mouse) {
   body.push_back(ftxui::text("Ctrl+R history · Ctrl+O tools · Ctrl+T thinking"));
   body.push_back(ftxui::text("Alt+H help · Alt+M model · Alt+S sessions · Alt+C copy"));
   body.push_back(ftxui::text("Ctrl+V image · :tada: emoji · BOOTH_VIM for Vim"));
+  body.push_back(ftxui::text("!command runs a local shell command (not sent to the model)"));
   body.push_back(ftxui::text("^model mention applies a model · Alt+M picks one"));
   body.push_back(ftxui::text("/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"));
   body.push_back(ftxui::text("PageUp/PageDown or wheel  browse transcript"));
+  body.push_back(ftxui::text("!<command> runs local /bin/sh · 60s limit · output stays local"));
   body.push_back(ftxui::text("Local while running: /theme /notify /copy /clear /export /status"));
   body.push_back(ftxui::text("  /context /stats /effort /queue /help /quit"));
   body.push_back(ftxui::text("/theme [key=#rrggbb] reload or set a live color"));

@@ -43,6 +43,7 @@
 #include "interaction/word_completion.hpp"
 #include "interaction/prompt.hpp"
 #include "interaction/scroll.hpp"
+#include "interaction/shell_command.hpp"
 #include "interaction/commands_ui.hpp"
 #include "interaction/copy_picker.hpp"
 #include "interaction/draft.hpp"
@@ -90,7 +91,7 @@ class Root : public ComponentBase {
   void shutdown() {
     booth::save_draft(draft_file_, state_.composer);
     cancel();
-    animate_ = false; alive_ = false;
+    animate_ = false; alive_ = false; shell_job_.join();
     if (ticker_.joinable()) ticker_.join();
     worker_.stop();
   }
@@ -319,6 +320,7 @@ class Root : public ComponentBase {
       events.swap(inbox_.events);
     }
     const std::size_t before = state_.entries.size();
+    for (auto& result : shell_job_.take_completed()) state_.entries.push_back(booth::shell_tool_entry(result, "local-shell-" + std::to_string(++shell_id_)));
     bool switched = false;
     for (auto& event : events) {
       if (std::holds_alternative<SessionSwitched>(event.value)) switched = true;
@@ -385,6 +387,7 @@ class Root : public ComponentBase {
     text = text.substr(first, last - first + 1);
     const bool command = text.front() == '/';
     if (state_.permission) return;
+    if (text.front() == '!') { submit_shell(text); return; }
     if (state_.busy) {
       if (command && booth::local_command(text)) {
         state_.composer.clear();
@@ -407,6 +410,16 @@ class Root : public ComponentBase {
       return;
     }
     send_prompt(std::move(text));
+  }
+  void submit_shell(const std::string& submitted) {
+    std::string command = submitted.substr(1);
+    if (command.find_first_not_of(" \t\r\n") == std::string::npos) { state_.notice = "usage: !<command>"; return; }
+    if (shell_job_.busy()) { state_.notice = "a local shell command is already running"; return; }
+    state_.composer.clear(); editor_.Reset(); booth::save_draft(draft_file_, {});
+    TranscriptEntry user; user.kind = EntryKind::User; user.text = submitted; state_.entries.push_back(std::move(user));
+    scroll_.follow(); state_.notice.clear();
+    if (!shell_job_.start(std::move(command), cwd_, [this] { if (alive_) screen_.PostEvent(ftxui::Event::Custom); }))
+      state_.notice = "could not start local shell command";
   }
   void send_prompt(std::string text) {
     turn_failed_ = false;
@@ -521,27 +534,14 @@ class Root : public ComponentBase {
     auto ctx = context(); booth::run_prompt(ctx, std::move(text), resources, images);
   }
   void apply_model(const booth::ModelChoice& choice) { worker_.post([this, ctx = context(), choice]() mutable { booth::apply_model(ctx, choice); }); }
-  void cancel() {
-    if (state_.permission) {
-      const auto id = state_.permission->id.value;
-      state_.permission.reset();
-      supervisor_.answer_permission(id, std::nullopt);
-    }
-    std::string session;
-    {
-      std::lock_guard<std::mutex> lock(session_mutex_);
-      session = session_;
-    }
-    if (!session.empty()) {
-      supervisor_.notify("session/cancel", acp::cancel_params(session));
-      state_.notice = "cancelled";
-    }
-  }
+  void cancel() { auto ctx = context(); booth::cancel_turn(ctx); }
   ScreenInteractive& screen_;
   Kernel& supervisor_;
   AppState& state_;
   Inbox& inbox_;
   Worker& worker_;
+  booth::ShellCommandJob shell_job_;
+  std::size_t shell_id_{0};
   booth::Editor editor_;
   std::string cwd_;
   std::filesystem::path history_file_;
