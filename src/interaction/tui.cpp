@@ -317,7 +317,7 @@ class Root : public ComponentBase {
       events.swap(inbox_.events);
     }
     const std::size_t before = state_.entries.size();
-    for (auto& result : shell_job_.take_completed()) state_.entries.push_back(booth::shell_tool_entry(result, "local-shell-" + std::to_string(++shell_id_)));
+    for (auto& result : shell_job_.take_completed()) state_.entries.push_back(local_python_ ? booth::python_tool_entry(result, "local-shell-" + std::to_string(++shell_id_)) : booth::shell_tool_entry(result, "local-shell-" + std::to_string(++shell_id_)));
     bool switched = false;
     for (auto& event : events) {
       if (std::holds_alternative<SessionSwitched>(event.value)) switched = true;
@@ -382,20 +382,11 @@ class Root : public ComponentBase {
     text = text.substr(first, last - first + 1);
     const bool command = text.front() == '/';
     if (state_.permission) return;
-    if (text.front() == '!') { submit_shell(text); return; }
+    if (text.front() == '!' || text.front() == '$') { submit_local(text, text.front() == '$'); return; }
     if (state_.busy) {
-      if (command && booth::local_command(text)) {
-        state_.composer.clear();
-        editor_.Reset();
-        handle_command(text);
-      } else if (!command) {
-        state_.composer.clear();
-        editor_.Reset();
-        queued_.push_back(std::move(text));
-        state_.notice = std::to_string(queued_.size()) + " queued";
-      } else {
-        state_.notice = "busy: local commands and /queue still work";
-      }
+      if (command && booth::local_command(text)) { state_.composer.clear(); editor_.Reset(); handle_command(text); }
+      else if (!command) { state_.composer.clear(); editor_.Reset(); queued_.push_back(std::move(text)); state_.notice = std::to_string(queued_.size()) + " queued"; }
+      else state_.notice = "busy: local commands and /queue still work";
       return;
     }
     state_.composer.clear(); editor_.Reset();
@@ -406,15 +397,16 @@ class Root : public ComponentBase {
     }
     send_prompt(std::move(text));
   }
-  void submit_shell(const std::string& submitted) {
+  void submit_local(const std::string& submitted, bool python) {
     std::string command = submitted.substr(1);
-    if (command.find_first_not_of(" \t\r\n") == std::string::npos) { state_.notice = "usage: !<command>"; return; }
-    if (shell_job_.busy()) { state_.notice = "a local shell command is already running"; return; }
+    if (command.find_first_not_of(" \t\r\n") == std::string::npos) { state_.notice = python ? "usage: $<python>" : "usage: !<command>"; return; }
+    if (shell_job_.busy()) { state_.notice = "a local command is already running"; return; }
     state_.composer.clear(); editor_.Reset(); booth::save_draft(draft_file_, {});
     TranscriptEntry user; user.kind = EntryKind::User; user.text = submitted; state_.entries.push_back(std::move(user));
-    scroll_.follow(); state_.notice.clear();
-    if (!shell_job_.start(std::move(command), cwd_, [this] { if (alive_) screen_.PostEvent(ftxui::Event::Custom); }))
-      state_.notice = "could not start local shell command";
+    scroll_.follow(); state_.notice.clear(); local_python_ = python;
+    const std::string wire = python ? booth::python_shell_command(command) : command;
+    if (!shell_job_.start(std::move(wire), cwd_, [this] { if (alive_) screen_.PostEvent(ftxui::Event::Custom); }, std::move(command)))
+      state_.notice = "could not start local command";
   }
   void send_prompt(std::string text) {
     turn_failed_ = false;
@@ -553,6 +545,7 @@ class Root : public ComponentBase {
   std::chrono::steady_clock::time_point busy_since_{};
   bool turn_failed_{false};
   bool mouse_enabled_{true};
+  bool local_python_{false};
   std::vector<std::string> history_;
   std::size_t history_pos_{0};
   KeyBindings keys_;

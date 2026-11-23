@@ -28,8 +28,19 @@ ShellCommandResult run_shell_command(
     std::chrono::milliseconds timeout = std::chrono::seconds(60),
     std::size_t output_limit = 256 * 1024);
 
+/// Build a python3 command that evaluates a single expression (printing its
+/// repr) and executes anything else, with the source passed as base64 so
+/// quotes and newlines need no shell escaping.
+std::string python_shell_command(std::string_view code);
+
+ShellCommandResult run_python_command(
+    std::string_view code, const std::string& cwd,
+    std::chrono::milliseconds timeout = std::chrono::seconds(60),
+    std::size_t output_limit = 256 * 1024);
+
 struct ShellCommandCompletion {
   std::string command;
+  std::string display;
   ShellCommandResult result;
   std::chrono::system_clock::time_point started;
   std::chrono::system_clock::time_point finished;
@@ -37,6 +48,7 @@ struct ShellCommandCompletion {
 
 /// Runs one local command off-thread and delivers its result to the caller.
 TranscriptEntry shell_tool_entry(const ShellCommandCompletion& completion, std::string id);
+TranscriptEntry python_tool_entry(const ShellCommandCompletion& completion, std::string id);
 
 class ShellCommandJob {
  public:
@@ -45,7 +57,8 @@ class ShellCommandJob {
   ShellCommandJob(const ShellCommandJob&) = delete;
   ShellCommandJob& operator=(const ShellCommandJob&) = delete;
 
-  bool start(std::string command, std::string cwd, std::function<void()> completed);
+  bool start(std::string command, std::string cwd, std::function<void()> completed,
+             std::string display = {});
   bool busy() const;
   std::vector<ShellCommandCompletion> take_completed();
   void join();

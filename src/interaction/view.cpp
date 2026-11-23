@@ -390,6 +390,7 @@ ftxui::Element help_view(MouseRouter* mouse) {
   body.push_back(ftxui::text("Alt+H help · Alt+M model · Alt+S sessions · Alt+C copy"));
   body.push_back(ftxui::text("Ctrl+V image · :tada: emoji · BOOTH_VIM for Vim"));
   body.push_back(ftxui::text("!command runs a local shell command (not sent to the model)"));
+  body.push_back(ftxui::text("$python runs Python locally; an expression prints its value"));
   body.push_back(ftxui::text("^model mention applies a model · Alt+M picks one"));
   body.push_back(ftxui::text("/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"));
   body.push_back(ftxui::text("PageUp/PageDown or wheel  browse transcript"));

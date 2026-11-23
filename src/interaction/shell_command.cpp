@@ -1,5 +1,7 @@
 #include "interaction/shell_command.hpp"
 
+#include <string_view>
+
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -143,14 +145,17 @@ ShellCommandResult run_shell_command(const std::string& command, const std::stri
   return result;
 }
 
-TranscriptEntry shell_tool_entry(const ShellCommandCompletion& completion, std::string id) {
+namespace {
+
+TranscriptEntry local_tool_entry(const ShellCommandCompletion& completion, std::string id,
+                                 const char* tool) {
   TranscriptEntry entry;
   entry.kind = EntryKind::Tool;
   entry.id = std::move(id);
-  entry.text = "bash";
-  entry.tool = "bash";
+  entry.text = tool;
+  entry.tool = tool;
   entry.status = "completed";
-  entry.input = completion.command;
+  entry.input = completion.display.empty() ? completion.command : completion.display;
   entry.output = completion.result.output;
   const auto note = [&entry](const std::string& text) {
     if (!entry.output.empty() && entry.output.back() != '\n') entry.output.push_back('\n');
@@ -167,23 +172,67 @@ TranscriptEntry shell_tool_entry(const ShellCommandCompletion& completion, std::
   return entry;
 }
 
+}  // namespace
+
+TranscriptEntry shell_tool_entry(const ShellCommandCompletion& completion, std::string id) {
+  return local_tool_entry(completion, std::move(id), "bash");
+}
+
+TranscriptEntry python_tool_entry(const ShellCommandCompletion& completion, std::string id) {
+  return local_tool_entry(completion, std::move(id), "python");
+}
+
+std::string python_shell_command(std::string_view code) {
+  static constexpr std::string_view wrapper =
+      "import ast,base64,sys\n"
+      "src=base64.b64decode(sys.argv[1]).decode()\n"
+      "tree=ast.parse(src)\n"
+      "if len(tree.body)==1 and isinstance(tree.body[0], ast.Expr):\n"
+      " v=eval(compile(ast.Expression(tree.body[0].value),'<booth>','eval'))\n"
+      " if v is not None: print(repr(v))\n"
+      "else:\n"
+      " exec(compile(tree,'<booth>','exec'))\n";
+  static const char* alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string encoded;
+  encoded.reserve((code.size() + 2) / 3 * 4);
+  for (std::size_t i = 0; i < code.size(); i += 3) {
+    const unsigned b0 = static_cast<unsigned char>(code[i]);
+    const unsigned b1 = i + 1 < code.size() ? static_cast<unsigned char>(code[i + 1]) : 0;
+    const unsigned b2 = i + 2 < code.size() ? static_cast<unsigned char>(code[i + 2]) : 0;
+    const unsigned value = (b0 << 16) | (b1 << 8) | b2;
+    encoded.push_back(alphabet[(value >> 18) & 63]);
+    encoded.push_back(alphabet[(value >> 12) & 63]);
+    encoded.push_back(i + 1 < code.size() ? alphabet[(value >> 6) & 63] : '=');
+    encoded.push_back(i + 2 < code.size() ? alphabet[value & 63] : '=');
+  }
+  return "python3 -c \"" + std::string(wrapper) + "\" " + encoded;
+}
+
+ShellCommandResult run_python_command(std::string_view code, const std::string& cwd,
+                                      std::chrono::milliseconds timeout,
+                                      std::size_t output_limit) {
+  return run_shell_command(python_shell_command(code), cwd, timeout, output_limit);
+}
+
 ShellCommandJob::~ShellCommandJob() { join(); }
 
 bool ShellCommandJob::start(std::string command, std::string cwd,
-                            std::function<void()> completed) {
+                            std::function<void()> completed, std::string display) {
   std::lock_guard<std::mutex> lock(mutex_);
   if (busy_ || thread_.joinable()) return false;
   busy_ = true;
+  if (display.empty()) display = command;
   try {
     thread_ = std::thread([this, command = std::move(command), cwd = std::move(cwd),
-                           completed = std::move(completed)]() mutable {
+                           completed = std::move(completed), display = std::move(display)]() mutable {
       const auto started = std::chrono::system_clock::now();
       auto result = run_shell_command(command, cwd);
       const auto finished = std::chrono::system_clock::now();
       {
         std::lock_guard<std::mutex> completed_lock(mutex_);
         completed_.push_back(ShellCommandCompletion{
-            std::move(command), std::move(result), started, finished});
+            std::move(command), std::move(display), std::move(result), started, finished});
       }
       try {
         if (completed) completed();
