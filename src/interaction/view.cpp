@@ -383,7 +383,7 @@ ftxui::Element help_view(MouseRouter* mouse) {
   body.push_back(ftxui::text("booth — keys and commands") | ftxui::bold | ftxui::color(kAccent));
   body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
   body.push_back(ftxui::text("Enter send · Alt+Enter newline · ↑/↓ history"));
-  body.push_back(ftxui::text("Tab complete · ^G editor · ^C cancel · ^D draft+quit"));
+  body.push_back(ftxui::text("Tab word completion · ^G editor · ^C cancel · ^D quit"));
   body.push_back(ftxui::text("Ctrl+Z undo · Alt+Z redo · Ctrl/Alt+←→ word"));
   body.push_back(ftxui::text("Ctrl+W/U/K/Y kill/yank · Alt+Up edits queue"));
   body.push_back(ftxui::text("Ctrl+R history · Ctrl+O tools · Ctrl+T thinking"));

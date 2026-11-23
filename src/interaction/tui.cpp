@@ -39,6 +39,7 @@
 #include "interaction/clipboard.hpp"
 #include "interaction/history.hpp"
 #include "interaction/history_search.hpp"
+#include "interaction/word_completion.hpp"
 #include "interaction/prompt.hpp"
 #include "interaction/scroll.hpp"
 #include "interaction/commands_ui.hpp"
@@ -200,6 +201,10 @@ class Root : public ComponentBase {
     if (copy_picker_.visible()) { copy_picker_.key(event, state_); return true; }
     mention_menu_.update(editor_.Lines(), editor_.CursorLine(), editor_.CursorColumn(), state_.models, efforts());
     if (!editor_.VimNormal() && mention_menu_.visible()) { if (auto result = mention_menu_.key(event, state_.composer)) { state_.composer = result->content; editor_.SetContent(state_.composer); editor_.SetCursor(result->cursor); return true; } }
+    if (event == ftxui::Event::Tab && !slash_.visible(state_.composer) && !files_.visible() && !mention_menu_.visible() && !editor_.VimNormal()) {
+      std::vector<std::string> transcript; for (const auto& entry : state_.entries) if (entry.kind == EntryKind::User || entry.kind == EntryKind::Assistant) transcript.push_back(entry.text);
+      if (const auto suffix = booth::word_completion_suffix(state_.composer, editor_.CursorOffset(), booth::build_word_vocabulary(history_, transcript))) return editor_.HandleEvent(ftxui::Event::Character(*suffix));
+    }
     if (matches_chord(keys_.help, event)) { state_.help = true; return true; }
     if (matches_chord(keys_.model, event)) { if (!state_.models.empty()) model_picker_.open(state_.models, state_.model); return true; }
     if (matches_chord(keys_.sessions, event)) { handle_command("/sessions"); return true; }

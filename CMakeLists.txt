@@ -94,6 +94,7 @@ add_library(booth_interaction STATIC
   src/interaction/ticker.cpp
   src/interaction/keymap.cpp
   src/interaction/history.cpp
+  src/interaction/word_completion.cpp
   src/interaction/editor.cpp
   src/interaction/editor_vim.cpp
   src/interaction/vim.cpp
