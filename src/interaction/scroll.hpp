@@ -27,6 +27,9 @@ class TranscriptScroll {
   void page_down();
   void follow();
 
+  /// Centers an entry in the visible window.
+  void focus(std::size_t count, std::size_t index);
+
   /// Call after a batch of events appended entries; a shrink resets to the latest entry.
   void resized(std::size_t before, std::size_t after);
 

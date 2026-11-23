@@ -31,6 +31,24 @@ json prompt_text(const json& message) {
   return prompt[0].value("text", "");
 }
 
+std::string prompt_image(const json& message) {
+  for (const auto& block : message["params"].value("prompt", json::array())) {
+    if (block.value("type", std::string{}) == "image") {
+      return block.value("mimeType", std::string{});
+    }
+  }
+  return {};
+}
+
+std::string prompt_resource(const json& message) {
+  for (const auto& block : message["params"].value("prompt", json::array())) {
+    if (block.value("type", std::string{}) == "resource_link") {
+      return block.value("name", std::string{});
+    }
+  }
+  return {};
+}
+
 }  // namespace
 
 int main() {
@@ -117,8 +135,73 @@ int main() {
                   }})}});
     } else if (method == "session/prompt") {
       const std::string text = prompt_text(message);
+      const std::string resource = prompt_resource(message);
+      const std::string image = prompt_image(message);
+      if (!image.empty()) stream_text("image:" + image);
+      if (text.find("<model agent=") != std::string::npos) stream_text("mention-tag");
+      if (!resource.empty()) stream_text("resource:" + resource);
+      if (text.find("usage") != std::string::npos) {
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "usage_update"},
+                                      {"used", 1200}, {"size", 4800}}}}}});
+      }
       if (text.find("slow") != std::string::npos) {
         waiting_for_cancel = id;
+        continue;
+      }
+      if (text.find("edit") != std::string::npos) {
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-edit"},
+                                      {"title", "Edit file"},
+                                      {"name", "edit"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"file_path", "README.md"},
+                                                    {"old_string", "old line"},
+                                                    {"new_string", "new line"}}}}}}}});
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call_update"},
+                                      {"toolCallId", "t-edit"},
+                                      {"status", "completed"}}}}}});
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
+      if (text.find("longtool") != std::string::npos) {
+        std::string lines;
+        for (int index = 1; index <= 20; ++index) {
+          if (!lines.empty()) lines += '\n';
+          lines += "line " + (index < 10 ? std::string("0") : std::string()) + std::to_string(index);
+        }
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-long"},
+                                      {"title", "Long output"},
+                                      {"name", "bash"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"command", "seq 20"}}}}}}}});
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call_update"},
+                                      {"toolCallId", "t-long"},
+                                      {"status", "completed"},
+                                      {"content", json::array({json{{"type", "content"},
+                                                                    {"content", {{"type", "text"}, {"text", lines}}}}})}}}}}});
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
+      if (text.find("think") != std::string::npos) {
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "agent_thought_chunk"},
+                                      {"content", {{"type", "text"}, {"text", "hidden-thought"}}}}}}}});
+        stream_text("hello");
+        reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
       if (text.find("tool") != std::string::npos) {

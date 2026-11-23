@@ -48,6 +48,13 @@ TEST_CASE("a missing file keeps the defaults") {
   REQUIRE(bindings->quit.key == 'D');
   REQUIRE(bindings->editor.kind == Chord::Kind::Ctrl);
   REQUIRE(bindings->editor.key == 'G');
+  REQUIRE(bindings->history.key == 'R');
+  REQUIRE(bindings->tools.key == 'O');
+  REQUIRE(bindings->thinking.key == 'T');
+  REQUIRE(bindings->hide_tools.kind == Chord::Kind::Alt);
+  REQUIRE(bindings->hide_tools.key == 'O');
+  REQUIRE(bindings->paste_image.kind == Chord::Kind::Ctrl);
+  REQUIRE(bindings->paste_image.key == 'V');
 }
 
 TEST_CASE("the file overrides known actions and ignores unknown ones") {
@@ -58,7 +65,12 @@ TEST_CASE("the file overrides known actions and ignores unknown ones") {
         << "booth.cancel: Alt+X\n"
         << "booth.unknown: Ctrl+Q\n"
         << "booth.quit: Ctrl+Q\n"
-        << "booth.editor: ctrl+t\n";
+        << "booth.editor: ctrl+t\n"
+        << "booth.history: alt+r\n"
+        << "booth.tools: ctrl+u\n"
+        << "booth.thinking: ctrl+w\n"
+        << "booth.hide_tools: alt+h\n"
+        << "booth.paste_image: ctrl+p\n";
   }
   auto bindings = load_keybindings(path);
   REQUIRE(bindings.has_value());
@@ -66,6 +78,11 @@ TEST_CASE("the file overrides known actions and ignores unknown ones") {
   REQUIRE(bindings->cancel.key == 'X');
   REQUIRE(bindings->quit.key == 'Q');
   REQUIRE(bindings->editor.key == 'T');
+  REQUIRE(bindings->history.key == 'R');
+  REQUIRE(bindings->tools.key == 'U');
+  REQUIRE(bindings->thinking.key == 'W');
+  REQUIRE(bindings->hide_tools.key == 'H');
+  REQUIRE(bindings->paste_image.key == 'P');
   std::filesystem::remove(path);
 }
 
@@ -79,4 +96,23 @@ TEST_CASE("a malformed line is a config error") {
   REQUIRE_FALSE(bindings.has_value());
   REQUIRE(bindings.error().layer == Layer::Config);
   std::filesystem::remove(path);
+}
+
+TEST_CASE("navigation chords parse and match terminal sequences") {
+  const auto page = parse_chord("PageUp");
+  REQUIRE(page.has_value());
+  REQUIRE(page->kind == Chord::Kind::Special);
+  REQUIRE(page->special == Chord::Special::PageUp);
+
+  const auto shift_tab = parse_chord("Shift+Tab");
+  REQUIRE(shift_tab.has_value());
+  REQUIRE(shift_tab->kind == Chord::Kind::BackTab);
+
+  const auto alt_up = parse_chord("Alt+Up");
+  REQUIRE(alt_up.has_value());
+  REQUIRE(alt_up->kind == Chord::Kind::Alt);
+  REQUIRE(alt_up->special == Chord::Special::Up);
+  const Chord default_dequeue{Chord::Kind::Alt, 0, Chord::Special::Up};
+  REQUIRE(matches_chord(default_dequeue, ftxui::Event::Special("\x1b[1;3A")));
+  REQUIRE(matches_chord(*page, ftxui::Event::Special("\x1b[5~")));
 }

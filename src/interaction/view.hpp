@@ -2,6 +2,11 @@
 
 #include "contract/options.hpp"
 #include "interaction/commands.hpp"
+#include "interaction/copy_picker.hpp"
+#include "interaction/file_menu.hpp"
+#include "interaction/model_picker.hpp"
+#include "interaction/mouse_zone.hpp"
+#include "interaction/vim.hpp"
 
 #include <optional>
 #include <string>
@@ -33,10 +38,27 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
                              const GitStatus& git, const std::string& session_title,
                              long busy_seconds, const std::string& spinner,
                              const std::vector<std::string>& lines, std::size_t cursor_line,
-                             std::size_t cursor_column, const std::string& reasoning);
+                             std::size_t cursor_column, const std::string& reasoning,
+                             std::size_t queued, const std::string& mode, std::size_t images,
+                             MouseRouter* mouse = nullptr,
+                             const std::optional<vim::Selection>& selection = std::nullopt,
+                             bool block_cursor = false);
 
-/// One transcript row.
-ftxui::Element entry_element(const TranscriptEntry& entry);
+/// The rows of an oversized editor that fit around the cursor.
+struct RowWindow {
+  std::size_t begin{0};
+  std::size_t end{0};
+  std::size_t hidden_above{0};
+  std::size_t hidden_below{0};
+};
+
+RowWindow row_window(std::size_t count, std::size_t cursor, std::size_t visible);
+
+/// A tool-call frame; `expanded` reveals full output and diffs are rendered when present.
+ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded);
+
+/// One transcript row. `expand_tools` reveals full tool output.
+ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools = false);
 
 /// Markdown for streamed assistant text.
 ftxui::Element markdown_view(const std::string& text, bool dim);
@@ -45,10 +67,10 @@ ftxui::Element markdown_view(const std::string& text, bool dim);
 ftxui::Element inline_words_view(const std::string& text, bool dim);
 
 /// The full-screen help card.
-ftxui::Element help_view();
+ftxui::Element help_view(MouseRouter* mouse = nullptr);
 
 /// The full-screen permission card.
-ftxui::Element permission_view(const PermissionRequest& request);
+ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse = nullptr);
 
 /// One line of phase, session and model, for `/status`.
 std::string status_text(const AppState& state);
@@ -67,15 +89,63 @@ std::string read_model_options(const nlohmann::json& config_options,
 /// Reads the reasoning-effort option (category `thought_level`).
 ReasoningOptions read_reasoning_options(const nlohmann::json& config_options);
 
-/// The `/model` selection list.
-ftxui::Element model_picker_view(const std::vector<ModelChoice>& choices, std::size_t index,
-                                 const std::string& current);
+/// The searchable `/model` selection list.
+ftxui::Element model_picker_view(const std::vector<ModelChoice>& choices,
+                                 const std::vector<std::size_t>& matches, std::size_t index,
+                                 const std::string& current, const std::string& query,
+                                 MouseRouter* mouse = nullptr);
 
-/// The `/sessions` list; an empty list renders as a loading card.
-ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions, std::size_t index,
-                                   bool loading);
+/// The inline `@path` completion rows.
+ftxui::Element file_menu_view(const std::string& query,
+                              const std::vector<std::string>& matches, std::size_t index,
+                              MouseRouter* mouse = nullptr);
+
+/// The `/copy` picker rows.
+ftxui::Element copy_picker_view(const std::vector<CopyItem>& items, std::size_t index,
+                                MouseRouter* mouse = nullptr);
+
+/// The Ctrl+R prompt-history search overlay.
+ftxui::Element history_search_view(const std::string& query,
+                                   const std::vector<std::string>& matches,
+                                   std::size_t index, MouseRouter* mouse = nullptr);
+
+/// The searchable `/sessions` list; an empty list renders as a loading card.
+ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,
+                                   const std::vector<std::size_t>& matches, std::size_t index,
+                                   bool loading, const std::string& query,
+                                   MouseRouter* mouse = nullptr);
 
 enum class SlashAction { None, Handled, Submit };
+
+/// The `/sessions` picker: navigation, refresh/close commands and load state.
+class SessionPicker {
+ public:
+  enum class Action { None, Refresh, Close, Resume };
+
+  void open();
+  void close();
+  void loaded(const std::vector<SessionRow>& sessions);
+
+  [[nodiscard]] bool visible() const { return visible_; }
+  [[nodiscard]] bool loading() const { return loading_; }
+  [[nodiscard]] std::size_t index() const { return index_; }
+  [[nodiscard]] const std::string& query() const { return query_; }
+  [[nodiscard]] const std::vector<std::size_t>& matches() const { return matches_; }
+
+  Action key(ftxui::Event& event, const std::vector<SessionRow>& sessions);
+
+  /// Selects and resumes one rendered row, exactly like keyboard selection + Enter.
+  Action click(std::size_t row, const std::vector<SessionRow>& sessions);
+
+ private:
+  void filter(const std::vector<SessionRow>& sessions);
+
+  bool visible_{false};
+  bool loading_{false};
+  std::size_t index_{0};
+  std::string query_;
+  std::vector<std::size_t> matches_;
+};
 
 /// The inline slash-command menu: filter, selection, completion and dismissal state.
 class SlashMenu {
@@ -89,6 +159,9 @@ class SlashMenu {
   /// Handles navigation, Tab/Enter completion and Esc dismissal.
   SlashAction key(ftxui::Event& event, AppState& state);
 
+  /// Selects and activates one rendered row, exactly like keyboard selection + Enter.
+  SlashAction click(std::size_t row, AppState& state);
+
   [[nodiscard]] std::size_t index() const { return index_; }
 
  private:
@@ -99,6 +172,7 @@ class SlashMenu {
 };
 
 /// The slash-command menu rows.
-ftxui::Element command_menu_view(const std::string& composer, std::size_t index);
+ftxui::Element command_menu_view(const std::string& composer, std::size_t index,
+                                 MouseRouter* mouse = nullptr);
 
 }  // namespace booth

@@ -2,7 +2,7 @@ add_executable(fake_kernel fake_kernel.cpp)
 target_link_libraries(fake_kernel PRIVATE nlohmann_json::nlohmann_json)
 booth_warnings(fake_kernel)
 
-add_executable(booth_tests contract_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp commands_ui_test.cpp keymap_test.cpp editor_test.cpp replay_test.cpp clipboard_test.cpp)
+add_executable(booth_tests contract_test.cpp click_row_test.cpp mouse_zone_test.cpp mouse_picker_test.cpp mouse_actions_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp commands_ui_test.cpp copy_picker_test.cpp picker_filter_test.cpp draft_test.cpp file_menu_test.cpp tool_diff_test.cpp theme_test.cpp emoji_test.cpp mention_test.cpp mention_menu_test.cpp history_search_test.cpp keymap_test.cpp editor_test.cpp vim_test.cpp replay_test.cpp clipboard_test.cpp)
 target_link_libraries(booth_tests PRIVATE booth_interaction Catch2::Catch2WithMain)
 target_compile_definitions(booth_tests PRIVATE FAKE_KERNEL_PATH="$<TARGET_FILE:fake_kernel>")
 add_dependencies(booth_tests fake_kernel)
@@ -80,6 +80,91 @@ add_test(NAME pty_stats
 
 add_test(NAME pty_context
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_context.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_usage
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_usage.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_theme
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_theme.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_vim
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_vim.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_image
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_image.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_vim_visual
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_vim_visual.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_mention
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_mention.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+
+add_test(NAME pty_find
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_find.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_draft
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_draft.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_composer_scroll
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_composer_scroll.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_dequeue
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_dequeue.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_history_search
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_history_search.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_tool_expand
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_tool_expand.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_tool_diff
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_tool_diff.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_thinking
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_thinking.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_attach
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_attach.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_copy_picker
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_copy_picker.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_model_filter
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_model_filter.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_at_file
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_at_file.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_session_filter
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_session_filter.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_session_acp
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_session_acp.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_cancel_command
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_cancel_command.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
 

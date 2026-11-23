@@ -175,3 +175,22 @@ TEST_CASE("session options and reasoning changes land in state") {
   REQUIRE(state.models.empty());
   REQUIRE(state.reasoning.choices.empty());
 }
+
+TEST_CASE("an oversized composer keeps the cursor in an eight-row window") {
+  auto window = row_window(12, 11, 8);
+  REQUIRE(window.begin == 4);
+  REQUIRE(window.end == 12);
+  REQUIRE(window.hidden_above == 4);
+  REQUIRE(window.hidden_below == 0);
+
+  window = row_window(12, 0, 8);
+  REQUIRE(window.begin == 0);
+  REQUIRE(window.end == 8);
+  REQUIRE(window.hidden_below == 4);
+
+  window = row_window(3, 2, 8);
+  REQUIRE(window.begin == 0);
+  REQUIRE(window.end == 3);
+  REQUIRE(window.hidden_above == 0);
+  REQUIRE(window.hidden_below == 0);
+}

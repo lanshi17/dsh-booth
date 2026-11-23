@@ -9,6 +9,11 @@
 
 namespace booth {
 
+struct Attachment {
+  std::string name;
+  std::string uri;
+};
+
 struct AppState {
   Snapshot snapshot;
   std::vector<TranscriptEntry> entries;
@@ -24,6 +29,7 @@ struct AppState {
   std::optional<PermissionRequest> permission;
   std::string notice;
   bool help{false};
+  std::vector<Attachment> attachments;
 };
 
 /// Apply one event. The only mutation point for the screen.

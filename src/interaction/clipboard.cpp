@@ -1,7 +1,10 @@
 #include "interaction/clipboard.hpp"
 
+#include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <string>
 
 namespace booth {
@@ -39,7 +42,38 @@ std::string base64(const std::string& text) {
   return encoded;
 }
 
+std::string capture(const std::string& command) {
+  FILE* pipe = ::popen(command.c_str(), "r");
+  if (pipe == nullptr) return {};
+  std::string output;
+  std::array<char, 8192> chunk{};
+  std::size_t read = 0;
+  while ((read = std::fread(chunk.data(), 1, chunk.size(), pipe)) > 0) {
+    output.append(chunk.data(), read);
+  }
+  const int status = ::pclose(pipe);
+  if (status != 0) return {};
+  return output;
+}
+
 }  // namespace
+
+std::optional<acp::ImageAttachment> clipboard_image() {
+  static constexpr std::array<const char*, 4> kMedia{
+      "image/png", "image/jpeg", "image/webp", "image/gif"};
+  static constexpr std::array<const char*, 4> kSuffix{".png", ".jpg", ".webp", ".gif"};
+  for (std::size_t index = 0; index < kMedia.size(); ++index) {
+    const std::string media = kMedia[index];
+    const std::string wayland = capture("wl-paste --no-newline --type " + media + " 2>/dev/null");
+    const std::string x11 = wayland.empty()
+                                ? capture("xclip -selection clipboard -t " + media + " -o 2>/dev/null")
+                                : std::string{};
+    const std::string& data = !wayland.empty() ? wayland : x11;
+    if (data.empty() || data.size() > 32 * 1024 * 1024) continue;
+    return acp::ImageAttachment{media, base64(data), "clipboard" + std::string(kSuffix[index])};
+  }
+  return std::nullopt;
+}
 
 std::string last_answer(const AppState& state) {
   for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {

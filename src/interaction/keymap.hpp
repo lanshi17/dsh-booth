@@ -12,8 +12,11 @@
 namespace booth {
 
 struct Chord {
-  enum class Kind { None, Ctrl, Alt, Escape, Enter } kind{Kind::None};
+  enum class Kind { None, Ctrl, Alt, Shift, Escape, Enter, BackTab, Special };
+  enum class Special { None, Up, Down, PageUp, PageDown, Home, End };
+  Kind kind{Kind::None};
   char key{0};
+  Special special{Special::None};
 };
 
 /// Parses `Ctrl+C`, `Alt+D`, `Esc`, `Escape`, `Enter`. Case-insensitive.
@@ -26,6 +29,19 @@ struct KeyBindings {
   Chord cancel{Chord::Kind::Ctrl, 'C'};
   Chord quit{Chord::Kind::Ctrl, 'D'};
   Chord editor{Chord::Kind::Ctrl, 'G'};
+  Chord history{Chord::Kind::Ctrl, 'R'};
+  Chord tools{Chord::Kind::Ctrl, 'O'};
+  Chord thinking{Chord::Kind::Ctrl, 'T'};
+  Chord hide_tools{Chord::Kind::Alt, 'O'};
+  Chord paste_image{Chord::Kind::Ctrl, 'V'};
+  Chord reasoning{Chord::Kind::BackTab};
+  Chord page_up{Chord::Kind::Special, 0, Chord::Special::PageUp};
+  Chord page_down{Chord::Kind::Special, 0, Chord::Special::PageDown};
+  Chord dequeue{Chord::Kind::Alt, 0, Chord::Special::Up};
+  Chord help{Chord::Kind::Alt, 'H'};
+  Chord model{Chord::Kind::Alt, 'M'};
+  Chord sessions{Chord::Kind::Alt, 'S'};
+  Chord copy{Chord::Kind::Alt, 'C'};
 };
 
 /// Reads `action: chord` lines. A missing file keeps the defaults; one bad line is an error.

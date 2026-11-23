@@ -164,6 +164,8 @@ std::vector<TranscriptEntry> parse_session_jsonl(std::istream& input, std::size_
       entry.tool = data.value("name", std::string{"tool"});
       entry.text = entry.tool;
       entry.input = tool_input_of(data.value("arguments", Json{}));
+      const auto arguments = data.value("arguments", Json{});
+      entry.raw_input = arguments.is_string() ? arguments.get<std::string>() : arguments.dump();
       entry.status = "running";
       const long long time = event.value("time", 0LL);
       if (time > 0) entry.started = at_millis(time);

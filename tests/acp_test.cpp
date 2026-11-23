@@ -68,6 +68,13 @@ TEST_CASE("message builders match the ACP shapes") {
   REQUIRE(prompt["prompt"][0]["type"] == "text");
   REQUIRE(prompt["prompt"][0]["text"] == "hello");
 
+  const auto with_image = prompt_params(
+      "s-1", "look", {}, {ImageAttachment{"image/png", "aGVsbG8=", "clipboard.png"}});
+  REQUIRE(with_image["prompt"][1]["type"] == "image");
+  REQUIRE(with_image["prompt"][1]["mimeType"] == "image/png");
+  REQUIRE(with_image["prompt"][1]["data"] == "aGVsbG8=");
+  REQUIRE(with_image["prompt"][1]["name"] == "clipboard.png");
+
   REQUIRE(set_config_params("s-1", "model", "m-1")["value"] == "m-1");
   REQUIRE(cancel_params("s-1")["sessionId"] == "s-1");
 

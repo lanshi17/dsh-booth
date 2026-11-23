@@ -2,6 +2,8 @@
 
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 #include <string_view>
 #include <vector>
 
@@ -14,7 +16,15 @@ inline constexpr int kProtocolVersion = 1;
 
 Json initialize_params(std::string_view client_version);
 Json new_session_params(std::string_view cwd);
-Json prompt_params(std::string_view session, std::string_view text);
+struct ImageAttachment {
+  std::string mime_type;
+  std::string data;
+  std::string name;
+};
+
+Json prompt_params(std::string_view session, std::string_view text,
+                   const std::vector<std::pair<std::string, std::string>>& resources = {},
+                   const std::vector<ImageAttachment>& images = {});
 Json set_config_params(std::string_view session, std::string_view config_id,
                        std::string_view value);
 Json cancel_params(std::string_view session);

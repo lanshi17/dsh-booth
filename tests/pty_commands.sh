@@ -16,4 +16,4 @@ trap cleanup EXIT
   timeout 20 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
   >"$output" 2>&1 || true
 
-grep -aq "model auto" "$output"
+grep -aq "booth · " "$output"

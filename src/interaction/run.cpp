@@ -9,6 +9,7 @@
 #include <string>
 
 #include "interaction/state.hpp"
+#include "interaction/theme.hpp"
 #include "interaction/view.hpp"
 #include "subagent/kernel.hpp"
 #include "supervisor/daemon.hpp"
@@ -28,6 +29,7 @@ int run_tui(const Config& config, const Env& env) {
   const char* term = ::getenv("TERM");
   if (term == nullptr || std::string(term) == "dumb") ::setenv("TERM", "xterm-256color", 1);
   if (::getenv("COLORTERM") == nullptr) ::setenv("COLORTERM", "truecolor", 1);
+  booth::apply_theme(booth::load_theme(config.state_dir / "theme.conf"));
   auto screen = ScreenInteractive::TerminalOutput();
   screen.TrackMouse(true);
   screen.ForceHandleCtrlC(false);

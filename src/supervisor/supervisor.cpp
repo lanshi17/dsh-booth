@@ -48,27 +48,46 @@ Result<void> ensure_dsh_profile(const Config& config) {
   const auto dir = config.dsh_home / "profiles" / config.base_profile;
   const auto package = dir / "package.json";
   std::error_code error;
-  if (std::filesystem::exists(package, error)) return {};
-  std::filesystem::create_directories(dir, error);
-  if (error) {
-    return std::unexpected(Error{Layer::State, "cannot create the dsh profile directory",
-                                 std::nullopt});
+  if (!std::filesystem::exists(package, error)) {
+    std::filesystem::create_directories(dir, error);
+    if (error) {
+      return std::unexpected(Error{Layer::State, "cannot create the dsh profile directory",
+                                   std::nullopt});
+    }
+    std::ofstream output(package, std::ios::trunc);
+    if (!output) {
+      return std::unexpected(Error{Layer::State, "cannot write the dsh profile package.json",
+                                   std::nullopt});
+    }
+    output << "{\n"
+              "  \"name\": \"dsh-profile-" << config.base_profile << "\",\n"
+              "  \"private\": true,\n"
+              "  \"dependencies\": {},\n"
+              "  \"dsh\": { \"profile\": { \"bundles\": [\"@deepseek-ai/dsh-base\", "
+              "\"@deepseek-ai/dsh-acp-app\"] } }\n"
+              "}\n";
+    if (!output) {
+      return std::unexpected(Error{Layer::State, "cannot write the dsh profile package.json",
+                                   std::nullopt});
+    }
   }
-  std::ofstream output(package, std::ios::trunc);
-  if (!output) {
-    return std::unexpected(Error{Layer::State, "cannot write the dsh profile package.json",
-                                 std::nullopt});
-  }
-  output << "{\n"
-            "  \"name\": \"dsh-profile-" << config.base_profile << "\",\n"
-            "  \"private\": true,\n"
-            "  \"dependencies\": {},\n"
-            "  \"dsh\": { \"profile\": { \"bundles\": [\"@deepseek-ai/dsh-base\", "
-            "\"@deepseek-ai/dsh-acp-app\"] } }\n"
-            "}\n";
-  if (!output) {
-    return std::unexpected(Error{Layer::State, "cannot write the dsh profile package.json",
-                                 std::nullopt});
+  const auto patch = dir / "cordis.patch.yml";
+  if (!std::filesystem::exists(patch, error)) {
+    std::ofstream output(patch, std::ios::trunc);
+    if (!output) {
+      return std::unexpected(Error{Layer::State, "cannot write the dsh profile cordis.patch.yml",
+                                   std::nullopt});
+    }
+    output << "- id: tool-subagent\n"
+              "  config:\n"
+              "    provider: spawn\n"
+              "    toolName: subagent\n"
+              "    modelSelection: true\n"
+              "    modelDiscovery: true\n";
+    if (!output) {
+      return std::unexpected(Error{Layer::State, "cannot write the dsh profile cordis.patch.yml",
+                                   std::nullopt});
+    }
   }
   return {};
 }

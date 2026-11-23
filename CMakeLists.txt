@@ -39,6 +39,7 @@ set(FTXUI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 ftxui)
 
 find_package(Threads REQUIRED)
+find_package(ICU COMPONENTS uc REQUIRED)
 
 function(booth_warnings target)
   target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor)
@@ -79,13 +80,33 @@ add_library(booth_interaction STATIC
   src/interaction/state.cpp
   src/interaction/commands.cpp
   src/interaction/commands_ui.cpp
+  src/interaction/copy_picker.cpp
+  src/interaction/draft.cpp
+  src/interaction/file_menu.cpp
+  src/interaction/history_search.cpp
+  src/interaction/model_picker.cpp
   src/interaction/scroll.cpp
+  src/interaction/transcript_search.cpp
+  src/interaction/tool_diff.cpp
+  src/interaction/tool_view.cpp
+  src/interaction/theme.cpp
   src/interaction/worker.cpp
   src/interaction/ticker.cpp
   src/interaction/keymap.cpp
   src/interaction/history.cpp
   src/interaction/editor.cpp
+  src/interaction/editor_vim.cpp
+  src/interaction/vim.cpp
+  src/interaction/vim_objects.cpp
+  src/interaction/vim_motions.cpp
+  src/interaction/emoji.cpp
+  src/interaction/mention.cpp
+  src/interaction/mention_menu.cpp
   src/interaction/prompt.cpp
+  src/interaction/click_row.cpp
+  src/interaction/mouse_zone.cpp
+  src/interaction/mouse_actions.cpp
+  src/interaction/open_link.cpp
   src/interaction/clipboard.cpp
   src/interaction/replay.cpp
   src/interaction/pickers.cpp
@@ -96,7 +117,7 @@ add_library(booth_interaction STATIC
   src/interaction/tui.cpp
   src/interaction/run.cpp
 )
-target_link_libraries(booth_interaction PUBLIC booth_supervisor ftxui::component ftxui::dom ftxui::screen)
+target_link_libraries(booth_interaction PUBLIC booth_supervisor ftxui::component ftxui::dom ftxui::screen ICU::uc)
 target_compile_definitions(booth_interaction PRIVATE BOOTH_VERSION="${PROJECT_VERSION}")
 booth_warnings(booth_interaction)
 

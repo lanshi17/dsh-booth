@@ -21,6 +21,12 @@ constexpr CommandHint kCommandHints[] = {
     {"/new", "start a fresh session", "fresh reset close", ""},
     {"/effort", "set the reasoning effort", "reasoning thinking level", "reasoning"},
     {"/queue", "queue a prompt while a run is active", "later after busy", ""},
+    {"/session", "show the active ACP session", "info id title workspace", ""},
+    {"/acp", "show the ACP connection", "protocol socket phase transport", ""},
+    {"/cancel", "cancel the active run", "stop abort interrupt", ""},
+    {"/find", "search the transcript", "grep locate text", ""},
+    {"/attach", "attach a file as an ACP resource link", "file resource prompt", ""},
+    {"/detach", "clear attached resource links", "remove file resource", ""},
     {"/close", "close the active session", "end session", ""},
     {"/quit", "leave booth", "exit quit", "exit q"},
 };

@@ -1,6 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <unistd.h>
+
 #include <deque>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "interaction/commands.hpp"
@@ -27,9 +31,88 @@ TEST_CASE("local commands include aliases and stay available during a run") {
   REQUIRE(local_command("/q"));
   REQUIRE(local_command("/export out.md"));
   REQUIRE(local_command("/queue later"));
+  REQUIRE(local_command("/session"));
+  REQUIRE(local_command("/acp"));
+  REQUIRE(local_command("/cancel"));
+  REQUIRE(local_command("/attach README.md"));
+  REQUIRE(local_command("/detach"));
   REQUIRE_FALSE(local_command("/new"));
   REQUIRE_FALSE(local_command("/sessions"));
   REQUIRE_FALSE(local_command("/retry"));
+}
+
+TEST_CASE("display toggles flip tools, thinking and visibility") {
+  AppState state;
+  bool expand = false;
+  bool hide = false;
+  bool thoughts = true;
+  KeyBindings keys;
+  REQUIRE(view_toggle(ftxui::Event::Special("\x0f"), keys, expand, hide, thoughts, state));
+  REQUIRE(expand);
+  REQUIRE(state.notice == "tools expanded");
+  REQUIRE(view_toggle(ftxui::Event::Special("\x14"), keys, expand, hide, thoughts, state));
+  REQUIRE_FALSE(thoughts);
+  REQUIRE(state.notice == "thinking hidden");
+  REQUIRE(view_toggle(ftxui::Event::Special("\x1bo"), keys, expand, hide, thoughts, state));
+  REQUIRE(hide);
+  REQUIRE(state.notice == "tools hidden");
+  REQUIRE_FALSE(view_toggle(ftxui::Event::Character('x'), keys, expand, hide, thoughts, state));
+}
+
+TEST_CASE("session and ACP lines describe the connection") {
+  AppState state;
+  REQUIRE(session_text(state, 0) == "session: none · model auto · context: no active session");
+  state.session = "s-1";
+  state.title = "work";
+  state.model = "model-one";
+  state.reasoning.current_name = "High";
+  state.busy = true;
+  REQUIRE(session_text(state, 2) ==
+          "session s-1 · work · model model-one · effort High · context: not reported yet · busy · 2 queued");
+  const std::string acp = acp_text(state, true, "/tmp/booth.sock");
+  REQUIRE(acp.find("acp v1") != std::string::npos);
+  REQUIRE(acp.find("connected") != std::string::npos);
+  REQUIRE(acp.find("session s-1") != std::string::npos);
+}
+
+TEST_CASE("attachments resolve paths and detach") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-attach-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto file = dir / "notes.txt";
+  { std::ofstream out(file); out << "notes"; }
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(),
+                               "/attach " + file.string()));
+  REQUIRE(state.attachments.size() == 1);
+  REQUIRE(state.attachments[0].name == "notes.txt");
+  REQUIRE(state.attachments[0].uri.rfind("file://", 0) == 0);
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), "/attach"));
+  REQUIRE(state.notice.find("notes.txt") != std::string::npos);
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), "/detach notes.txt"));
+  REQUIRE(state.attachments.empty());
+  std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("transcript search focuses matches and cycles") {
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  for (const char* text : {"alpha", "beta", "alpha again"}) {
+    TranscriptEntry entry;
+    entry.kind = EntryKind::Assistant;
+    entry.text = text;
+    state.entries.push_back(entry);
+  }
+  const std::string first = search.find(state, scroll, "alpha");
+  REQUIRE(first.find("match 2/2") != std::string::npos);
+  REQUIRE(scroll.window(state.entries.size()).scroll == 0);
+  const std::string next = search.find(state, scroll, "");
+  REQUIRE(next.find("match 1/2") != std::string::npos);
+  REQUIRE(search.find(state, scroll, "missing").find("no match") == 0);
 }
 
 TEST_CASE("context and stats describe the state") {
@@ -55,6 +138,18 @@ TEST_CASE("context and stats describe the state") {
   state.entries.push_back(tool);
   REQUIRE(stats_text(state, 2) ==
           "entries 3 · you 1 · assistant 1 · tools 1 · thoughts 0 · queued 2");
+}
+
+TEST_CASE("dequeue moves the newest prompt back into the composer") {
+  AppState state;
+  std::deque<std::string> queued = {"first", "second"};
+  state.composer = "tail";
+  REQUIRE(dequeue_prompt(state, queued));
+  REQUIRE(state.composer == "second\ntail");
+  REQUIRE(queued.size() == 1);
+  REQUIRE(dequeue_prompt(state, queued));
+  REQUIRE(state.composer == "first\nsecond\ntail");
+  REQUIRE_FALSE(dequeue_prompt(state, queued));
 }
 
 TEST_CASE("queue accepts text only while a turn is running") {

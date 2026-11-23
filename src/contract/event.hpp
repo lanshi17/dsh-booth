@@ -49,8 +49,9 @@ struct TranscriptEntry {
   std::string text;
   std::string tool;
   std::string status;
-  std::string input;   // tool call arguments, one line
-  std::string output;  // tool result text
+  std::string input;      // tool call arguments, one line
+  std::string raw_input;  // original arguments JSON, for diff rendering
+  std::string output;     // tool result text
   std::chrono::system_clock::time_point started{};
   std::chrono::system_clock::time_point finished{};
 };

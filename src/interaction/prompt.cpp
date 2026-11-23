@@ -31,44 +31,52 @@ bool send_config(PromptContext& context, const std::string& id, const std::strin
 
 }  // namespace
 
-void run_prompt(PromptContext& context, std::string text) {
+std::string ensure_session(PromptContext& context) {
   std::string session;
   {
     std::lock_guard<std::mutex> lock(context.mutex);
     session = context.session;
   }
+  if (!session.empty()) return session;
+  auto created =
+      context.kernel.request("session/new", acp::new_session_params(context.cwd), kSessionTimeout);
+  if (!created) {
+    context.publish(Event{Problem{created.error().layer, created.error().detail}});
+    return {};
+  }
+  session = created->value("sessionId", std::string{});
   if (session.empty()) {
-    auto created =
-        context.kernel.request("session/new", acp::new_session_params(context.cwd), kSessionTimeout);
-    if (!created) {
-      context.publish(Event{Problem{created.error().layer, created.error().detail}});
-      context.publish(Event{StreamEnd{}});
-      return;
-    }
-    session = created->value("sessionId", std::string{});
-    if (session.empty()) {
-      context.publish(Event{Problem{Layer::Protocol, "session/new returned no sessionId"}});
-      context.publish(Event{StreamEnd{}});
-      return;
-    }
-    {
-      std::lock_guard<std::mutex> lock(context.mutex);
-      context.session = session;
-    }
-    context.publish(Event{SessionOpened{SessionId{session}, context.cwd, "auto"}});
-    std::vector<ModelChoice> choices;
-    const std::string display = read_model_options(
-        created->value("configOptions", acp::Json::array()), choices);
-    context.publish(Event{SessionOptionsChanged{
-        std::move(choices),
-        read_reasoning_options(created->value("configOptions", acp::Json::array()))}});
-    if (!display.empty()) {
-      context.publish(Event{SessionConfigChanged{SessionId{session}, "model", display}});
-    }
+    context.publish(Event{Problem{Layer::Protocol, "session/new returned no sessionId"}});
+    return {};
+  }
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    context.session = session;
+  }
+  context.publish(Event{SessionOpened{SessionId{session}, context.cwd, "auto"}});
+  std::vector<ModelChoice> choices;
+  const std::string display =
+      read_model_options(created->value("configOptions", acp::Json::array()), choices);
+  context.publish(Event{SessionOptionsChanged{
+      std::move(choices),
+      read_reasoning_options(created->value("configOptions", acp::Json::array()))}});
+  if (!display.empty()) {
+    context.publish(Event{SessionConfigChanged{SessionId{session}, "model", display}});
+  }
+  return session;
+}
+
+void run_prompt(PromptContext& context, std::string text,
+                const std::vector<std::pair<std::string, std::string>>& resources,
+                const std::vector<acp::ImageAttachment>& images) {
+  const std::string session = ensure_session(context);
+  if (session.empty()) {
+    context.publish(Event{StreamEnd{}});
+    return;
   }
 
-  auto prompted = context.kernel.request("session/prompt", acp::prompt_params(session, text),
-                                         std::chrono::hours(24));
+  auto prompted = context.kernel.request(
+      "session/prompt", acp::prompt_params(session, text, resources, images), std::chrono::hours(24));
   if (!prompted) {
     context.publish(Event{Problem{prompted.error().layer, prompted.error().detail}});
     context.publish(Event{StreamEnd{}});

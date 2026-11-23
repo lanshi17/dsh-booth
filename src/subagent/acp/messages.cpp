@@ -72,9 +72,19 @@ Json new_session_params(std::string_view cwd) {
   return Json{{"cwd", std::string(cwd)}, {"mcpServers", Json::array()}};
 }
 
-Json prompt_params(std::string_view session, std::string_view text) {
-  return Json{{"sessionId", std::string(session)},
-              {"prompt", Json::array({Json{{"type", "text"}, {"text", std::string(text)}}})}};
+Json prompt_params(std::string_view session, std::string_view text,
+                   const std::vector<std::pair<std::string, std::string>>& resources,
+                   const std::vector<ImageAttachment>& images) {
+  Json prompt = Json::array({Json{{"type", "text"}, {"text", std::string(text)}}});
+  for (const auto& [name, uri] : resources) {
+    prompt.push_back(Json{{"type", "resource_link"}, {"name", name}, {"uri", uri}});
+  }
+  for (const auto& image : images) {
+    Json block{{"type", "image"}, {"mimeType", image.mime_type}, {"data", image.data}};
+    if (!image.name.empty()) block["name"] = image.name;
+    prompt.push_back(std::move(block));
+  }
+  return Json{{"sessionId", std::string(session)}, {"prompt", std::move(prompt)}};
 }
 
 Json set_config_params(std::string_view session, std::string_view config_id,
@@ -156,6 +166,7 @@ std::vector<Event> session_updates(const Json& params) {
     entry.text = update.value("title", std::string{});
     entry.status = status_of(update);
     entry.input = tool_input_of(update);
+    if (update.contains("rawInput")) entry.raw_input = update["rawInput"].dump();
     entry.started = std::chrono::system_clock::now();
     events.push_back(Event{entry});
 

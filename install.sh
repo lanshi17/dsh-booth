@@ -14,4 +14,10 @@ fi
 mkdir -p "$prefix"
 install -m 0755 "$binary" "$prefix/booth"
 echo "installed $prefix/booth"
+if command -v python3 >/dev/null 2>&1 && command -v dsh >/dev/null 2>&1; then
+  python3 "$root/tools/patch_dsh_model_mentions.py" || echo "warning: could not patch installed dsh model mentions" >&2
+  if [ -f "$HOME/.omp/agent/models.yml" ]; then
+    python3 "$root/tools/sync_omp_models.py" || echo "warning: could not import OMP models" >&2
+  fi
+fi
 echo "booth starts dsh --profile booth; the profile is created on first run"

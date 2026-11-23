@@ -4,11 +4,13 @@
 #include <functional>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "contract/event.hpp"
 #include "interaction/state.hpp"
 #include "interaction/view.hpp"
+#include "subagent/acp/messages.hpp"
 #include "subagent/kernel.hpp"
 
 namespace booth {
@@ -23,8 +25,13 @@ struct PromptContext {
   std::function<void(Event)> publish;
 };
 
-/// Opens a session when needed, sends the prompt, then refreshes the title.
-void run_prompt(PromptContext& context, std::string text);
+/// Opens the ACP session when needed and publishes its model/effort options.
+std::string ensure_session(PromptContext& context);
+
+/// Opens a session when needed, sends the prompt and resource links, then refreshes the title.
+void run_prompt(PromptContext& context, std::string text,
+                const std::vector<std::pair<std::string, std::string>>& resources = {},
+                const std::vector<acp::ImageAttachment>& images = {});
 
 /// Applies a model selection to the current session.
 void apply_model(PromptContext& context, const ModelChoice& choice);

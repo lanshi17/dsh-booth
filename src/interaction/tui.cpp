@@ -1,18 +1,14 @@
 #include "interaction/tui.hpp"
 #include "interaction/tui_internal.hpp"
-
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/component_base.hpp>
 #include <ftxui/component/component_options.hpp>
 #include <ftxui/component/mouse.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
-
 #include <nlohmann/json.hpp>
-
 #include <sys/ioctl.h>
 #include <unistd.h>
-
 #include <cctype>
 #include <atomic>
 #include <cstdlib>
@@ -20,6 +16,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <deque>
+#include <set>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -31,16 +28,22 @@
 #include <thread>
 #include <utility>
 #include <vector>
-
 #include "interaction/keymap.hpp"
 #include "interaction/editor.hpp"
+#include "interaction/emoji.hpp"
+#include "interaction/mention.hpp"
+#include "interaction/mention_menu.hpp"
+#include "interaction/mouse_actions.hpp"
 #include "interaction/export.hpp"
 #include "interaction/external_editor.hpp"
 #include "interaction/clipboard.hpp"
 #include "interaction/history.hpp"
+#include "interaction/history_search.hpp"
 #include "interaction/prompt.hpp"
 #include "interaction/scroll.hpp"
 #include "interaction/commands_ui.hpp"
+#include "interaction/copy_picker.hpp"
+#include "interaction/draft.hpp"
 #include "interaction/state.hpp"
 #include "interaction/ticker.hpp"
 #include "interaction/worker.hpp"
@@ -49,23 +52,20 @@
 #include "subagent/kernel.hpp"
 #include "supervisor/daemon.hpp"
 #include "supervisor/supervisor.hpp"
-
 namespace booth {
 namespace {
-
 using ftxui::Component;
 using ftxui::ComponentBase;
 using ftxui::Element;
 using ftxui::Elements;
 using ftxui::ScreenInteractive;
-
 const char* const kSpinner[] = {"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"};
-
 class Root : public ComponentBase {
  public:
   Root(ScreenInteractive& screen, Kernel& supervisor, AppState& state, Inbox& inbox,
        Worker& worker, std::string cwd, std::filesystem::path history_file,
-       std::filesystem::path sessions_dir, KeyBindings keys)
+       std::filesystem::path sessions_dir, std::filesystem::path draft_file,
+       std::filesystem::path socket_file, KeyBindings keys)
       : screen_(screen),
         supervisor_(supervisor),
         state_(state),
@@ -75,25 +75,31 @@ class Root : public ComponentBase {
         cwd_(std::move(cwd)),
         history_file_(std::move(history_file)),
         sessions_dir_(std::move(sessions_dir)),
+        draft_file_(std::move(draft_file)),
+        socket_file_(std::move(socket_file)),
         keys_(keys) {
+    state_.composer = booth::load_draft(draft_file_); editor_.SetContent(state_.composer);
+    if (const char* vim = ::getenv("BOOTH_VIM"); vim != nullptr && *vim != '\0' && *vim != '0') editor_.EnableVim(true);
     history_ = booth::load_history(history_file_);
     git_ = booth::read_git(cwd_);
     ticker_ = booth::start_ticker(screen_, animate_, alive_);
+    worker_.post([this, ctx = context()]() mutable { booth::ensure_session(ctx); });
   }
   void shutdown() {
+    booth::save_draft(draft_file_, state_.composer);
     cancel();
-    animate_ = false;
-    alive_ = false;
+    animate_ = false; alive_ = false;
     if (ticker_.joinable()) ticker_.join();
     worker_.stop();
   }
   Element OnRender() override {
+    mouse_.begin_frame();
     if (state_.permission) {
-      return booth::permission_view(*state_.permission) |
+      return booth::permission_view(*state_.permission, &mouse_) |
              ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     }
     if (state_.help) {
-      return booth::help_view() | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) |
+      return booth::help_view(&mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) |
              ftxui::borderRounded | ftxui::center;
     }
     return main_view();
@@ -107,6 +113,21 @@ class Root : public ComponentBase {
       cancel();
       return true;
     }
+    if (event.is_mouse()) {
+      const auto in = mouse_.handle(event, &screen_);
+      if (in.kind == booth::MouseInput::Kind::Moved) { screen_.PostEvent(ftxui::Event::Custom); return true; }
+      if (in.kind == booth::MouseInput::Kind::Click) {
+        booth::MouseActions a{state_, editor_, slash_, files_, model_picker_, sessions_, history_search_, copy_picker_, mention_menu_,
+          [this] { submit(); }, [this](const booth::ModelChoice& c) { apply_model(c); },
+          [this](const booth::SessionRow& s) { state_.notice = "resuming…"; worker_.post([this, ctx = context(), s]() mutable { booth::resume_session(ctx, s); }); },
+          [this](std::size_t line, std::size_t column) { auto rows = editor_.Lines(); if (line >= rows.size()) return; std::size_t at = std::min(column, rows[line].size()); for (std::size_t row = 0; row < line; ++row) at += rows[row].size() + 1; editor_.SetCursor(at); },
+          [this](std::size_t entry) { if (entry < state_.entries.size() && state_.entries[entry].kind == EntryKind::Tool) { if (open_tools_.erase(entry) == 0) open_tools_.insert(entry); } },
+          [this](const char* kind) { booth::answer_permission_choice(supervisor_, state_, kind); },
+          [this] { state_.help = false; }};
+        booth::click_mouse(in.hit, a);
+        return true;
+      }
+    }
     if (state_.help) {
       if (event == ftxui::Event::Escape || event == ftxui::Event::Return ||
           event == ftxui::Event::Character('q')) {
@@ -115,79 +136,47 @@ class Root : public ComponentBase {
       return true;
     }
     if (state_.permission) {
-      if (event == ftxui::Event::Character('y') || event == ftxui::Event::Return) {
-        answer("allow_once");
-      } else if (event == ftxui::Event::Character('a')) {
-        answer("allow_always");
-      } else if (event == ftxui::Event::Character('n') || event == ftxui::Event::Escape) {
-        answer("reject_once");
-      } else if (event == ftxui::Event::Character('d')) {
-        answer("reject_always");
+      if (const char* kind = booth::permission_kind(event)) {
+        booth::answer_permission_choice(supervisor_, state_, kind);
       }
       return true;
     }
-    if (event.input() == "\x1b[Z") {
-      if (state_.reasoning.choices.empty()) {
+    if (matches_chord(keys_.reasoning, event)) {
+      const auto choice = booth::next_reasoning(state_.reasoning);
+      if (!choice) {
         state_.notice = "no reasoning options";
         return true;
       }
-      std::size_t current = 0;
-      for (std::size_t index = 0; index < state_.reasoning.choices.size(); ++index) {
-        if (state_.reasoning.choices[index].value == state_.reasoning.current) current = index;
-      }
-      const auto choice = state_.reasoning.choices[(current + 1) % state_.reasoning.choices.size()];
-      worker_.post([this, ctx = context(), id = state_.reasoning.id, choice]() mutable {
+      worker_.post([this, ctx = context(), id = state_.reasoning.id, choice = *choice]() mutable {
         booth::set_reasoning(ctx, id, choice);
       });
-      state_.notice = "reasoning " + choice.name;
+      state_.notice = "reasoning " + choice->name;
       return true;
     }
-    if (sessions_open_) {
-      if (event == ftxui::Event::Escape) {
-        sessions_open_ = false;
-      } else if (event == ftxui::Event::ArrowUp && !state_.history.empty()) {
-        sessions_index_ = (sessions_index_ + state_.history.size() - 1) % state_.history.size();
-      } else if (event == ftxui::Event::ArrowDown && !state_.history.empty()) {
-        sessions_index_ = (sessions_index_ + 1) % state_.history.size();
-      } else if (event.is_mouse() && !state_.history.empty() &&
-                 event.mouse().button == ftxui::Mouse::WheelUp) {
-        sessions_index_ = (sessions_index_ + state_.history.size() - 1) % state_.history.size();
-      } else if (event.is_mouse() && !state_.history.empty() &&
-                 event.mouse().button == ftxui::Mouse::WheelDown) {
-        sessions_index_ = (sessions_index_ + 1) % state_.history.size();
-      } else if (event == ftxui::Event::Character('r')) {
-        sessions_loading_ = true;
-        worker_.post([this, ctx = context()]() mutable { booth::list_sessions(ctx); });
-      } else if (event == ftxui::Event::Character('c')) {
-        sessions_open_ = false;
-        state_.notice = "closing…";
-        worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); });
-      } else if (event == ftxui::Event::Return && !sessions_loading_ &&
-                 !state_.history.empty()) {
-        const auto selected = state_.history[sessions_index_];
-        sessions_open_ = false;
-        state_.notice = "resuming…";
-        worker_.post([this, ctx = context(), selected]() mutable {
-          booth::resume_session(ctx, selected);
-        });
+    if (sessions_.visible()) {
+      switch (sessions_.key(event, state_.history)) {
+        case booth::SessionPicker::Action::Refresh:
+          worker_.post([this, ctx = context()]() mutable { booth::list_sessions(ctx); });
+          break;
+        case booth::SessionPicker::Action::Close:
+          state_.notice = "closing…";
+          worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); });
+          break;
+        case booth::SessionPicker::Action::Resume: {
+          const auto selected = state_.history[sessions_.matches()[sessions_.index()]];
+          state_.notice = "resuming…";
+          worker_.post([this, ctx = context(), selected]() mutable {
+            booth::resume_session(ctx, selected);
+          });
+          break;
+        }
+        case booth::SessionPicker::Action::None:
+          break;
       }
       return true;
     }
-    if (picker_open_) {
-      if (event == ftxui::Event::Escape) {
-        picker_open_ = false;
-      } else if (event == ftxui::Event::ArrowUp) {
-        picker_index_ = (picker_index_ + state_.models.size() - 1) % state_.models.size();
-      } else if (event == ftxui::Event::ArrowDown) {
-        picker_index_ = (picker_index_ + 1) % state_.models.size();
-      } else if (event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelUp) {
-        picker_index_ = (picker_index_ + state_.models.size() - 1) % state_.models.size();
-      } else if (event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelDown) {
-        picker_index_ = (picker_index_ + 1) % state_.models.size();
-      } else if (event == ftxui::Event::Return) {
-        apply_model(state_.models[picker_index_]);
-        picker_open_ = false;
-      }
+    if (model_picker_.visible()) {
+      if (const auto chosen = model_picker_.key(event, state_.models)) apply_model(*chosen);
       return true;
     }
     slash_.sync(state_.composer);
@@ -199,39 +188,55 @@ class Root : public ComponentBase {
         return true;
       }
     }
+    files_.sync(state_.composer, cwd_);
+    if (files_.visible() && files_.key(event, state_.composer)) { editor_.SetContent(state_.composer); return true; }
+    switch (history_search_.handle(event, state_, history_, matches_chord(keys_.history, event))) {
+      case booth::HistorySearch::Result::Accepted:
+        editor_.SetContent(state_.composer);
+        return true;
+      case booth::HistorySearch::Result::Handled: return true;
+      case booth::HistorySearch::Result::None: break;
+    }
+    if (copy_picker_.visible()) { copy_picker_.key(event, state_); return true; }
+    mention_menu_.update(editor_.Lines(), editor_.CursorLine(), editor_.CursorColumn(), state_.models, efforts());
+    if (!editor_.VimNormal() && mention_menu_.visible()) { if (auto result = mention_menu_.key(event, state_.composer)) { state_.composer = result->content; editor_.SetContent(state_.composer); editor_.SetCursor(result->cursor); return true; } }
+    if (matches_chord(keys_.help, event)) { state_.help = true; return true; }
+    if (matches_chord(keys_.model, event)) { if (!state_.models.empty()) model_picker_.open(state_.models, state_.model); return true; }
+    if (matches_chord(keys_.sessions, event)) { handle_command("/sessions"); return true; }
+    if (matches_chord(keys_.copy, event)) { handle_command("/copy"); return true; }
+    if (!matches_chord(keys_.editor, event) &&
+        booth::view_toggle(event, keys_, tools_expanded_, tools_hidden_, show_thoughts_, state_)) {
+      return true;
+    }
     if (event.is_mouse()) {
       const auto& mouse = event.mouse();
-      if (mouse.button == ftxui::Mouse::WheelUp) { scroll_.up(state_.entries.size(), 3); return true; }
-      if (mouse.button == ftxui::Mouse::WheelDown) { scroll_.down(3); return true; }
+      if (mouse.button == ftxui::Mouse::WheelUp) { scroll_.up(state_.entries.size(), 3); return true; } if (mouse.button == ftxui::Mouse::WheelDown) { scroll_.down(3); return true; }
     }
-    if (event == ftxui::Event::PageUp) {
-      scroll_.page_up(state_.entries.size());
-      return true;
-    }
-    if (event == ftxui::Event::PageDown) {
-      scroll_.page_down();
-      return true;
-    }
+    if (matches_chord(keys_.page_up, event)) { scroll_.page_up(state_.entries.size()); return true; }
+    if (matches_chord(keys_.page_down, event)) { scroll_.page_down(); return true; }
+    if (matches_chord(keys_.paste_image, event)) { if (auto image = booth::clipboard_image()) { images_.push_back(*image); state_.notice = "image attached"; } else state_.notice = "no image in clipboard"; return true; }
     if (matches_chord(keys_.editor, event)) {
       if (booth::edit_in_screen(screen_, state_.composer, state_.notice)) {
         editor_.SetContent(state_.composer);
       }
       return true;
     }
-    if (matches_chord(keys_.quit, event) && state_.composer.empty()) {
+    if (matches_chord(keys_.quit, event)) {
       screen_.Exit();
       return true;
     }
-    if (event == ftxui::Event::ArrowUp && state_.composer.empty() && !history_.empty()) {
-      if (history_pos_ < history_.size()) ++history_pos_;
-      state_.composer = history_[history_.size() - history_pos_];
+    if (matches_chord(keys_.dequeue, event) && booth::dequeue_prompt(state_, queued_)) {
       editor_.SetContent(state_.composer);
+      return true;
+    }
+    if (event == ftxui::Event::ArrowUp && state_.composer.empty() && !history_.empty() && !editor_.VimNormal()) {
+      if (history_pos_ < history_.size()) ++history_pos_;
+      state_.composer = history_[history_.size() - history_pos_]; editor_.SetContent(state_.composer);
       return true;
     }
     if (event == ftxui::Event::ArrowDown && history_pos_ > 0) {
       --history_pos_;
-      state_.composer = history_pos_ == 0 ? std::string{} : history_[history_.size() - history_pos_];
-      editor_.SetContent(state_.composer);
+      state_.composer = history_pos_ == 0 ? std::string{} : history_[history_.size() - history_pos_]; editor_.SetContent(state_.composer);
       return true;
     }
     if (event == ftxui::Event::Return) {
@@ -246,7 +251,10 @@ class Root : public ComponentBase {
     Elements lines;
     const auto window = scroll_.window(state_.entries.size());
     for (std::size_t index = window.begin; index < window.end; ++index) {
-      lines.push_back(booth::entry_element(state_.entries[index]));
+      const auto& entry = state_.entries[index];
+      if (entry.kind == EntryKind::Thought && !show_thoughts_) continue;
+      if (entry.kind == EntryKind::Tool && tools_hidden_) continue;
+      lines.push_back(mouse_.zone(booth::entry_element(entry, tools_expanded_ || open_tools_.count(index) != 0), MouseSurface::Transcript, index));
     }
     if (window.scroll == 0 && !state_.streaming.empty()) {
       lines.push_back(booth::markdown_view(state_.streaming, false));
@@ -271,14 +279,21 @@ class Root : public ComponentBase {
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
     if (!queued_.empty()) {
-      view.push_back(ftxui::text("  " + std::to_string(queued_.size()) + " queued") |
+      view.push_back(ftxui::text("  " + std::to_string(queued_.size()) + " queued · Alt+Up edit") |
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
-    if (sessions_open_) {
-      view.push_back(booth::session_picker_view(state_.history, sessions_index_, sessions_loading_));
+    if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.index(), &mouse_));
+    if (history_search_.visible()) view.push_back(booth::history_search_view(
+        history_search_.query(), history_search_.matches(), history_search_.index(), &mouse_));
+    if (sessions_.visible()) {
+      view.push_back(
+          booth::session_picker_view(state_.history, sessions_.matches(), sessions_.index(),
+                                     sessions_.loading(), sessions_.query(), &mouse_));
     }
-    if (picker_open_ && !state_.models.empty()) {
-      view.push_back(booth::model_picker_view(state_.models, picker_index_, state_.model));
+    if (model_picker_.visible()) {
+      view.push_back(booth::model_picker_view(state_.models, model_picker_.matches(),
+                                              model_picker_.index(), state_.model,
+                                              model_picker_.query(), &mouse_));
     }
     view.push_back(ftxui::text(" "));
     long busy_seconds = -1;
@@ -290,13 +305,18 @@ class Root : public ComponentBase {
       spinner = kSpinner[(ms / 120) % 8];
     }
     const std::string& title = state_.title.empty() ? session_title_ : state_.title;
+    mention_menu_.update(editor_.Lines(), editor_.CursorLine(), editor_.CursorColumn(), state_.models, efforts());
     view.push_back(booth::composer_view(state_, cwd_, git_, title, busy_seconds, spinner,
                                         editor_.Lines(), editor_.CursorLine(),
-                                        editor_.CursorColumn(), state_.reasoning.current_name));
+                                        editor_.CursorColumn(), state_.reasoning.current_name,
+                                        queued_.size(), editor_.ModeLabel(), images_.size(), &mouse_, editor_.VimSelection(), editor_.VimMode() != booth::vim::Mode::Insert));
     slash_.sync(state_.composer);
+    if (!editor_.VimNormal() && mention_menu_.visible()) view.push_back(mention_menu_.view(&mouse_));
     if (slash_.visible(state_.composer)) {
-      view.push_back(booth::command_menu_view(state_.composer, slash_.index()));
+      view.push_back(booth::command_menu_view(state_.composer, slash_.index(), &mouse_));
     }
+    files_.sync(state_.composer, cwd_);
+    if (files_.visible()) view.push_back(booth::file_menu_view(files_.query(), files_.matches(), files_.index(), &mouse_));
     return ftxui::vbox(std::move(view));
   }
   void drain() {
@@ -313,18 +333,12 @@ class Root : public ComponentBase {
       const bool listed = std::holds_alternative<SessionsListed>(event.value);
       const bool closed = std::holds_alternative<SessionClosed>(event.value);
       apply(state_, event);
-      if (listed) {
-        sessions_loading_ = false;
-        if (state_.history.empty()) {
-          sessions_index_ = 0;
-        } else if (sessions_index_ >= state_.history.size()) {
-          sessions_index_ = state_.history.size() - 1;
-        }
-      }
+      if (listed) sessions_.loaded(state_.history);
       if (std::holds_alternative<Problem>(event.value)) new_after_close_ = false;
       if (closed) {
         session_title_.clear();
         queued_.clear();
+        mention_registry_.clear();
         if (new_after_close_) {
           state_.notice = "new session";
           new_after_close_ = false;
@@ -338,6 +352,9 @@ class Root : public ComponentBase {
     if (switched) {
       scroll_.follow();
       queued_.clear();
+      const auto path = mention_path(state_.session.empty() ? std::string{"none"} : state_.session);
+      if (std::filesystem::exists(path)) { mention_registry_.clear(); mention_registry_.load(path); }
+      else if (!mention_registry_.mentions().empty()) mention_registry_.save(path);
     } else {
       scroll_.resized(before, state_.entries.size());
     }
@@ -377,8 +394,8 @@ class Root : public ComponentBase {
       }
       return;
     }
-    state_.composer.clear();
-    editor_.Reset();
+    state_.composer.clear(); editor_.Reset();
+    booth::save_draft(draft_file_, {});
     if (command) {
       handle_command(text);
       return;
@@ -386,39 +403,41 @@ class Root : public ComponentBase {
     send_prompt(std::move(text));
   }
   void send_prompt(std::string text) {
-    state_.notice.clear();
-    state_.busy = true;
-    animate_ = true;
-    if (session_title_.empty()) session_title_ = text;
+    state_.notice.clear(); state_.busy = true; animate_ = true;
+    text = booth::expand_emojis(text);
+    const std::string display = text;
+    std::vector<std::string> efforts; for (const auto& choice : state_.reasoning.choices) efforts.push_back(choice.value);
+    std::string wire = mention_registry_.expand(text, state_.models, efforts);
+    if (!mention_registry_.mentions().empty() && !state_.session.empty()) mention_registry_.save(mention_path(state_.session));
+    if (session_title_.empty()) session_title_ = display;
     busy_since_ = std::chrono::steady_clock::now();
-    TranscriptEntry echo;
-    echo.kind = EntryKind::User;
-    echo.text = text;
+    TranscriptEntry echo; echo.kind = EntryKind::User; echo.text = display;
     publish(Event{std::move(echo)});
     scroll_.follow();
-    history_.push_back(text);
-    history_pos_ = 0;
-    booth::append_history(history_file_, text);
-    worker_.post([this, text = std::move(text)] { run_prompt(text); });
+    history_.push_back(display); history_pos_ = 0;
+    booth::append_history(history_file_, display);
+    std::vector<std::pair<std::string, std::string>> resources;
+    for (const auto& attachment : state_.attachments) resources.emplace_back(attachment.name, attachment.uri);
+    for (auto& link : booth::file_links(display, cwd_)) resources.push_back(std::move(link));
+    state_.attachments.clear();
+    worker_.post([this, text = std::move(wire), resources = std::move(resources), images = std::move(images_)]() mutable {
+      run_prompt(std::move(text), resources, images);
+    });
   }
   void handle_command(std::string line) {
     line = booth::normalize_command(std::move(line));
-    if (booth::handle_local_command(state_, scroll_, queued_.size(), line)) return;
-    if (line == "/queue" || line.rfind("/queue ", 0) == 0) {
-      booth::handle_queue_command(state_, queued_, line);
-      return;
-    }
+    if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_, line)) return;
+    if (line == "/acp") { state_.notice = booth::acp_text(state_, supervisor_.connected(), socket_file_.string()); return; }
+    if (line == "/cancel") { cancel(); state_.notice = "cancelled"; return; }
+    if (line == "/copy") { if (!copy_picker_.open(state_)) state_.notice = "nothing to copy"; return; }
+    if (line == "/queue" || line.rfind("/queue ", 0) == 0) { booth::handle_queue_command(state_, queued_, line); return; }
     if (line == "/effort" || line.rfind("/effort ", 0) == 0) {
       booth::handle_effort_command(state_, line, [this](const std::string& id, const ModelChoice& picked) {
         worker_.post([this, ctx = context(), id, choice = picked]() mutable { booth::set_reasoning(ctx, id, choice); });
       });
       return;
     }
-    if (line == "/new") {
-      if (booth::start_new_session(state_, scroll_, new_after_close_))
-        worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); });
-      return;
-    }
+    if (line == "/new") { if (booth::start_new_session(state_, scroll_, new_after_close_)) worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); }); return; }
     const auto argument = [&](std::string_view prefix) -> std::optional<std::string> {
       if (line.rfind(prefix, 0) != 0) return std::nullopt;
       std::string rest = line.substr(prefix.size());
@@ -428,18 +447,8 @@ class Root : public ComponentBase {
       const auto last = rest.find_last_not_of(" \t");
       return rest.substr(0, last + 1);
     };
-    if (line == "/quit") {
-      screen_.Exit();
-      return;
-    }
-    if (line == "/retry") {
-      if (history_.empty()) {
-        state_.notice = "nothing to retry";
-        return;
-      }
-      send_prompt(history_.back());
-      return;
-    }
+    if (line == "/quit") { screen_.Exit(); return; }
+    if (line == "/retry") { if (history_.empty()) { state_.notice = "nothing to retry"; return; } send_prompt(history_.back()); return; }
     if (line == "/export" || line.rfind("/export ", 0) == 0) {
       booth::export_command(state_, line, history_file_.parent_path(), cwd_);
       return;
@@ -447,28 +456,8 @@ class Root : public ComponentBase {
     if (line == "/close") {
       worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); }); return;
     }
-    if (line == "/sessions") {
-      picker_open_ = false;
-      sessions_open_ = true;
-      sessions_loading_ = true;
-      sessions_index_ = 0;
-      state_.history.clear();
-      worker_.post([this, ctx = context()]() mutable { booth::list_sessions(ctx); });
-      return;
-    }
-    if (line == "/model") {
-      if (state_.models.empty()) {
-        state_.notice = "no models yet; send a prompt first";
-        return;
-      }
-      picker_open_ = true;
-      sessions_open_ = false;
-      picker_index_ = 0;
-      for (std::size_t index = 0; index < state_.models.size(); ++index) {
-        if (state_.models[index].name == state_.model) picker_index_ = index;
-      }
-      return;
-    }
+    if (line == "/sessions") { model_picker_.close(); sessions_.open(); state_.history.clear(); worker_.post([this, ctx = context()]() mutable { booth::list_sessions(ctx); }); return; }
+    if (line == "/model") { if (state_.models.empty()) { state_.notice = "no models yet; send a prompt first"; return; } sessions_.close(); model_picker_.open(state_.models, state_.model); return; }
     if (const auto model = argument("/model ")) {
       if (model->empty()) {
         state_.notice = "usage: /model auto|<id>";
@@ -504,6 +493,8 @@ class Root : public ComponentBase {
     }
     state_.notice = "unknown command " + line;
   }
+  std::filesystem::path mention_path(const std::string& session) const { return draft_file_.parent_path() / ("mentions-" + session + ".json"); }
+  std::vector<std::string> efforts() const { std::vector<std::string> out; for (const auto& choice : state_.reasoning.choices) out.push_back(choice.value); return out; }
   PromptContext context() {
     return PromptContext{supervisor_,
                          state_,
@@ -513,7 +504,11 @@ class Root : public ComponentBase {
                          sessions_dir_,
                          [this](Event event) { publish(std::move(event)); }};
   }
-  void run_prompt(std::string text) { auto ctx = context(); booth::run_prompt(ctx, std::move(text)); }
+  void run_prompt(std::string text,
+                  const std::vector<std::pair<std::string, std::string>>& resources = {},
+                  const std::vector<booth::acp::ImageAttachment>& images = {}) {
+    auto ctx = context(); booth::run_prompt(ctx, std::move(text), resources, images);
+  }
   void apply_model(const booth::ModelChoice& choice) { worker_.post([this, ctx = context(), choice]() mutable { booth::apply_model(ctx, choice); }); }
   void cancel() {
     if (state_.permission) {
@@ -531,25 +526,6 @@ class Root : public ComponentBase {
       state_.notice = "cancelled";
     }
   }
-  void answer(const std::string& kind) {
-    if (!state_.permission) return;
-    const auto& request = *state_.permission;
-    const auto pick = [&](const std::string& wanted) -> std::string {
-      for (const auto& candidate : request.options) {
-        if (candidate.kind == wanted) return candidate.id;
-      }
-      return {};
-    };
-    std::string option = pick(kind);
-    if (option.empty()) {
-      option = pick(kind.rfind("allow", 0) == 0 ? "allow_once" : "reject_once");
-    }
-    const std::optional<std::string> choice =
-        option.empty() ? std::nullopt : std::optional<std::string>(option);
-    const auto answered = supervisor_.answer_permission(request.id.value, choice);
-    if (!answered) state_.notice = answered.error().detail;
-    state_.permission.reset();
-  }
   ScreenInteractive& screen_;
   Kernel& supervisor_;
   AppState& state_;
@@ -559,13 +535,10 @@ class Root : public ComponentBase {
   std::string cwd_;
   std::filesystem::path history_file_;
   std::filesystem::path sessions_dir_;
+  std::filesystem::path draft_file_;
+  std::filesystem::path socket_file_;
   booth::GitStatus git_;
   std::string session_title_;
-  bool picker_open_{false};
-  std::size_t picker_index_{0};
-  bool sessions_open_{false};
-  bool sessions_loading_{false};
-  std::size_t sessions_index_{0};
   std::atomic<bool> animate_{false};
   std::atomic<bool> alive_{true};
   std::thread ticker_;
@@ -575,8 +548,21 @@ class Root : public ComponentBase {
   KeyBindings keys_;
   booth::TranscriptScroll scroll_;
   booth::SlashMenu slash_;
+  booth::SessionPicker sessions_;
+  booth::ModelPicker model_picker_;
+  booth::HistorySearch history_search_;
+  booth::CopyPicker copy_picker_;
+  booth::FileMenu files_;
+  booth::TranscriptSearch transcript_search_;
+  bool tools_expanded_{false}, tools_hidden_{false};
+  bool show_thoughts_{true};
   bool new_after_close_{false};
   std::deque<std::string> queued_;
+  booth::MentionRegistry mention_registry_;
+  booth::MouseRouter mouse_;
+  booth::MentionMenu mention_menu_;
+  std::vector<booth::acp::ImageAttachment> images_;
+  std::set<std::size_t> open_tools_;
   std::mutex session_mutex_;
   std::string session_;
 };
@@ -592,7 +578,8 @@ int tui_loop(ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& 
   Worker worker;
   auto root = ftxui::Make<Root>(screen, kernel, state, inbox, worker,
                                 std::filesystem::current_path().string(), config.history_file,
-                                config.dsh_home / "sessions", *bindings);
+                                config.dsh_home / "sessions", config.state_dir / "draft",
+                                config.socket_file, *bindings);
   screen.Loop(root);
   root->shutdown();
   return 0;

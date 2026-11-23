@@ -28,6 +28,15 @@ void TranscriptScroll::page_down() { down(kPage); }
 
 void TranscriptScroll::follow() { scroll_ = 0; }
 
+void TranscriptScroll::focus(std::size_t count, std::size_t index) {
+  if (count <= kWindow || index >= count) {
+    scroll_ = 0;
+    return;
+  }
+  const std::size_t end = std::min(count, index + kWindow / 2 + 1);
+  scroll_ = std::min(count - end, count - kWindow);
+}
+
 void TranscriptScroll::resized(std::size_t before, std::size_t after) {
   if (after < before || after <= kWindow) {
     scroll_ = 0;

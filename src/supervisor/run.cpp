@@ -28,7 +28,7 @@ Result<RunResult> run_task(Kernel& kernel, const RunRequest& request) {
     if (!selected) return std::unexpected(selected.error());
   }
 
-  auto prompted = kernel.request("session/prompt", acp::prompt_params(session, request.text),
+  auto prompted = kernel.request("session/prompt", acp::prompt_params(session, request.text, {}, {}),
                                      request.timeout);
   if (!prompted) return std::unexpected(prompted.error());
 

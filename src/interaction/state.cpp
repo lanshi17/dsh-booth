@@ -27,11 +27,13 @@ void apply(AppState& state, const Event& event) {
         if (existing.id == entry->id && existing.kind == entry->kind) {
           const auto started = existing.started;
           const std::string input = existing.input;
+          const std::string raw_input = existing.raw_input;
           const std::string text = existing.text;
           const std::string tool = existing.tool;
           existing = *entry;
           if (existing.started == std::chrono::system_clock::time_point{}) existing.started = started;
           if (existing.input.empty()) existing.input = input;
+          if (existing.raw_input.empty()) existing.raw_input = raw_input;
           if (existing.text.empty()) existing.text = text;
           if (existing.tool.empty()) existing.tool = tool;
           return;
@@ -54,6 +56,7 @@ void apply(AppState& state, const Event& event) {
 
   if (const auto* switched = std::get_if<SessionSwitched>(&event.value)) {
     state.entries.clear();
+    state.attachments.clear();
     state.streaming.clear();
     state.busy = false;
     state.session = switched->id.value;
@@ -75,6 +78,7 @@ void apply(AppState& state, const Event& event) {
     state.title.clear();
     state.models.clear();
     state.reasoning = {};
+    state.attachments.clear();
     state.entries.clear();
     state.streaming.clear();
     state.busy = false;

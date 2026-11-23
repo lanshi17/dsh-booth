@@ -1,6 +1,10 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <unistd.h>
+
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 #include "interaction/clipboard.hpp"
@@ -16,4 +20,27 @@ TEST_CASE("inside tmux the sequence is wrapped for passthrough") {
   const std::string sequence = clipboard_sequence("hi");
   ::unsetenv("TMUX");
   REQUIRE(sequence == "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
+}
+
+TEST_CASE("clipboard images become base64 attachments") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-clip-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  const auto tool = dir / "wl-paste";
+  {
+    std::ofstream out(tool);
+    out << "#!/bin/sh\nprintf 'PNG'\n";
+  }
+  std::filesystem::permissions(tool, std::filesystem::perms::owner_exec |
+                                         std::filesystem::perms::group_exec |
+                                         std::filesystem::perms::others_exec,
+                               std::filesystem::perm_options::add);
+  const std::string old_path = ::getenv("PATH") == nullptr ? "" : ::getenv("PATH");
+  ::setenv("PATH", (dir.string() + ":" + old_path).c_str(), 1);
+  const auto image = clipboard_image();
+  ::setenv("PATH", old_path.c_str(), 1);
+  std::filesystem::remove_all(dir);
+  REQUIRE(image.has_value());
+  REQUIRE(image->mime_type == "image/png");
+  REQUIRE(image->data == "UE5H");
 }

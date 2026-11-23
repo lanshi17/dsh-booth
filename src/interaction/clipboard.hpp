@@ -1,8 +1,10 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "interaction/state.hpp"
+#include "subagent/acp/messages.hpp"
 
 namespace booth {
 
@@ -17,5 +19,8 @@ bool copy_to_clipboard(const std::string& text);
 
 /// Copies the last answer and updates the notice.
 void copy_answer(AppState& state);
+
+/// Reads a clipboard raster and returns it base64-encoded, or nullopt when none exists.
+std::optional<acp::ImageAttachment> clipboard_image();
 
 }  // namespace booth

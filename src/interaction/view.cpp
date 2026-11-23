@@ -1,8 +1,9 @@
 #include "interaction/view.hpp"
+#include "interaction/theme.hpp"
+#include "interaction/tool_diff.hpp"
 
 #include <ftxui/screen/terminal.hpp>
 #include <sys/ioctl.h>
-#include <unistd.h>
 
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -10,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -18,17 +20,17 @@
 namespace booth {
 namespace {
 
-const ftxui::Color kAccent = ftxui::Color::RGB(0, 175, 255);
-const ftxui::Color kText = ftxui::Color::RGB(228, 228, 228);
-const ftxui::Color kDim = ftxui::Color::RGB(118, 118, 118);
-const ftxui::Color kLine = ftxui::Color::RGB(72, 72, 72);
-const ftxui::Color kGreen = ftxui::Color::RGB(0, 255, 135);
-const ftxui::Color kYellow = ftxui::Color::RGB(255, 215, 0);
-const ftxui::Color kRed = ftxui::Color::RGB(255, 95, 95);
-const ftxui::Color kPanel = ftxui::Color::RGB(18, 18, 18);
-const ftxui::Color kGit = ftxui::Color::RGB(255, 175, 95);
-const ftxui::Color kGray = ftxui::Color::RGB(168, 168, 168);
-const ftxui::Color kToken = ftxui::Color::RGB(95, 135, 175);
+#define kAccent (theme_color("accent", ftxui::Color::RGB(0, 175, 255)))
+#define kText (theme_color("text", ftxui::Color::RGB(228, 228, 228)))
+#define kDim (theme_color("dim", ftxui::Color::RGB(118, 118, 118)))
+#define kLine (theme_color("line", ftxui::Color::RGB(72, 72, 72)))
+#define kGreen (theme_color("green", ftxui::Color::RGB(0, 255, 135)))
+#define kYellow (theme_color("yellow", ftxui::Color::RGB(255, 215, 0)))
+#define kRed (theme_color("red", ftxui::Color::RGB(255, 95, 95)))
+#define kPanel (theme_color("panel", ftxui::Color::RGB(18, 18, 18)))
+#define kGit (theme_color("git", ftxui::Color::RGB(255, 175, 95)))
+#define kGray (theme_color("gray", ftxui::Color::RGB(168, 168, 168)))
+#define kToken (theme_color("token", ftxui::Color::RGB(95, 135, 175)))
 
 std::string hrule(std::size_t count) {
   std::string out;
@@ -138,20 +140,40 @@ GitStatus read_git(const std::string& cwd) {
   return git;
 }
 
+RowWindow row_window(std::size_t count, std::size_t cursor, std::size_t visible) {
+  RowWindow window;
+  if (visible == 0) visible = 1;
+  if (count == 0) return window;
+  cursor = std::min(cursor, count - 1);
+  window.begin = cursor >= visible ? cursor - visible + 1 : 0;
+  if (window.begin + visible > count) {
+    window.begin = count > visible ? count - visible : 0;
+  }
+  window.end = std::min(window.begin + visible, count);
+  window.hidden_above = window.begin;
+  window.hidden_below = count - window.end;
+  return window;
+}
+
 ftxui::Element composer_view(const AppState& state, const std::string& cwd,
                              const GitStatus& git, const std::string& session_title,
                              long busy_seconds, const std::string& spinner,
                              const std::vector<std::string>& lines, std::size_t cursor_line,
-                             std::size_t cursor_column, const std::string& reasoning) {
+                             std::size_t cursor_column, const std::string& reasoning,
+                             std::size_t queued, const std::string& mode, std::size_t images,
+                             MouseRouter* mouse, const std::optional<vim::Selection>& selection,
+                             bool block_cursor) {
   const auto [used, size] = context_usage(state);
   const int percent = size == 0 ? 0 : static_cast<int>((used * 100) / size);
+  constexpr std::size_t kVisibleRows = 8;
+  const RowWindow window = row_window(lines.size(), cursor_line, kVisibleRows);
   const int columns = ftxui::Terminal::Size().dimx;
   const std::size_t keep = columns >= 120 ? 3 : columns >= 110 ? 2 : 1;
   const bool compact = columns < 110;
   std::string branch = git.branch;
   const std::size_t branch_max = compact ? 10 : 16;
   if (branch.size() > branch_max) branch = branch.substr(0, branch_max - 1) + "…";
-  const ftxui::Color kBorder = ftxui::Color::RGB(108, 108, 108);
+  const ftxui::Color kBorder = theme_color("border", ftxui::Color::RGB(108, 108, 108));
   const ftxui::Color kChip = ftxui::Color::RGB(18, 18, 18);
 
   const auto chip = [&](std::string value, ftxui::Color fg) {
@@ -165,6 +187,21 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
     band.push_back(chip("", kLine));
     band.push_back(chip(" ", kText));
   }
+  if (!mode.empty()) {
+    band.push_back(chip(mode + " ", kAccent));
+    band.push_back(chip("\xee\x82\xb1", kLine));
+    band.push_back(chip(" ", kText));
+  }
+  if (images > 0) {
+    band.push_back(chip("image " + std::to_string(images) + " ", kAccent));
+    band.push_back(chip("\xee\x82\xb1", kLine));
+    band.push_back(chip(" ", kText));
+  }
+  if (queued > 0) {
+    band.push_back(chip("queue " + std::to_string(queued) + " ", kAccent));
+    band.push_back(chip("\xee\x82\xb1", kLine));
+    band.push_back(chip(" ", kText));
+  }
   band.push_back(chip("󰵗 ", kDim));
   band.push_back(chip("", kLine));
   band.push_back(chip(" ", kText));
@@ -175,6 +212,11 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
     band.push_back(chip(" ", kText));
     band.push_back(chip("effort ", kDim));
     band.push_back(chip(reasoning + " ", kText));
+  }
+  if (!state.attachments.empty()) {
+    band.push_back(chip("\xee\x82\xb1", kLine));
+    band.push_back(chip(" ", kText));
+    band.push_back(chip("file " + std::to_string(state.attachments.size()) + " ", kText));
   }
   band.push_back(chip("", kLine));
   band.push_back(chip(" ", kText));
@@ -201,11 +243,15 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
       ftxui::text("") | ftxui::color(kChip),
       ftxui::text("─") | ftxui::color(kAccent),
       ftxui::text(std::to_string(percent) + "%") | ftxui::color(kDim),
+      window.hidden_above > 0
+          ? (ftxui::text("↑" + std::to_string(window.hidden_above) + " ") | ftxui::color(kDim))
+          : ftxui::text(""),
       ftxui::separator() | ftxui::flex | ftxui::color(kLine),
   };
   if (size > 0) {
     top.push_back(ftxui::text("󰁨") | ftxui::color(kToken));
-    top.push_back(ftxui::text(compact_tokens(size) + " ") | ftxui::color(kDim));
+    top.push_back(ftxui::text(compact_tokens(used) + "/" + compact_tokens(size) + " ") |
+                  ftxui::color(kDim));
     top.push_back(ftxui::text("─") | ftxui::color(kBorder));
   }
   if (!session_title.empty()) {
@@ -219,148 +265,89 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
   top.push_back(ftxui::text("─╮") | ftxui::color(kBorder));
   ftxui::Element top_line = ftxui::hbox(std::move(top));
 
-  const ftxui::Element hint = state.composer.empty()
-                                  ? ftxui::text("Enter send · ^C cancel · ^D quit ") | ftxui::dim
-                                  : ftxui::text(" ");
+  const std::string hint_text =
+      window.hidden_below > 0
+          ? "↓" + std::to_string(window.hidden_below) + " lines "
+          : (state.composer.empty() ? "Enter send · ^C cancel · ^D quit " : " ");
+  const ftxui::Element hint = ftxui::text(hint_text) | ftxui::dim;
   const auto render_line = [&](std::size_t row) -> ftxui::Element {
     const std::string& line = lines[row];
-    if (row != cursor_line) return ftxui::text(line) | ftxui::color(kText);
+    const bool active = row == cursor_line;
     const std::size_t column = std::min(cursor_column, line.size());
-    return ftxui::hbox({
-        ftxui::text(line.substr(0, column)) | ftxui::color(kText),
-        ftxui::text("▏") | ftxui::color(kAccent),
-        ftxui::text(line.substr(column)) | ftxui::color(kText),
-    });
+    std::size_t sel_from = 0, sel_to = 0;
+    bool selected = false;
+    if (selection && row >= static_cast<std::size_t>(selection->from.line) &&
+        row <= static_cast<std::size_t>(selection->to.line)) {
+      selected = true;
+      const bool linewise = selection->linewise;
+      sel_from = linewise || row > static_cast<std::size_t>(selection->from.line)
+                     ? 0
+                     : static_cast<std::size_t>(selection->from.col);
+      sel_to = row < static_cast<std::size_t>(selection->to.line)
+                   ? line.size()
+                   : static_cast<std::size_t>(selection->to.col);
+      sel_from = std::min(sel_from, line.size());
+      sel_to = std::min(std::max(sel_to, sel_from), line.size());
+    }
+    std::vector<std::size_t> cuts{0, line.size()};
+    if (selected) { cuts.push_back(sel_from); cuts.push_back(sel_to); }
+    if (active) {
+      cuts.push_back(column);
+      cuts.push_back(std::min(vim::next_grapheme_start(line, column), line.size()));
+    }
+    std::sort(cuts.begin(), cuts.end());
+    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+    ftxui::Elements parts;
+    for (std::size_t index = 0; index + 1 < cuts.size(); ++index) {
+      const std::size_t from = cuts[index];
+      const std::size_t to = cuts[index + 1];
+      if (active && !block_cursor && from == column) parts.push_back(ftxui::text("▏") | ftxui::color(kAccent));
+      auto part = ftxui::text(line.substr(from, to - from)) | ftxui::color(kText);
+      const bool in_selection = selected && from >= sel_from && to <= sel_to;
+      const bool on_cursor = active && block_cursor && from == column;
+      if (in_selection || on_cursor) part = part | ftxui::inverted;
+      parts.push_back(std::move(part));
+    }
+    if (active) {
+      if (block_cursor && column >= line.size()) parts.push_back(ftxui::text(" ") | ftxui::inverted);
+      if (!block_cursor && column >= line.size()) parts.push_back(ftxui::text("▏") | ftxui::color(kAccent));
+    }
+    if (selected && selection && row < static_cast<std::size_t>(selection->to.line) &&
+        (selection->linewise || static_cast<std::size_t>(selection->to.line) > row)) {
+      parts.push_back(ftxui::text(" ") | ftxui::inverted);
+    }
+    return ftxui::hbox(std::move(parts));
   };
 
   ftxui::Elements rows;
   rows.push_back(std::move(top_line));
-  if (lines.size() <= 1) {
-    rows.push_back(ftxui::hbox({
-        ftxui::text("╰─ ") | ftxui::color(kBorder),
-        render_line(0) | ftxui::flex,
-        hint,
-        ftxui::text("─╯") | ftxui::color(kBorder),
-    }));
-  } else {
-    for (std::size_t row = 0; row + 1 < lines.size(); ++row) {
-      rows.push_back(ftxui::hbox({
+  for (std::size_t row = window.begin; row < window.end; ++row) {
+    ftxui::Element input_row;
+    std::size_t text_column = 2;
+    if (row + 1 == window.end) {
+      text_column = 3;
+      input_row = ftxui::hbox({
+          ftxui::text("╰─ ") | ftxui::color(kBorder),
+          render_line(row) | ftxui::flex,
+          hint,
+          ftxui::text("─╯") | ftxui::color(kBorder),
+      });
+    } else {
+      input_row = ftxui::hbox({
           ftxui::text("│ ") | ftxui::color(kBorder),
           render_line(row) | ftxui::flex,
           ftxui::text(" │") | ftxui::color(kBorder),
-      }));
+      });
     }
-    rows.push_back(ftxui::hbox({
-        ftxui::text("╰─ ") | ftxui::color(kBorder),
-        render_line(lines.size() - 1) | ftxui::flex,
-        hint,
-        ftxui::text("─╯") | ftxui::color(kBorder),
-    }));
+    if (mouse != nullptr) {
+      input_row = mouse->zone(std::move(input_row), MouseSurface::Composer, row, text_column);
+    }
+    rows.push_back(std::move(input_row));
   }
   return ftxui::vbox(std::move(rows));
 }
 
-std::vector<std::string> wrap_cells(const std::string& text, std::size_t width) {
-  std::vector<std::string> out;
-  if (width == 0) width = 1;
-  for (const auto& logical : [&] {
-         std::vector<std::string> lines;
-         std::istringstream input(text);
-         std::string line;
-         while (std::getline(input, line)) lines.push_back(line);
-         if (lines.empty()) lines.push_back("");
-         return lines;
-       }()) {
-    std::string row;
-    std::size_t cells = 0;
-    for (const char ch : logical) {
-      const bool continuation = (static_cast<unsigned char>(ch) & 0xC0) == 0x80;
-      if (!continuation && cells == width) {
-        out.push_back(row);
-        row.clear();
-        cells = 0;
-      }
-      row += ch;
-      if (!continuation) ++cells;
-    }
-    out.push_back(row);
-  }
-  return out;
-}
-
-ftxui::Element tool_view(const TranscriptEntry& entry) {
-  const ftxui::Color border = ftxui::Color::RGB(108, 108, 108);
-  std::string title = entry.text.empty() ? entry.tool : entry.text;
-  const int columns = ftxui::Terminal::Size().dimx;
-  const std::size_t content_width =
-      columns > 12 ? static_cast<std::size_t>(columns - 8) : 20;
-  if (title.size() > content_width) title = title.substr(0, content_width - 1) + "…";
-  ftxui::Elements rows;
-  rows.push_back(ftxui::hbox({
-      ftxui::text("╭─── ") | ftxui::color(border),
-      ftxui::text(title) | ftxui::bold |
-          ftxui::color(entry.status == "failed" ? kRed : kText),
-      ftxui::text(" "),
-      ftxui::separator() | ftxui::flex | ftxui::color(border),
-      ftxui::text("╮") | ftxui::color(border),
-  }));
-  if (!entry.input.empty()) {
-    for (const auto& line : wrap_cells(entry.input, content_width)) {
-      rows.push_back(ftxui::hbox({
-          ftxui::text("│   ") | ftxui::color(border),
-          ftxui::text(line) | ftxui::flex | ftxui::color(kText),
-          ftxui::text(" │") | ftxui::color(border),
-      }));
-    }
-  }
-  if (!entry.output.empty()) {
-    rows.push_back(ftxui::hbox({
-        ftxui::text("├── Output ") | ftxui::color(border),
-        ftxui::separator() | ftxui::flex | ftxui::color(border),
-        ftxui::text("┤") | ftxui::color(border),
-    }));
-    std::istringstream output(entry.output);
-    std::string line;
-    std::size_t shown = 0;
-    std::size_t hidden = 0;
-    while (std::getline(output, line)) {
-      if (++shown > 12) {
-        ++hidden;
-        continue;
-      }
-      for (const auto& wrapped : wrap_cells(line, content_width)) {
-        rows.push_back(ftxui::hbox({
-            ftxui::text("│ ") | ftxui::color(border),
-            ftxui::text(wrapped) | ftxui::flex | ftxui::color(kText),
-            ftxui::text(" │") | ftxui::color(border),
-        }));
-      }
-    }
-    if (hidden > 0) {
-      rows.push_back(ftxui::hbox({
-          ftxui::text("│ ") | ftxui::color(border),
-          ftxui::text("… +" + std::to_string(hidden) + " lines") | ftxui::dim | ftxui::flex,
-          ftxui::text(" │") | ftxui::color(border),
-      }));
-    }
-  }
-  std::string footer = entry.status.empty() ? "running" : entry.status;
-  if (entry.finished > entry.started && entry.started != std::chrono::system_clock::time_point{}) {
-    const auto ms =
-        std::chrono::duration_cast<std::chrono::milliseconds>(entry.finished - entry.started);
-    footer = std::to_string(ms.count()) + "ms";
-  }
-  rows.push_back(ftxui::hbox({
-      ftxui::text("╰─── ") | ftxui::color(border),
-      ftxui::text(footer) | ftxui::dim,
-      ftxui::text(" ") ,
-      ftxui::separator() | ftxui::flex | ftxui::color(border),
-      ftxui::text("╯") | ftxui::color(border),
-  }));
-  return ftxui::vbox(std::move(rows));
-}
-
-ftxui::Element entry_element(const TranscriptEntry& entry) {
+ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
   const ftxui::Color kChip = ftxui::Color::RGB(18, 18, 18);
   switch (entry.kind) {
     case EntryKind::Assistant:
@@ -368,7 +355,7 @@ ftxui::Element entry_element(const TranscriptEntry& entry) {
     case EntryKind::Thought:
       return ftxui::vbox({markdown_view(entry.text, true), ftxui::text(" ")});
     case EntryKind::Tool:
-      return ftxui::vbox({tool_view(entry), ftxui::text(" ")});
+      return ftxui::vbox({tool_view(entry, expand_tools), ftxui::text(" ")});
     case EntryKind::User: {
       ftxui::Elements band;
       std::istringstream input(entry.text);
@@ -391,33 +378,41 @@ ftxui::Element entry_element(const TranscriptEntry& entry) {
   return ftxui::text(entry.text);
 }
 
-ftxui::Element help_view() {
+ftxui::Element help_view(MouseRouter* mouse) {
   ftxui::Elements body;
   body.push_back(ftxui::text("booth — keys and commands") | ftxui::bold | ftxui::color(kAccent));
   body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
   body.push_back(ftxui::text("Enter send · Alt+Enter newline · ↑/↓ history"));
-  body.push_back(ftxui::text("Tab complete · ^G editor · ^C cancel · ^D quit"));
+  body.push_back(ftxui::text("Tab complete · ^G editor · ^C cancel · ^D draft+quit"));
+  body.push_back(ftxui::text("Ctrl+Z undo · Alt+Z redo · Ctrl/Alt+←→ word"));
+  body.push_back(ftxui::text("Ctrl+W/U/K/Y kill/yank · Alt+Up edits queue"));
+  body.push_back(ftxui::text("Ctrl+R history · Ctrl+O tools · Ctrl+T thinking"));
+  body.push_back(ftxui::text("Alt+H help · Alt+M model · Alt+S sessions · Alt+C copy"));
+  body.push_back(ftxui::text("Ctrl+V image · :tada: emoji · BOOTH_VIM for Vim"));
+  body.push_back(ftxui::text("^model mention applies a model · Alt+M picks one"));
   body.push_back(ftxui::text("/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"));
   body.push_back(ftxui::text("PageUp/PageDown or wheel  browse transcript"));
   body.push_back(ftxui::text("Local while running: /copy /clear /export /status"));
   body.push_back(ftxui::text("  /context /stats /effort /queue /help /quit"));
   body.push_back(ftxui::text("/status   phase, session and model"));
   body.push_back(ftxui::text("/model    auto|<id>"));
-  body.push_back(ftxui::text("/effort   [level|next] · /context  context usage"));
+  body.push_back(ftxui::text("/effort   [level|next] · Shift+Tab · /context"));
   body.push_back(ftxui::text("/stats    transcript counters"));
   body.push_back(ftxui::text("/copy     last answer · /clear  clear transcript"));
   body.push_back(ftxui::text("/retry    last prompt · /export  markdown transcript"));
-  body.push_back(ftxui::text("/sessions resume · /new  fresh · /close  stop"));
+  body.push_back(ftxui::text("/sessions resume · /new fresh · /close stop"));
+  body.push_back(ftxui::text("/session /acp /cancel · /find · /attach <path> · /detach"));
   body.push_back(ftxui::text("/help     this card · /quit  leave"));
   body.push_back(ftxui::text("Aliases: /resume /models /reasoning /hotkeys /exit /q") | ftxui::dim);
-  body.push_back(ftxui::text("Shift+Tab  cycle reasoning effort"));
   body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
   body.push_back(ftxui::text("Esc or q closes") | ftxui::dim);
-  return ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
-         ftxui::bgcolor(kPanel);
+  auto card = ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
+              ftxui::bgcolor(kPanel);
+  if (mouse != nullptr) card = mouse->zone(std::move(card), MouseSurface::Help, 0);
+  return card;
 }
 
-ftxui::Element permission_view(const PermissionRequest& request) {
+ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse) {
   ftxui::Elements body;
   body.push_back(ftxui::text("permission: " + request.tool) | ftxui::bold | ftxui::color(kAccent));
   if (!request.detail.empty()) {
@@ -429,15 +424,18 @@ ftxui::Element permission_view(const PermissionRequest& request) {
     }
   }
   body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
-  body.push_back(ftxui::hbox({
-      ftxui::text("[y] Allow once") | ftxui::color(kGreen),
-      ftxui::text("    [a] Allow always") | ftxui::color(kGreen),
-  }));
-  body.push_back(ftxui::hbox({
-      ftxui::text("[n] Deny") | ftxui::color(kRed),
-      ftxui::text("          [d] Deny always") | ftxui::color(kRed),
-      ftxui::text("    (Esc)") | ftxui::dim,
-  }));
+  auto button = [&](std::string label, ftxui::Color color, std::size_t index) {
+    auto element = ftxui::text(std::move(label)) | ftxui::color(color);
+    return mouse == nullptr ? element
+                            : mouse->zone(std::move(element), MouseSurface::Permission, index);
+  };
+  body.push_back(ftxui::hbox({button("[y] Allow once", kGreen, 0),
+                              ftxui::text("    "),
+                              button("[a] Allow always", kGreen, 1)}));
+  body.push_back(ftxui::hbox({button("[n] Deny", kRed, 2),
+                              ftxui::text("          "),
+                              button("[d] Deny always", kRed, 3),
+                              ftxui::text("    (Esc)") | ftxui::dim}));
   return ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
          ftxui::bgcolor(kPanel);
 }
