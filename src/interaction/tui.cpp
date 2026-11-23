@@ -37,6 +37,7 @@
 #include "interaction/export.hpp"
 #include "interaction/external_editor.hpp"
 #include "interaction/clipboard.hpp"
+#include "interaction/notify.hpp"
 #include "interaction/history.hpp"
 #include "interaction/history_search.hpp"
 #include "interaction/word_completion.hpp"
@@ -95,25 +96,15 @@ class Root : public ComponentBase {
   }
   Element OnRender() override {
     mouse_.begin_frame();
-    if (state_.permission) {
-      return booth::permission_view(*state_.permission, &mouse_) |
-             ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
-    }
-    if (state_.help) {
-      return booth::help_view(&mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) |
-             ftxui::borderRounded | ftxui::center;
-    }
+    if (state_.permission) return booth::permission_view(*state_.permission, &mouse_) |
+        ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
+    if (state_.help) return booth::help_view(&mouse_) |
+        ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     return main_view();
   }
   bool OnEvent(ftxui::Event event) override {
-    if (event == ftxui::Event::Custom) {
-      drain();
-      return true;
-    }
-    if (matches_chord(keys_.cancel, event)) {
-      cancel();
-      return true;
-    }
+    if (event == ftxui::Event::Custom) { drain(); return true; }
+    if (matches_chord(keys_.cancel, event)) { cancel(); return true; }
     if (event.is_mouse()) {
       const auto in = mouse_.handle(event, &screen_);
       if (in.kind == booth::MouseInput::Kind::Moved) { screen_.PostEvent(ftxui::Event::Custom); return true; }
@@ -131,15 +122,12 @@ class Root : public ComponentBase {
     }
     if (state_.help) {
       if (event == ftxui::Event::Escape || event == ftxui::Event::Return ||
-          event == ftxui::Event::Character('q')) {
-        state_.help = false;
-      }
+          event == ftxui::Event::Character('q')) state_.help = false;
       return true;
     }
     if (state_.permission) {
-      if (const char* kind = booth::permission_kind(event)) {
+      if (const char* kind = booth::permission_kind(event))
         booth::answer_permission_choice(supervisor_, state_, kind);
-      }
       return true;
     }
     if (matches_chord(keys_.reasoning, event)) {
@@ -336,6 +324,19 @@ class Root : public ComponentBase {
       if (std::holds_alternative<SessionSwitched>(event.value)) switched = true;
       const bool turn_done = std::holds_alternative<StreamEnd>(event.value);
       const bool listed = std::holds_alternative<SessionsListed>(event.value);
+      if (std::holds_alternative<Problem>(event.value) && state_.busy) turn_failed_ = true;
+      if (const auto* permission = std::get_if<PermissionRequest>(&event.value);
+          permission && booth::notifications_enabled(draft_file_.parent_path()))
+        booth::send_notification("booth", "permission needed: " + permission->tool);
+      if (turn_done) {
+        const auto elapsed = std::chrono::steady_clock::now() - busy_since_;
+        if (state_.busy && elapsed >= std::chrono::seconds(5) &&
+            booth::notifications_enabled(draft_file_.parent_path()))
+          booth::send_notification("booth", std::string("turn ") +
+              (turn_failed_ ? "failed" : "complete") + " · " +
+              std::to_string(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()) + "s");
+        turn_failed_ = false;
+      }
       const bool closed = std::holds_alternative<SessionClosed>(event.value);
       apply(state_, event);
       if (listed) sessions_.loaded(state_.history);
@@ -408,6 +409,7 @@ class Root : public ComponentBase {
     send_prompt(std::move(text));
   }
   void send_prompt(std::string text) {
+    turn_failed_ = false;
     state_.notice.clear(); state_.busy = true; animate_ = true;
     text = booth::expand_emojis(text);
     const std::string display = text;
@@ -552,6 +554,7 @@ class Root : public ComponentBase {
   std::atomic<bool> alive_{true};
   std::thread ticker_;
   std::chrono::steady_clock::time_point busy_since_{};
+  bool turn_failed_{false};
   std::vector<std::string> history_;
   std::size_t history_pos_{0};
   KeyBindings keys_;

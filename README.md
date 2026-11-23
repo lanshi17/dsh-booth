@@ -56,11 +56,14 @@ effort. The editor supports `Ctrl+Z` undo, `Alt+Z` redo, `Ctrl`/`Alt`+`←`/`→
 the editor. Drafts taller than eight rows scroll internally with a `↑N` marker; a permission card accepts
 `y` (once), `a` (always), `n` (deny once), `d` (deny always).
 Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
-`/export`, `/effort`, `/theme`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
-`/find`, `/attach`, `/detach`, `/help`, `/quit`.
+`/export`, `/effort`, `/theme`, `/notify`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
+`/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and
+`/notify off` persist terminal notifications in `$BOOTH_STATE_DIR/notify`. Notifications default to
+on and use OSC 9 for permission requests and turns lasting at least five seconds (tmux passthrough
+is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
-`/session`, `/acp`, `/cancel`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
+`/session`, `/acp`, `/cancel`, `/notify`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
 while a turn is running; a plain prompt typed during a run is queued and sent when the run ends.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
 through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level

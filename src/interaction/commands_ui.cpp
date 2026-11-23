@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "interaction/commands.hpp"
+#include "interaction/notify.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
 #include "subagent/acp/messages.hpp"
@@ -111,7 +112,7 @@ void answer_permission_choice(Kernel& kernel, AppState& state, const char* kind)
 bool local_command(const std::string& line) {
   const std::string token = first_word(normalize_command(line));
   return token == "/help" || token == "/status" || token == "/theme" || token == "/copy" || token == "/clear" ||
-         token == "/export" || token == "/quit" || token == "/context" || token == "/stats" ||
+         token == "/notify" || token == "/export" || token == "/quit" || token == "/context" || token == "/stats" ||
          token == "/effort" || token == "/queue" || token == "/session" || token == "/acp" ||
          token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find";
 }
@@ -144,6 +145,20 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
   }
   if (line == "/status") {
     state.notice = status_text(state);
+    return true;
+  }
+  if (first_word(line) == "/notify") {
+    const std::string setting = argument_after(line, "/notify");
+    if (setting.empty()) {
+      state.notice = notifications_enabled(state_dir) ? "notifications on" : "notifications off";
+    } else if (setting == "on" || setting == "off") {
+      const bool enabled = setting == "on";
+      state.notice = persist_notifications_enabled(state_dir, enabled)
+                         ? (enabled ? "notifications on" : "notifications off")
+                         : "could not write notification setting";
+    } else {
+      state.notice = "usage: /notify [on|off]";
+    }
     return true;
   }
   if (line == "/theme" || line.rfind("/theme ", 0) == 0) {

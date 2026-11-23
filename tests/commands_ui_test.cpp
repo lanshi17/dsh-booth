@@ -37,11 +37,31 @@ TEST_CASE("local commands include aliases and stay available during a run") {
   REQUIRE(local_command("/session"));
   REQUIRE(local_command("/acp"));
   REQUIRE(local_command("/cancel"));
+  REQUIRE(local_command("/notify off"));
   REQUIRE(local_command("/attach README.md"));
   REQUIRE(local_command("/detach"));
   REQUIRE_FALSE(local_command("/new"));
   REQUIRE_FALSE(local_command("/sessions"));
   REQUIRE_FALSE(local_command("/retry"));
+}
+
+TEST_CASE("notify command reads and persists notification preference") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-notify-command-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(dir);
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir, "/notify"));
+  REQUIRE(state.notice == "notifications on");
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir, "/notify off"));
+  REQUIRE(state.notice == "notifications off");
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir, "/notify on"));
+  REQUIRE(state.notice == "notifications on");
+  REQUIRE(handle_local_command(state, scroll, search, 0, dir.string(), dir, "/notify maybe"));
+  REQUIRE(state.notice == "usage: /notify [on|off]");
+  std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("display toggles flip tools, thinking and visibility") {

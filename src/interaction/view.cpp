@@ -392,9 +392,10 @@ ftxui::Element help_view(MouseRouter* mouse) {
   body.push_back(ftxui::text("^model mention applies a model · Alt+M picks one"));
   body.push_back(ftxui::text("/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"));
   body.push_back(ftxui::text("PageUp/PageDown or wheel  browse transcript"));
-  body.push_back(ftxui::text("Local while running: /theme /copy /clear /export /status"));
+  body.push_back(ftxui::text("Local while running: /theme /notify /copy /clear /export /status"));
   body.push_back(ftxui::text("  /context /stats /effort /queue /help /quit"));
   body.push_back(ftxui::text("/theme [key=#rrggbb] reload or set a live color"));
+  body.push_back(ftxui::text("/notify [on|off] terminal attention alerts"));
   body.push_back(ftxui::text("/status   phase, session and model"));
   body.push_back(ftxui::text("/model    auto|<id>"));
   body.push_back(ftxui::text("/effort   [level|next] · Shift+Tab · /context"));
