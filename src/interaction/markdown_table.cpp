@@ -79,6 +79,12 @@ std::string clean_cell(std::string text) {
   text = render_math_in_text(text);
   std::string out;
   for (std::size_t index = 0; index < text.size();) {
+    if (text[index] == '\\' && index + 1 < text.size() &&
+        std::ispunct(static_cast<unsigned char>(text[index + 1]))) {
+      out += text[index + 1];
+      index += 2;
+      continue;
+    }
     if (text.compare(index, 2, "**") == 0 || text.compare(index, 2, "__") == 0 ||
         text.compare(index, 2, "~~") == 0) {
       index += 2;

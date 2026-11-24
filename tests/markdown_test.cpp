@@ -747,3 +747,9 @@ TEST_CASE("table charts use fractional blocks") {
   }
   REQUIRE(partial);
 }
+
+TEST_CASE("table cells honor backslash escapes") {
+  const auto cells = styled_cells({R"(a \* b)", R"(c \_ d)"});
+  REQUIRE(cells[0].text == "a * b");
+  REQUIRE(cells[1].text == "c _ d");
+}
