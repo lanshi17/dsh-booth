@@ -424,11 +424,13 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     math_source += part;
   };
   const auto flush_math = [&] {
-    const std::string rendered = latex_to_unicode(math_source);
+    const auto rendered = math_block_lines(math_source);
     if (!rendered.empty()) {
-      ftxui::Element row = ftxui::text("  " + rendered) | ftxui::color(kText);
-      if (dim) row = std::move(row) | ftxui::dim;
-      lines.push_back(std::move(row));
+      for (const auto& line : rendered) {
+        ftxui::Element row = ftxui::text("  " + line) | ftxui::color(kText);
+        if (dim) row = std::move(row) | ftxui::dim;
+        lines.push_back(std::move(row));
+      }
       lines.push_back(ftxui::text(""));
     }
     math_block = false;

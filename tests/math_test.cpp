@@ -45,3 +45,28 @@ TEST_CASE("prose math replacement leaves currency alone") {
   REQUIRE(render_math_in_text("costs $5 and $10") == "costs $5 and $10");
   REQUIRE(render_math_in_text("\\$5 stays literal") == "$5 stays literal");
 }
+
+TEST_CASE("display fractions stack over a bar") {
+  const auto lines = math_block_lines("\\frac{a+b}{c}");
+  REQUIRE(lines.size() == 3);
+  REQUIRE(lines[0].find("a+b") != std::string::npos);
+  REQUIRE(lines[1].find("───") != std::string::npos);
+  REQUIRE(lines[2].find("c") != std::string::npos);
+}
+
+TEST_CASE("matrix environments render a grid") {
+  const auto lines = math_block_lines("\\begin{pmatrix}1&2\\\\3&4\\end{pmatrix}");
+  REQUIRE(lines.size() == 2);
+  REQUIRE(lines[0].find("⎛") != std::string::npos);
+  REQUIRE(lines[0].find("1") != std::string::npos);
+  REQUIRE(lines[0].find("2") != std::string::npos);
+  REQUIRE(lines[1].find("⎝") != std::string::npos);
+  REQUIRE(lines[1].find("3") != std::string::npos);
+  REQUIRE(lines[1].find("4") != std::string::npos);
+}
+
+TEST_CASE("other display math falls back to one line") {
+  const auto lines = math_block_lines("E = mc^2");
+  REQUIRE(lines.size() == 1);
+  REQUIRE(lines[0].find("E = mc²") != std::string::npos);
+}
