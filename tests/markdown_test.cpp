@@ -676,3 +676,26 @@ TEST_CASE("headings render inline markdown") {
   REQUIRE(text.find("`start`") == std::string::npos);
   REQUIRE(text.find("Sub") != std::string::npos);
 }
+
+TEST_CASE("go fences highlight keywords and raw strings") {
+  ftxui::Terminal::SetFallbackSize({60, 12});
+  auto view = markdown_view(
+      "```go\nfunc main() {\n    // note\n    s := `raw`\n}\n```\n", false);
+  ftxui::Screen screen(60, 12);
+  ftxui::Render(screen, std::move(view));
+  bool keyword = false;
+  bool comment = false;
+  bool raw = false;
+  for (int y = 0; y < 12; ++y) {
+    for (int x = 0; x < 60; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "f" && cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) keyword = true;
+      if (cell.character == "n" && cell.dim) comment = true;
+      if (cell.character == "r" && cell.foreground_color == ftxui::Color::RGB(0, 255, 135)) raw = true;
+    }
+  }
+  REQUIRE(keyword);
+  REQUIRE(comment);
+  REQUIRE(raw);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

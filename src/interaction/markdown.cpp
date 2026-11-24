@@ -35,6 +35,7 @@ std::string normalize_lang(std::string lang) {
   if (lang == "py") return "python";
   if (lang == "sh" || lang == "shell" || lang == "zsh") return "bash";
   if (lang == "rs") return "rust";
+  if (lang == "golang") return "go";
   if (lang == "jsonc" || lang == "json5") return "json";
   return lang;
 }
@@ -52,6 +53,11 @@ bool is_keyword(const std::string& lang, const std::string& word) {
   static const std::vector<std::string> bash = {
       "if", "then", "else", "fi", "for", "do", "done", "while", "function", "export", "local",
       "echo", "cd", "exit", "set"};
+  static const std::vector<std::string> go = {
+      "break", "case", "chan", "const", "continue", "default", "defer", "else",
+      "fallthrough", "for", "func", "go", "goto", "if", "import", "interface", "map",
+      "package", "range", "return", "select", "struct", "switch", "type", "var", "true",
+      "false", "nil"};
   static const std::vector<std::string> rust = {
       "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
       "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move",
@@ -63,6 +69,7 @@ bool is_keyword(const std::string& lang, const std::string& word) {
   if (lang == "python") return contains(python);
   if (lang == "bash") return contains(bash);
   if (lang == "rust") return contains(rust);
+  if (lang == "go") return contains(go);
   if (lang == "cpp" || lang == "ts" || lang == "json") return contains(cpp);
   return false;
 }
@@ -153,7 +160,7 @@ std::vector<CodeSpan> highlight_line(const std::string& line, const std::string&
     return spans;
   }
   const bool hash_comment = lang == "python" || lang == "bash";
-  const bool slash_comment = lang == "cpp" || lang == "ts" || lang == "rust";
+  const bool slash_comment = lang == "cpp" || lang == "ts" || lang == "rust" || lang == "go";
   std::vector<CodeSpan> spans;
   std::string plain;
   const auto flush = [&] {
@@ -172,7 +179,7 @@ std::vector<CodeSpan> highlight_line(const std::string& line, const std::string&
     }
     const bool rust_lifetime = lang == "rust" && ch == '\'' &&
                                !(index + 2 < line.size() && line[index + 2] == '\'');
-    if (!rust_lifetime && (ch == '"' || ch == '\'' || (lang == "ts" && ch == '`'))) {
+    if (!rust_lifetime && (ch == '"' || ch == '\'' || ((lang == "ts" || lang == "go") && ch == '`'))) {
       const char quote = ch;
       std::size_t end = index + 1;
       while (end < line.size() && line[end] != quote) {
