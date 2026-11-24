@@ -295,3 +295,12 @@ TEST_CASE("stats report image entries when present") {
   REQUIRE(text.find("images 1") != std::string::npos);
   REQUIRE(text.find("queued 0") != std::string::npos);
 }
+
+TEST_CASE("stats report failed tools") {
+  AppState state;
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.status = "failed";
+  state.entries.push_back(tool);
+  REQUIRE(stats_text(state, 0).find("failed 1") != std::string::npos);
+}

@@ -364,11 +364,15 @@ std::string stats_text(const AppState& state, std::size_t queued) {
   std::size_t tools = 0;
   std::size_t thoughts = 0;
   std::size_t images = 0;
+  std::size_t failed = 0;
   for (const auto& entry : state.entries) {
     switch (entry.kind) {
       case EntryKind::User: ++user; break;
       case EntryKind::Assistant: ++assistant; break;
-      case EntryKind::Tool: ++tools; break;
+      case EntryKind::Tool:
+        ++tools;
+        if (entry.status == "failed") ++failed;
+        break;
       case EntryKind::Thought: ++thoughts; break;
       case EntryKind::Notice: break;
       case EntryKind::Image: ++images; break;
@@ -379,6 +383,7 @@ std::string stats_text(const AppState& state, std::size_t queued) {
                     " · tools " + std::to_string(tools) + " · thoughts " +
                     std::to_string(thoughts);
   if (images > 0) out += " · images " + std::to_string(images);
+  if (failed > 0) out += " · failed " + std::to_string(failed);
   return out + " · queued " + std::to_string(queued);
 }
 
