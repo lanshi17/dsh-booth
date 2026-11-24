@@ -18,33 +18,6 @@ namespace {
 #define kGreen (theme_color("green", ftxui::Color::RGB(0, 255, 135)))
 #define kRed (theme_color("red", ftxui::Color::RGB(255, 95, 95)))
 
-std::vector<std::string> wrap_cells(const std::string& text, std::size_t width) {
-  std::vector<std::string> out;
-  if (width == 0) width = 1;
-  for (const auto& logical : [&] {
-         std::vector<std::string> lines;
-         std::istringstream input(text);
-         std::string line;
-         while (std::getline(input, line)) lines.push_back(line);
-         if (lines.empty()) lines.push_back("");
-         return lines;
-       }()) {
-    std::string row;
-    std::size_t cells = 0;
-    for (const char ch : logical) {
-      const bool continuation = (static_cast<unsigned char>(ch) & 0xC0) == 0x80;
-      if (!continuation && cells == width) {
-        out.push_back(row);
-        row.clear();
-        cells = 0;
-      }
-      row += ch;
-      if (!continuation) ++cells;
-    }
-    out.push_back(row);
-  }
-  return out;
-}
 
 struct ReadEnvelope {
   std::string path;
