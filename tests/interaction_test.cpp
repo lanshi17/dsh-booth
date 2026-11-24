@@ -520,3 +520,18 @@ TEST_CASE("composer hides the context gauge when size is unknown") {
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("0%") == std::string::npos);
 }
+
+TEST_CASE("export includes session metadata") {
+  AppState state;
+  state.session = "s-1";
+  state.title = "demo";
+  state.model = "model-one";
+  TranscriptEntry user;
+  user.kind = EntryKind::User;
+  user.text = "hi";
+  state.entries.push_back(user);
+  const std::string markdown = transcript_markdown(state);
+  REQUIRE(markdown.find("- session: s-1") != std::string::npos);
+  REQUIRE(markdown.find("- title: demo") != std::string::npos);
+  REQUIRE(markdown.find("- model: model-one") != std::string::npos);
+}

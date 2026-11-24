@@ -33,6 +33,10 @@ std::string duration(const TranscriptEntry& entry) {
 
 std::string transcript_markdown(const AppState& state) {
   std::string out = "# booth transcript\n\n";
+  if (!state.session.empty()) out += "- session: " + state.session + "\n";
+  if (!state.title.empty()) out += "- title: " + state.title + "\n";
+  if (!state.model.empty()) out += "- model: " + state.model + "\n";
+  if (!state.session.empty() || !state.title.empty() || !state.model.empty()) out += "\n";
   for (const auto& entry : state.entries) {
     switch (entry.kind) {
       case EntryKind::User:
