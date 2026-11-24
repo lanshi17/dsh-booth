@@ -382,3 +382,20 @@ TEST_CASE("assistant images render as placeholders") {
   const std::string text = screen.ToString();
   REQUIRE(text.find("[image: image/png · 4B]") != std::string::npos);
 }
+
+TEST_CASE("tool titles truncate on terminal cells") {
+  ftxui::Terminal::SetFallbackSize({24, 10});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "read";
+  entry.output =
+      "<path>中文路径很长很长.cpp</path>\n<type>file</type>\n<content>\n1: one\n"
+      "(End of file)\n</content>";
+  auto view = tool_view(entry, false);
+  ftxui::Screen screen(24, 10);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("…") != std::string::npos);
+  REQUIRE(text.find("中文路径很长很长.cpp") == std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

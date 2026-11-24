@@ -1,5 +1,7 @@
 #include "interaction/link_picker.hpp"
 
+#include "interaction/text_util.hpp"
+
 #include <algorithm>
 #include <cctype>
 #include <string>
@@ -268,7 +270,7 @@ ftxui::Element link_picker_view(const std::vector<TranscriptLink>& items, std::s
     for (std::size_t row = start; row < end; ++row) {
       const bool selected = row == index;
       std::string url = items[row].url;
-      if (url.size() > 44) url = url.substr(0, 43) + "…";
+      url = ellipsize(url, 44);
       ftxui::Element line = ftxui::hbox({
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
           ftxui::text(items[row].hint + " ") | ftxui::bold | ftxui::color(kYellow),

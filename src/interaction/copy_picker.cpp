@@ -1,5 +1,7 @@
 #include "interaction/copy_picker.hpp"
 
+#include "interaction/text_util.hpp"
+
 #include <algorithm>
 
 #include "interaction/clipboard.hpp"
@@ -10,7 +12,7 @@ namespace {
 std::string first_line(const std::string& text, std::size_t limit) {
   auto end = text.find('\n');
   std::string line = text.substr(0, end);
-  if (line.size() > limit) line = line.substr(0, limit - 1) + "…";
+  line = ellipsize(line, limit);
   return line;
 }
 
@@ -24,7 +26,7 @@ void collect_code(const std::string& text, std::vector<CopyItem>& items) {
     const auto close = text.find("```", language_end + 1);
     if (close == std::string::npos) return;
     std::string language = text.substr(open + 3, language_end - open - 3);
-    if (language.size() > 20) language.resize(20);
+    language = ellipsize(language, 20);
     const std::string code = text.substr(language_end + 1, close - language_end - 1);
     if (!code.empty()) {
       items.push_back({language.empty() ? "code" : "code · " + language, code});

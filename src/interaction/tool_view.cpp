@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 
+#include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/tool_diff.hpp"
 
@@ -115,7 +116,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const int columns = ftxui::Terminal::Size().dimx;
   const std::size_t content_width =
       columns > 12 ? static_cast<std::size_t>(columns - 8) : 20;
-  if (title.size() > content_width) title = title.substr(0, content_width - 1) + "…";
+  title = ellipsize(title, content_width);
   ftxui::Elements rows;
   rows.push_back(ftxui::hbox({
       ftxui::text("╭─── ") | ftxui::color(border),

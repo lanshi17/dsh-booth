@@ -1,5 +1,6 @@
 #include "interaction/view.hpp"
 #include "interaction/context_gauge.hpp"
+#include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/thought_view.hpp"
 #include "interaction/tool_diff.hpp"
@@ -174,7 +175,7 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
   const bool compact = columns < 110;
   std::string branch = git.branch;
   const std::size_t branch_max = compact ? 10 : 16;
-  if (branch.size() > branch_max) branch = branch.substr(0, branch_max - 1) + "…";
+  branch = ellipsize(branch, branch_max);
   const ftxui::Color kBorder = theme_color("border", ftxui::Color::RGB(108, 108, 108));
   const ftxui::Color kChip = ftxui::Color::RGB(18, 18, 18);
 
@@ -261,7 +262,7 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
   if (!session_title.empty()) {
     std::string label = session_title;
     const std::size_t max = columns > 60 ? static_cast<std::size_t>(columns) / 5 : 10;
-    if (label.size() > max) label = label.substr(0, max - 1) + "…";
+    label = ellipsize(label, max);
     top.push_back(ftxui::text("") | ftxui::color(kChip));
     top.push_back(ftxui::text(" 󰆍 " + label + " ") | ftxui::color(kText) |
                   ftxui::bgcolor(kChip));
