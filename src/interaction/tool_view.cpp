@@ -10,6 +10,7 @@
 #include <string>
 
 #include "interaction/fetch_view.hpp"
+#include "interaction/json_view.hpp"
 #include "interaction/patch_view.hpp"
 #include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
@@ -73,6 +74,12 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const bool has_envelope = !reads.empty();
   const std::optional<std::vector<TodoItem>> todos = parse_todos(entry);
   const auto diff = booth::tool_diff(entry);
+  std::size_t diff_added = 0;
+  std::size_t diff_removed = 0;
+  for (const auto& line : diff) {
+    if (line.change > 0) ++diff_added;
+    else if (line.change < 0) ++diff_removed;
+  }
   const std::optional<std::string> json_output =
       !read_tool && !shell_tool && !todos && !grep_result && !glob_result && !web_result &&
               !patch && !web_fetch && entry.status != "failed" && diff.empty()
@@ -80,6 +87,14 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           : std::nullopt;
   std::string title = entry.text.empty() ? entry.tool : entry.text;
   if (reads.size() == 1 && !reads[0].path.empty()) title = reads[0].path;
+  if (entry.tool == "edit" && !diff.empty()) {
+    title = "Edit " + tool_activity(entry);
+    title += " +" + std::to_string(diff_added) + " −" + std::to_string(diff_removed);
+  }
+  if (entry.tool == "write" && !diff.empty()) {
+    title = "Write " + tool_activity(entry) + " · " + std::to_string(diff_added) +
+            (diff_added == 1 ? " line" : " lines");
+  }
   if (todos) {
     title = "Todo";
     if (!todos->empty()) {
@@ -137,15 +152,9 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     for (auto& row : patch_rows(*patch, expanded, content_width)) rows.push_back(std::move(row));
   }
   if (!diff.empty() && !patch) {
-    std::size_t added = 0;
-    std::size_t removed = 0;
-    for (const auto& line : diff) {
-      if (line.change > 0) ++added;
-      else if (line.change < 0) ++removed;
-    }
     std::string diff_head = "├── Diff";
-    if (added > 0 || removed > 0) {
-      diff_head += " +" + std::to_string(added) + " −" + std::to_string(removed);
+    if (diff_added > 0 || diff_removed > 0) {
+      diff_head += " +" + std::to_string(diff_added) + " −" + std::to_string(diff_removed);
     }
     diff_head += " ";
     rows.push_back(ftxui::hbox({
@@ -332,29 +341,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     }
   }
   if (json_output) {
-    std::istringstream input(*json_output);
-    std::vector<std::string> lines;
-    std::string line;
-    while (std::getline(input, line)) lines.push_back(line);
-    constexpr std::size_t kJsonLines = 12;
-    const std::size_t limit = expanded ? lines.size() : kJsonLines;
-    for (std::size_t index = 0; index < std::min(limit, lines.size()); ++index) {
-      for (const auto& wrapped : wrap_cells(lines[index], content_width)) {
-        rows.push_back(ftxui::hbox({
-            ftxui::text("│ ") | ftxui::color(border),
-            ftxui::text(wrapped) | ftxui::flex | ftxui::color(kText),
-            ftxui::text(" │") | ftxui::color(border),
-        }));
-      }
-    }
-    if (!expanded && lines.size() > limit) {
-      rows.push_back(ftxui::hbox({
-          ftxui::text("│ ") | ftxui::color(border),
-          ftxui::text("… +" + std::to_string(lines.size() - limit) +
-                      " lines · Ctrl+O") | ftxui::dim | ftxui::flex,
-          ftxui::text(" │") | ftxui::color(border),
-      }));
-    }
+    for (auto& row : json_rows(*json_output, expanded, content_width)) rows.push_back(std::move(row));
   }
   if (grep_result) {
     constexpr std::size_t kGrepMatches = 10;

@@ -934,6 +934,7 @@ TEST_CASE("edit diffs show a line-number gutter") {
   ftxui::Screen screen(80, 12);
   ftxui::Render(screen, std::move(view));
   const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("Edit src/a.cpp +1 −2") != std::string::npos);
   REQUIRE(text.find("1 - old") != std::string::npos);
   REQUIRE(text.find("2 - line") != std::string::npos);
   REQUIRE(text.find("1 + new") != std::string::npos);
@@ -959,6 +960,7 @@ TEST_CASE("large diffs page until expanded") {
   ftxui::Screen screen(100, 60);
   ftxui::Render(screen, std::move(collapsed));
   const std::string text = screen.ToString();
+  REQUIRE(text.find("Write big.txt · 60 lines") != std::string::npos);
   REQUIRE(text.find("Diff +60 −0") != std::string::npos);
   REQUIRE(text.find("line 1") != std::string::npos);
   REQUIRE(text.find("line 60") == std::string::npos);

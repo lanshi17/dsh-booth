@@ -124,6 +124,7 @@ add_library(booth_interaction STATIC
   src/interaction/pickers.cpp
   src/interaction/export.cpp
   src/interaction/fetch_view.cpp
+  src/interaction/json_view.cpp
   src/interaction/external_editor.cpp
   src/interaction/markdown.cpp
   src/interaction/markdown_inline.cpp
