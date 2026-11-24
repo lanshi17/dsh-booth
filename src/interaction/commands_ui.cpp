@@ -361,6 +361,7 @@ std::string stats_text(const AppState& state, std::size_t queued) {
   std::size_t assistant = 0;
   std::size_t tools = 0;
   std::size_t thoughts = 0;
+  std::size_t images = 0;
   for (const auto& entry : state.entries) {
     switch (entry.kind) {
       case EntryKind::User: ++user; break;
@@ -368,12 +369,15 @@ std::string stats_text(const AppState& state, std::size_t queued) {
       case EntryKind::Tool: ++tools; break;
       case EntryKind::Thought: ++thoughts; break;
       case EntryKind::Notice: break;
-      case EntryKind::Image: break;
+      case EntryKind::Image: ++images; break;
     }
   }
-  return "entries " + std::to_string(state.entries.size()) + " · you " + std::to_string(user) +
-         " · assistant " + std::to_string(assistant) + " · tools " + std::to_string(tools) +
-         " · thoughts " + std::to_string(thoughts) + " · queued " + std::to_string(queued);
+  std::string out = "entries " + std::to_string(state.entries.size()) + " · you " +
+                    std::to_string(user) + " · assistant " + std::to_string(assistant) +
+                    " · tools " + std::to_string(tools) + " · thoughts " +
+                    std::to_string(thoughts);
+  if (images > 0) out += " · images " + std::to_string(images);
+  return out + " · queued " + std::to_string(queued);
 }
 
 }  // namespace booth

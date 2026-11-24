@@ -284,3 +284,14 @@ TEST_CASE("new drops the local view or asks to close the session") {
   REQUIRE(close_after);
   REQUIRE(state.notice == "starting a new session");
 }
+
+TEST_CASE("stats report image entries when present") {
+  AppState state;
+  TranscriptEntry image;
+  image.kind = EntryKind::Image;
+  image.text = "image/png";
+  state.entries.push_back(image);
+  const std::string text = stats_text(state, 0);
+  REQUIRE(text.find("images 1") != std::string::npos);
+  REQUIRE(text.find("queued 0") != std::string::npos);
+}
