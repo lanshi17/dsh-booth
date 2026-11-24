@@ -289,3 +289,26 @@ TEST_CASE("markdown rules span the available width") {
   REQUIRE(count >= 50);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("markdown decodes html entities") {
+  const std::string text =
+      render_markdown("A &amp; B &lt; C &gt; D &quot;E&quot;\n", 60, 10);
+  REQUIRE(text.find("A & B < C > D \"E\"") != std::string::npos);
+
+  const std::string table = render_markdown("| x |\n|---|\n| a &amp; b |\n", 60, 10);
+  REQUIRE(table.find("a & b") != std::string::npos);
+}
+
+TEST_CASE("markdown keeps emphasis on link labels") {
+  auto view = markdown_view("**[docs](https://x.test)**\n", false);
+  ftxui::Screen screen(60, 8);
+  ftxui::Render(screen, std::move(view));
+  bool emphasized = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "d" && cell.bold && cell.hyperlink != 0) emphasized = true;
+    }
+  }
+  REQUIRE(emphasized);
+}

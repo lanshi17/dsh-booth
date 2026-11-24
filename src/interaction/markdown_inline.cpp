@@ -1,6 +1,7 @@
 #include "interaction/view.hpp"
 
 #include "interaction/math.hpp"
+#include "interaction/markdown_util.hpp"
 #include "interaction/theme.hpp"
 
 #include <cctype>
@@ -27,7 +28,8 @@ bool is_autolink_target(const std::string& text) {
          starts_with(text, "mailto:");
 }
 
-ftxui::Element inline_words(const std::string& text, bool dim) {
+ftxui::Element inline_words(const std::string& raw, bool dim) {
+  const std::string text = decode_html_entities(raw);
   ftxui::Elements parts;
   bool code = false;
   bool bold = false;
@@ -105,8 +107,12 @@ ftxui::Element inline_words(const std::string& text, bool dim) {
         flush();
         const std::string label = text.substr(index + 1, label_end - index - 1);
         const std::string url = text.substr(label_end + 2, url_end - label_end - 2);
-        parts.push_back(ftxui::hyperlink(
-            url, ftxui::text(label) | ftxui::color(kAccent) | ftxui::underlined));
+        ftxui::Element link = ftxui::text(label) | ftxui::color(kAccent) | ftxui::underlined;
+        if (bold) link = link | ftxui::bold;
+        if (italic) link = link | ftxui::italic;
+        if (strike) link = link | ftxui::strikethrough;
+        if (dim) link = link | ftxui::dim;
+        parts.push_back(ftxui::hyperlink(url, std::move(link)));
         index = url_end + 1;
         continue;
       }

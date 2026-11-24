@@ -1,5 +1,6 @@
 #include "interaction/markdown_table.hpp"
 
+#include "interaction/markdown_util.hpp"
 #include "interaction/math.hpp"
 
 #include <ftxui/dom/elements.hpp>
@@ -54,6 +55,7 @@ bool is_table_separator(const std::string& line) {
 std::string clean_cell(std::string text);
 
 std::string clean_cell(std::string text) {
+  text = decode_html_entities(text);
   text = render_math_in_text(text);
   std::string out;
   for (std::size_t index = 0; index < text.size();) {
@@ -131,7 +133,7 @@ TableCell styled_cell(std::string raw) {
     const auto close = raw.find("](");
     const auto end = close == std::string::npos ? std::string::npos : raw.find(')', close + 2);
     if (close != std::string::npos && end != std::string::npos) {
-      cell.href = raw.substr(close + 2, end - close - 2);
+      cell.href = decode_html_entities(raw.substr(close + 2, end - close - 2));
       raw = raw.substr(1, close - 1);
     }
   } else if (raw.rfind("![", 0) == 0) {
