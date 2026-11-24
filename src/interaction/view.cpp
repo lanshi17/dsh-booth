@@ -158,6 +158,23 @@ RowWindow row_window(std::size_t count, std::size_t cursor, std::size_t visible)
   return window;
 }
 
+ftxui::Element queued_view(const std::deque<std::string>& queued) {
+  if (queued.empty()) return ftxui::text("");
+  constexpr std::size_t kShown = 3;
+  const int columns = ftxui::Terminal::Size().dimx;
+  const std::size_t width = columns > 12 ? static_cast<std::size_t>(columns - 8) : 20;
+  ftxui::Elements rows;
+  rows.push_back(ftxui::text("  " + std::to_string(queued.size()) + " queued · Alt+Up edit") | ftxui::color(ftxui::Color::RGB(150, 150, 150)));
+  const std::size_t shown = std::min(queued.size(), kShown);
+  for (std::size_t index = 0; index < shown; ++index) {
+    std::string text = queued[index];
+    std::replace(text.begin(), text.end(), '\n', ' ');
+    rows.push_back(ftxui::text("  ↳ " + ellipsize(text, width)) | ftxui::color(ftxui::Color::RGB(150, 150, 150)));
+  }
+  if (queued.size() > shown) rows.push_back(ftxui::text("  ↳ +" + std::to_string(queued.size() - shown) + " more") | ftxui::dim);
+  return ftxui::vbox(std::move(rows));
+}
+
 ftxui::Element composer_view(const AppState& state, const std::string& cwd,
                              const GitStatus& git, const std::string& session_title,
                              long busy_seconds, const std::string& spinner,

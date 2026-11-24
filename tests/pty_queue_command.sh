@@ -14,5 +14,6 @@ trap 'rm -rf "$state" "$output"' EXIT
     >"$output" 2>&1 || true
 
 grep -aq "1 queued" "$output"
+grep -aq "↳ queued-via-command" "$output"
 grep -aq "hello" "$output"
 grep -aq '"text":"queued-via-command"' "$state/history.jsonl"

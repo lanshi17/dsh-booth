@@ -272,10 +272,7 @@ class Root : public ComponentBase {
                                  " entries back · PageDown to follow") |
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
-    if (!queued_.empty()) {
-      view.push_back(ftxui::text("  " + std::to_string(queued_.size()) + " queued · Alt+Up edit") |
-                     ftxui::color(ftxui::Color::RGB(150, 150, 150)));
-    }
+    if (!queued_.empty()) view.push_back(booth::queued_view(queued_));
     if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.matches(),
                                                 copy_picker_.index(), copy_picker_.query(), &mouse_));
     if (links_.visible()) view.push_back(booth::link_picker_view(links_.items(), links_.index()));

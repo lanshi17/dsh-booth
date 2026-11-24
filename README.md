@@ -69,7 +69,8 @@ is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
 `/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/mouse`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
-while a turn is running; a plain prompt typed during a run is queued and sent when the run ends.
+while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
+and sent when the run ends.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
 through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
 name or wire value selects it, and no argument lists the current value and choices. `/theme`

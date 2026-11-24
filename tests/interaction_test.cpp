@@ -512,6 +512,20 @@ TEST_CASE("tool titles truncate on terminal cells") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("queued prompts show their text and overflow count") {
+  std::deque<std::string> queued{"first\nline", "second", "third", "fourth"};
+  auto view = queued_view(queued);
+  ftxui::Screen screen(80, 10);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("4 queued · Alt+Up edit") != std::string::npos);
+  REQUIRE(text.find("↳ first line") != std::string::npos);
+  REQUIRE(text.find("↳ second") != std::string::npos);
+  REQUIRE(text.find("↳ third") != std::string::npos);
+  REQUIRE(text.find("↳ +1 more") != std::string::npos);
+  REQUIRE(text.find("fourth") == std::string::npos);
+}
+
 TEST_CASE("shell cards tail output and report the exit status") {
   ftxui::Terminal::SetFallbackSize({60, 24});
   TranscriptEntry entry;

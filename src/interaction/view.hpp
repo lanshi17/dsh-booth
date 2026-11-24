@@ -8,6 +8,7 @@
 #include "interaction/mouse_zone.hpp"
 #include "interaction/vim.hpp"
 
+#include <deque>
 #include <optional>
 #include <string>
 #include <utility>
@@ -56,6 +57,9 @@ RowWindow row_window(std::size_t count, std::size_t cursor, std::size_t visible)
 
 /// A tool-call frame; `expanded` reveals full output and diffs are rendered when present.
 ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded);
+
+/// The count and text of prompts waiting for the active turn to finish.
+ftxui::Element queued_view(const std::deque<std::string>& queued);
 
 /// Flatten a dsh read envelope into path, numbered rows and footer text.
 std::string read_output_text(const std::string& output);
