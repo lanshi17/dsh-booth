@@ -380,3 +380,37 @@ TEST_CASE("markdown setext headings, closing hashes and plus bullets") {
   REQUIRE(h1);
   REQUIRE(h2);
 }
+
+TEST_CASE("markdown parses link titles and image alt text") {
+  auto view = markdown_view("[docs](https://x.test \"Docs\") ![diagram](img.png)\n", false);
+  ftxui::Screen screen(60, 8);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("docs") != std::string::npos);
+  REQUIRE(text.find("diagram") != std::string::npos);
+  REQUIRE(text.find("Docs") == std::string::npos);
+  REQUIRE(text.find("img.png") == std::string::npos);
+  REQUIRE(text.find("![]") == std::string::npos);
+  bool linked = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      if (screen.CellAt(x, y).hyperlink != 0) linked = true;
+    }
+  }
+  REQUIRE(linked);
+}
+
+TEST_CASE("markdown autolinks email addresses") {
+  auto view = markdown_view("<dev@example.com>\n", false);
+  ftxui::Screen screen(60, 8);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("dev@example.com") != std::string::npos);
+  bool linked = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      if (screen.CellAt(x, y).hyperlink != 0) linked = true;
+    }
+  }
+  REQUIRE(linked);
+}

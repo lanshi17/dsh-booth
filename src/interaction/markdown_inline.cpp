@@ -17,6 +17,7 @@ namespace {
 
 const ftxui::Color kAccent = ftxui::Color::RGB(0, 175, 255);
 const ftxui::Color kGreen = ftxui::Color::RGB(0, 255, 135);
+const ftxui::Color kDim = ftxui::Color::RGB(118, 118, 118);
 
 bool starts_with(std::string_view text, std::string_view prefix) {
   return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
@@ -98,6 +99,40 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
         continue;
       }
     }
+    if (!code && text[index] == '!' && index + 1 < text.size() && text[index + 1] == '[') {
+      const auto label_end = text.find("](", index + 1);
+      const auto url_end = label_end == std::string::npos
+                               ? std::string::npos
+                               : text.find(')', label_end + 2);
+      if (label_end != std::string::npos && url_end != std::string::npos) {
+        flush();
+        const std::string label = text.substr(index + 2, label_end - index - 2);
+        ftxui::Element image =
+            ftxui::text(label.empty() ? "[image]" : "[image: " + label + "]") | ftxui::color(kDim);
+        parts.push_back(std::move(image));
+        index = url_end + 1;
+        continue;
+      }
+    }
+    if (!code && text[index] == '<') {
+      const auto close = text.find('>', index + 1);
+      if (close != std::string::npos) {
+        const std::string inner = text.substr(index + 1, close - index - 1);
+        if (inner.find('@') != std::string::npos && inner.find(' ') == std::string::npos &&
+            inner.find("://") == std::string::npos) {
+          flush();
+          ftxui::Element link =
+              ftxui::text(inner) | ftxui::color(kAccent) | ftxui::underlined;
+          if (bold) link = link | ftxui::bold;
+          if (italic) link = link | ftxui::italic;
+          if (strike) link = link | ftxui::strikethrough;
+          if (dim) link = link | ftxui::dim;
+          parts.push_back(ftxui::hyperlink("mailto:" + inner, std::move(link)));
+          index = close + 1;
+          continue;
+        }
+      }
+    }
     if (!code && text[index] == '[') {
       const auto label_end = text.find("](", index);
       const auto url_end = label_end == std::string::npos
@@ -106,7 +141,12 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
       if (label_end != std::string::npos && url_end != std::string::npos) {
         flush();
         const std::string label = text.substr(index + 1, label_end - index - 1);
-        const std::string url = text.substr(label_end + 2, url_end - label_end - 2);
+        std::string url = text.substr(label_end + 2, url_end - label_end - 2);
+        const auto title = url.find_first_of(" \t");
+        if (title != std::string::npos) url = url.substr(0, title);
+        if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
+          url = url.substr(1, url.size() - 2);
+        }
         ftxui::Element link = ftxui::text(label) | ftxui::color(kAccent) | ftxui::underlined;
         if (bold) link = link | ftxui::bold;
         if (italic) link = link | ftxui::italic;
