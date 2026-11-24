@@ -667,3 +667,12 @@ TEST_CASE("link targets keep balanced parentheses") {
   REQUIRE(cells[1].href == "https://x.test/i_(j).png");
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("headings render inline markdown") {
+  const std::string text = render_markdown(
+      "# **Quick** `start`\n\n## *Sub*\n", 60, 8);
+  REQUIRE(text.find("Quick start") != std::string::npos);
+  REQUIRE(text.find("**Quick**") == std::string::npos);
+  REQUIRE(text.find("`start`") == std::string::npos);
+  REQUIRE(text.find("Sub") != std::string::npos);
+}

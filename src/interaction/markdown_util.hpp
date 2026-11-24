@@ -7,6 +7,26 @@
 namespace booth {
 
 
+/// Parse a GFM task marker, returning the box glyph and the remaining text.
+inline bool task_marker(const std::string& text, std::string& box, std::string& rest) {
+  if (text.size() < 4 || text[0] != '[' || text[2] != ']' || text[3] != ' ') return false;
+  const char state = static_cast<char>(std::tolower(static_cast<unsigned char>(text[1])));
+  if (state != ' ' && state != 'x') return false;
+  box = state == 'x' ? "☑ " : "☐ ";
+  rest = text.substr(4);
+  return true;
+}
+
+/// Trim a heading title and optional ATX closing hashes.
+inline std::string heading_title(std::string title, bool atx) {
+  while (!title.empty() && title.back() == ' ') title.pop_back();
+  if (atx) {
+    while (!title.empty() && title.back() == '#') title.pop_back();
+    while (!title.empty() && title.back() == ' ') title.pop_back();
+  }
+  return title;
+}
+
 /// Return the index of the ')' closing a link target, honoring balanced parentheses.
 inline std::size_t link_end(std::string_view text, std::size_t start) {
   int depth = 0;

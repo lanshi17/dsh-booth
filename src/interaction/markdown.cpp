@@ -221,15 +221,6 @@ std::vector<CodeSpan> highlight_line(const std::string& line, const std::string&
   return spans;
 }
 
-bool task_marker(const std::string& text, std::string& box, std::string& rest) {
-  if (text.size() < 4 || text[0] != '[' || text[2] != ']' || text[3] != ' ') return false;
-  const char state = static_cast<char>(std::tolower(static_cast<unsigned char>(text[1])));
-  if (state != ' ' && state != 'x') return false;
-  box = state == 'x' ? "☑ " : "☐ ";
-  rest = text.substr(4);
-  return true;
-}
-
 ftxui::Element code_line(const std::string& line, const std::string& lang) {
   if (line.empty()) return ftxui::text("");
   ftxui::Elements spans;
@@ -257,11 +248,8 @@ bool is_math_environment(std::string_view env) {
   return false;
 }
 
-ftxui::Element heading_element(std::size_t level, std::string title) {
-  while (!title.empty() && title.back() == ' ') title.pop_back();
-  while (!title.empty() && title.back() == '#') title.pop_back();
-  while (!title.empty() && title.back() == ' ') title.pop_back();
-  ftxui::Element heading = ftxui::text(" " + title) | ftxui::bold;
+ftxui::Element heading_element(std::size_t level, ftxui::Element content) {
+  ftxui::Element heading = ftxui::hbox({ftxui::text(" "), std::move(content)}) | ftxui::bold;
   if (level == 1) {
     heading = heading | ftxui::color(kAccent) | ftxui::underlined;
   } else if (level == 2) {
@@ -511,7 +499,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     if (index + 1 < source.size()) {
       const int level = setext_level(source[index + 1]);
       if (level > 0 && can_setext(line)) {
-        lines.push_back(heading_element(static_cast<std::size_t>(level), line));
+        lines.push_back(heading_element(static_cast<std::size_t>(level), render_inline(heading_title(line, false), false)));
         ++index;
         continue;
       }
@@ -542,7 +530,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     std::size_t hashes = 0;
     while (hashes < line.size() && line[hashes] == '#') ++hashes;
     if (hashes > 0 && hashes < line.size() && line[hashes] == ' ') {
-      lines.push_back(heading_element(hashes, line.substr(hashes + 1)));
+      lines.push_back(heading_element(hashes, render_inline(heading_title(line.substr(hashes + 1), true), false)));
       continue;
     }
     const std::size_t leading = line.find_first_not_of(" \t");
