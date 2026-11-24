@@ -40,6 +40,12 @@ void collect_code(const std::string& text, std::vector<CopyItem>& items) {
 bool CopyPicker::open(const AppState& state) {
   items_.clear();
   for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
+    if (entry->kind == EntryKind::Tool) {
+      if (entry->output.empty() || entry->tool == "read" || entry->tool == "read_file") continue;
+      items_.push_back({"tool · " + entry->tool + " · " + first_line(entry->output, 32),
+                        entry->output});
+      continue;
+    }
     if (entry->kind != EntryKind::Assistant) continue;
     if (!entry->text.empty()) {
       items_.push_back({"answer · " + first_line(entry->text, 48), entry->text});

@@ -57,3 +57,17 @@ TEST_CASE("copy picker reports an empty transcript") {
   REQUIRE_FALSE(picker.open(state));
   REQUIRE_FALSE(picker.visible());
 }
+
+TEST_CASE("copy picker includes tool output") {
+  AppState state;
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.tool = "bash";
+  tool.output = "echo hi\n";
+  state.entries.push_back(tool);
+  CopyPicker picker;
+  REQUIRE(picker.open(state));
+  REQUIRE(picker.items().size() == 1);
+  REQUIRE(picker.items()[0].label.rfind("tool · bash", 0) == 0);
+  REQUIRE(picker.items()[0].text == "echo hi\n");
+}
