@@ -74,6 +74,20 @@ bool is_table_separator(const std::string& line) {
 
 std::string clean_cell(std::string text);
 
+bool cell_html_tag(const std::string& inner) {
+  std::size_t index = !inner.empty() && inner.front() == '/' ? 1 : 0;
+  if (index >= inner.size() || !std::isalpha(static_cast<unsigned char>(inner[index]))) {
+    return false;
+  }
+  while (index < inner.size() &&
+         (std::isalnum(static_cast<unsigned char>(inner[index])) || inner[index] == '-' ||
+          inner[index] == '_')) {
+    ++index;
+  }
+  return index == inner.size() || inner[index] == ' ' || inner[index] == '\t' ||
+         inner[index] == '/';
+}
+
 std::string clean_cell(std::string text) {
   text = decode_html_entities(text);
   text = render_math_in_text(text);
@@ -84,6 +98,17 @@ std::string clean_cell(std::string text) {
       out += text[index + 1];
       index += 2;
       continue;
+    }
+    if (text[index] == '<') {
+      const auto close = text.find('>', index + 1);
+      if (close != std::string::npos) {
+        const std::string inner = text.substr(index + 1, close - index - 1);
+        if (cell_html_tag(inner)) {
+          if (inner == "br" || inner == "/br" || inner == "br/" || inner == "/br/") out += ' ';
+          index = close + 1;
+          continue;
+        }
+      }
     }
     if (text.compare(index, 2, "**") == 0 || text.compare(index, 2, "__") == 0 ||
         text.compare(index, 2, "~~") == 0) {

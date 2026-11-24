@@ -753,3 +753,9 @@ TEST_CASE("table cells honor backslash escapes") {
   REQUIRE(cells[0].text == "a * b");
   REQUIRE(cells[1].text == "c _ d");
 }
+
+TEST_CASE("table cells hide html tags") {
+  const auto cells = styled_cells({"x <b>bold</b><br>y", "plain <span class=\"z\">span</span>"});
+  REQUIRE(cells[0].text == "x bold y");
+  REQUIRE(cells[1].text == "plain span");
+}
