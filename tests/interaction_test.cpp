@@ -399,3 +399,19 @@ TEST_CASE("tool titles truncate on terminal cells") {
   REQUIRE(text.find("中文路径很长很长.cpp") == std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("shell tool cards show a command prompt") {
+  ftxui::Terminal::SetFallbackSize({60, 8});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "bash";
+  entry.input = "echo hi";
+  entry.status = "completed";
+  auto view = tool_view(entry, false);
+  ftxui::Screen screen(60, 8);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("│ $") != std::string::npos);
+  REQUIRE(text.find("echo hi") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

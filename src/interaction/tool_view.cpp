@@ -117,9 +117,14 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }
     }
   } else if (!entry.input.empty()) {
-    for (const auto& line : wrap_cells(entry.input, content_width)) {
+    const bool shell = entry.tool == "bash" || entry.tool == "sh" || entry.tool == "shell";
+    const std::size_t input_width = shell ? std::max<std::size_t>(1, content_width - 2) : content_width;
+    bool first = true;
+    for (const auto& line : wrap_cells(entry.input, input_width)) {
+      std::string prefix = shell ? (first ? "$ " : "  ") : "  ";
+      first = false;
       rows.push_back(ftxui::hbox({
-          ftxui::text("│   ") | ftxui::color(border),
+          ftxui::text("│ " + prefix) | ftxui::color(border),
           ftxui::text(line) | ftxui::flex | ftxui::color(kText),
           ftxui::text(" │") | ftxui::color(border),
       }));
