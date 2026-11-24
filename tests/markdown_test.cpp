@@ -107,3 +107,17 @@ TEST_CASE("markdown code fences indent and space like omp") {
   REQUIRE(close + 2 < lines.size());
   REQUIRE(lines[close + 2].find("after") != std::string::npos);
 }
+
+TEST_CASE("thought entries show an omp duration header") {
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Thought;
+  entry.text = "checking the options";
+  entry.started = std::chrono::system_clock::now();
+  entry.finished = entry.started + std::chrono::seconds(12);
+  auto view = entry_element(entry);
+  ftxui::Screen screen(40, 6);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("Thought for 12s") != std::string::npos);
+  REQUIRE(text.find("checking the options") != std::string::npos);
+}

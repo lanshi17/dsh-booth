@@ -13,3 +13,4 @@ trap 'rm -rf "$state" "$output"' EXIT
     >"$output" 2>&1 || true
 
 grep -aq "thinking hidden" "$output"
+grep -aq "Thought for" "$output"

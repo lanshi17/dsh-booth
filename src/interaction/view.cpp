@@ -1,5 +1,6 @@
 #include "interaction/view.hpp"
 #include "interaction/theme.hpp"
+#include "interaction/thought_view.hpp"
 #include "interaction/tool_diff.hpp"
 
 #include <ftxui/screen/terminal.hpp>
@@ -353,7 +354,7 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
     case EntryKind::Assistant:
       return ftxui::vbox({markdown_view(entry.text, false), ftxui::text(" ")});
     case EntryKind::Thought:
-      return ftxui::vbox({markdown_view(entry.text, true), ftxui::text(" ")});
+      return thought_view(entry);
     case EntryKind::Tool:
       return ftxui::vbox({tool_view(entry, expand_tools), ftxui::text(" ")});
     case EntryKind::User: {

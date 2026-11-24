@@ -16,12 +16,35 @@ SessionRow* find_session(std::vector<SessionRow>& sessions, const SessionId& id)
 }  // namespace
 
 void apply(AppState& state, const Event& event) {
+  const auto now = std::chrono::system_clock::now();
+  const auto finish_thought = [&] {
+    if (state.entries.empty()) return;
+    TranscriptEntry& last = state.entries.back();
+    if (last.kind == EntryKind::Thought && last.finished == std::chrono::system_clock::time_point{}) {
+      last.finished = now;
+    }
+  };
+
   if (const auto* snapshot = std::get_if<Snapshot>(&event.value)) {
     state.snapshot = *snapshot;
     return;
   }
 
   if (const auto* entry = std::get_if<TranscriptEntry>(&event.value)) {
+    if (entry->kind == EntryKind::Thought) {
+      if (!state.entries.empty() && state.entries.back().kind == EntryKind::Thought &&
+          state.entries.back().finished == std::chrono::system_clock::time_point{}) {
+        TranscriptEntry& thought = state.entries.back();
+        thought.text += entry->text;
+        if (thought.started == std::chrono::system_clock::time_point{}) thought.started = now;
+        return;
+      }
+      TranscriptEntry thought = *entry;
+      if (thought.started == std::chrono::system_clock::time_point{}) thought.started = now;
+      state.entries.push_back(std::move(thought));
+      return;
+    }
+    finish_thought();
     if (!entry->id.empty()) {
       for (auto& existing : state.entries) {
         if (existing.id == entry->id && existing.kind == entry->kind) {
@@ -45,6 +68,7 @@ void apply(AppState& state, const Event& event) {
   }
 
   if (const auto* delta = std::get_if<StreamDelta>(&event.value)) {
+    finish_thought();
     state.streaming += delta->text;
     return;
   }
@@ -98,6 +122,7 @@ void apply(AppState& state, const Event& event) {
   }
 
   if (std::holds_alternative<StreamEnd>(event.value)) {
+    finish_thought();
     if (!state.streaming.empty()) {
       TranscriptEntry entry;
       entry.kind = EntryKind::Assistant;
@@ -110,6 +135,7 @@ void apply(AppState& state, const Event& event) {
   }
 
   if (const auto* request = std::get_if<PermissionRequest>(&event.value)) {
+    finish_thought();
     state.permission = *request;
     return;
   }
@@ -150,6 +176,7 @@ void apply(AppState& state, const Event& event) {
   }
 
   if (const auto* problem = std::get_if<Problem>(&event.value)) {
+    finish_thought();
     state.notice = problem->detail;
   }
 }

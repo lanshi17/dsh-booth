@@ -26,6 +26,30 @@ TEST_CASE("streamed text becomes one assistant entry at the turn end") {
   REQUIRE_FALSE(state.busy);
 }
 
+TEST_CASE("thought chunks coalesce and finish on the next output") {
+  AppState state;
+  TranscriptEntry thought;
+  thought.kind = EntryKind::Thought;
+  thought.text = "first ";
+  apply(state, Event{thought});
+  thought.text = "second";
+  apply(state, Event{thought});
+
+  REQUIRE(state.entries.size() == 1);
+  REQUIRE(state.entries[0].kind == EntryKind::Thought);
+  REQUIRE(state.entries[0].text == "first second");
+  REQUIRE(state.entries[0].started != std::chrono::system_clock::time_point{});
+  REQUIRE(state.entries[0].finished == std::chrono::system_clock::time_point{});
+
+  apply(state, Event{StreamDelta{"answer"}});
+  REQUIRE(state.entries[0].finished != std::chrono::system_clock::time_point{});
+
+  thought.text = "later";
+  apply(state, Event{thought});
+  REQUIRE(state.entries.size() == 2);
+  REQUIRE(state.entries[1].text == "later");
+}
+
 TEST_CASE("a tool entry is updated in place by id") {
   AppState state;
   TranscriptEntry tool;

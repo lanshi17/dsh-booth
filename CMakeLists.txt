@@ -90,6 +90,7 @@ add_library(booth_interaction STATIC
   src/interaction/model_picker.cpp
   src/interaction/scroll.cpp
   src/interaction/transcript_search.cpp
+  src/interaction/thought_view.cpp
   src/interaction/tool_diff.cpp
   src/interaction/tool_view.cpp
   src/interaction/theme.cpp
