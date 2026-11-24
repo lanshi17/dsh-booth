@@ -122,6 +122,7 @@ add_library(booth_interaction STATIC
   src/interaction/external_editor.cpp
   src/interaction/markdown.cpp
   src/interaction/markdown_inline.cpp
+  src/interaction/markdown_table.cpp
   src/interaction/math.cpp
   src/interaction/math_block.cpp
   src/interaction/permission_view.cpp

@@ -211,3 +211,31 @@ TEST_CASE("markdown tables clean inline markup and math") {
   REQUIRE(text.find("alt") != std::string::npos);
   REQUIRE(text.find("snake_case") != std::string::npos);
 }
+
+TEST_CASE("markdown tables style bold, code and link cells") {
+  const std::string source =
+      "| h | v |\n"
+      "|---|---|\n"
+      "| **bold** | `code` |\n"
+      "| [docs](https://x.test) | 1 |\n";
+  auto view = markdown_view(source, false);
+  ftxui::Screen screen(60, 12);
+  ftxui::Render(screen, std::move(view));
+  bool bold = false;
+  bool code = false;
+  bool linked = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "b" && cell.bold) bold = true;
+      if (cell.character == "c" &&
+          cell.foreground_color == ftxui::Color::RGB(0, 255, 135)) {
+        code = true;
+      }
+      if (cell.character == "d" && cell.hyperlink != 0) linked = true;
+    }
+  }
+  REQUIRE(bold);
+  REQUIRE(code);
+  REQUIRE(linked);
+}
