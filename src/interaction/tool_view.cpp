@@ -3,8 +3,6 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/terminal.hpp>
 
-#include <nlohmann/json.hpp>
-
 #include <algorithm>
 #include <optional>
 #include <sstream>
@@ -13,11 +11,10 @@
 #include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/tool_diff.hpp"
+#include "interaction/tool_parse.hpp"
 
 namespace booth {
 namespace {
-
-using Json = nlohmann::json;
 
 #define kText (theme_color("text", ftxui::Color::RGB(228, 228, 228)))
 #define kDim (theme_color("dim", ftxui::Color::RGB(118, 118, 118)))
@@ -25,228 +22,16 @@ using Json = nlohmann::json;
 #define kGreen (theme_color("green", ftxui::Color::RGB(0, 255, 135)))
 #define kRed (theme_color("red", ftxui::Color::RGB(255, 95, 95)))
 
-
-struct ReadEnvelope {
-  std::string path;
-  std::vector<std::string> rows;
-  std::string footer;
-};
-
-ReadEnvelope parse_read_envelope(const std::string& output) {
-  ReadEnvelope envelope;
-  const auto path_start = output.find("<path>");
-  if (path_start != std::string::npos) {
-    const auto path_end = output.find("</path>", path_start + 6);
-    if (path_end != std::string::npos) {
-      envelope.path = output.substr(path_start + 6, path_end - path_start - 6);
-    }
-  }
-  const auto content_start = output.find("<content>");
-  const auto content_end = content_start == std::string::npos
-                               ? std::string::npos
-                               : output.find("</content>", content_start + 9);
-  if (content_start == std::string::npos) return envelope;
-  const std::string body =
-      output.substr(content_start + 9, content_end == std::string::npos
-                                             ? std::string::npos
-                                             : content_end - content_start - 9);
-  std::istringstream input(body);
-  std::string line;
-  while (std::getline(input, line)) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    envelope.rows.push_back(line);
-  }
-  while (!envelope.rows.empty() && envelope.rows.front().empty()) envelope.rows.erase(envelope.rows.begin());
-  while (!envelope.rows.empty() && envelope.rows.back().empty()) envelope.rows.pop_back();
-  if (!envelope.rows.empty() && envelope.rows.back().size() >= 2 &&
-      envelope.rows.back().front() == '(' && envelope.rows.back().back() == ')') {
-    envelope.footer = envelope.rows.back();
-    envelope.rows.pop_back();
-    while (!envelope.rows.empty() && envelope.rows.back().empty()) envelope.rows.pop_back();
-  }
-  return envelope;
-}
-
-struct TodoRow {
-  std::string content;
-  std::string status;
-};
-
-std::optional<std::vector<TodoRow>> parse_todos(const TranscriptEntry& entry) {
-  if (entry.tool != "todo_write") return std::nullopt;
-  const std::string& source = entry.raw_input.empty() ? entry.input : entry.raw_input;
-  if (source.empty()) return std::nullopt;
-  const Json parsed = Json::parse(source, nullptr, false);
-  if (parsed.is_discarded()) return std::nullopt;
-  const Json* list = nullptr;
-  if (parsed.is_object() && parsed.contains("todos") && parsed["todos"].is_array()) {
-    list = &parsed["todos"];
-  } else if (parsed.is_array()) {
-    list = &parsed;
-  } else {
-    return std::nullopt;
-  }
-  std::vector<TodoRow> rows;
-  rows.reserve(list->size());
-  for (const auto& item : *list) {
-    if (!item.is_object() || !item.contains("content") || !item["content"].is_string()) continue;
-    TodoRow row;
-    row.content = item["content"].get<std::string>();
-    row.status = item.value("status", std::string{"pending"});
-    rows.push_back(std::move(row));
-  }
-  return rows;
-}
-
-bool is_shell_tool(const std::string& tool) {
-  return tool == "bash" || tool == "sh" || tool == "shell" || tool == "pwsh" ||
-         tool == "powershell";
-}
-
-struct ShellStatus {
-  std::string note;
-  bool failed{false};
-};
-
-ShellStatus take_shell_status(std::string& text) {
-  const auto end = text.find_last_not_of("\r\n");
-  if (end == std::string::npos) return {};
-  const auto newline = text.find_last_of('\n', end);
-  const std::size_t start = newline == std::string::npos ? 0 : newline + 1;
-  const std::string line = text.substr(start, end - start + 1);
-  const auto between = [&](std::string_view prefix) -> std::string {
-    if (line.rfind(prefix, 0) != 0 || line.back() != ']') return {};
-    return line.substr(prefix.size(), line.size() - prefix.size() - 1);
-  };
-  ShellStatus status;
-  if (const std::string exit_value = between("[exit code: "); !exit_value.empty()) {
-    if (exit_value == "null") {
-      status.note = "exit ?";
-      status.failed = true;
-    } else {
-      status.note = "exit " + exit_value;
-      status.failed = exit_value != "0";
-    }
-  } else if (const std::string signal_value = between("[killed by signal: ");
-             !signal_value.empty()) {
-    status.note = "signal " + signal_value;
-    status.failed = true;
-  } else if (const std::string command_value = between("[Command finished with exit code ");
-             !command_value.empty()) {
-    status.note = "exit " + command_value;
-    status.failed = command_value != "0";
-  } else if (const std::string shell_signal = between("[shell killed by signal: ");
-             !shell_signal.empty()) {
-    status.note = "signal " + shell_signal;
-    status.failed = true;
-  } else {
-    return {};
-  }
-  text.erase(start);
-  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
-  return status;
-}
-
-struct GrepLine {
-  std::size_t number{0};
-  std::string text;
-};
-
-struct GrepGroup {
-  std::string path;
-  std::vector<GrepLine> lines;
-};
-
-struct GrepResult {
-  std::vector<GrepGroup> groups;
-  std::string footer;
-  std::size_t total{0};
-};
-
-std::optional<GrepResult> parse_grep(const std::string& output) {
-  std::istringstream input(output);
-  std::vector<std::string> lines;
-  std::string line;
-  while (std::getline(input, line)) {
-    if (!line.empty() && line.back() == '\r') line.pop_back();
-    lines.push_back(line);
-  }
-  std::size_t index = 0;
-  while (index < lines.size() && lines[index].empty()) ++index;
-  if (index >= lines.size()) return std::nullopt;
-  bool recognized = false;
-  if (lines[index].rfind("Found ", 0) == 0 || lines[index] == "No matches found") {
-    recognized = true;
-    ++index;
-  }
-  GrepResult result;
-  while (index < lines.size()) {
-    const std::string& row = lines[index++];
-    if (row.empty()) continue;
-    if (row.rfind("Line ", 0) == 0) {
-      const auto colon = row.find(": ", 5);
-      if (colon == std::string::npos || result.groups.empty()) continue;
-      std::size_t number = 0;
-      try {
-        number = static_cast<std::size_t>(std::stoul(row.substr(5, colon - 5)));
-      } catch (...) {
-        continue;
-      }
-      result.groups.back().lines.push_back({number, row.substr(colon + 2)});
-      ++result.total;
-      recognized = true;
-    } else if (row.front() == '(' && row.back() == ')') {
-      result.footer = row;
-      recognized = true;
-    } else {
-      result.groups.push_back({row, {}});
-    }
-  }
-  if (!recognized) return std::nullopt;
-  return result;
-}
-
-std::string grep_pattern(const TranscriptEntry& entry) {
-  const Json raw = Json::parse(entry.raw_input, nullptr, false);
-  if (!raw.is_discarded() && raw.is_object()) return raw.value("pattern", std::string{});
-  return entry.input;
-}
-
-std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
-  std::vector<ReadEnvelope> envelopes;
-  std::size_t start = output.find("<path>");
-  while (start != std::string::npos) {
-    const std::size_t next = output.find("<path>", start + 6);
-    ReadEnvelope envelope =
-        parse_read_envelope(output.substr(start, next == std::string::npos ? std::string::npos
-                                                                          : next - start));
-    if (!envelope.path.empty() || !envelope.rows.empty() || !envelope.footer.empty()) {
-      envelopes.push_back(std::move(envelope));
-    }
-    start = next;
-  }
-  return envelopes;
-}
-
 }  // namespace
-
-std::string read_output_text(const std::string& output) {
-  std::string out;
-  for (const auto& read : parse_read_envelopes(output)) {
-    if (!out.empty()) out += '\n';
-    if (!read.path.empty()) out += read.path + '\n';
-    for (const auto& row : read.rows) out += row + '\n';
-    if (!read.footer.empty()) out += read.footer + '\n';
-  }
-  return out;
-}
 
 ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const ftxui::Color border = theme_color("border", ftxui::Color::RGB(108, 108, 108));
   const bool read_tool = entry.tool == "read" || entry.tool == "read_file";
   const bool shell_tool = is_shell_tool(entry.tool);
   const std::optional<GrepResult> grep_result =
-      entry.tool == "grep" ? parse_grep(entry.output) : std::nullopt;
+      entry.tool == "grep" && entry.status != "failed" ? parse_grep(entry.output) : std::nullopt;
+  const std::optional<GlobResult> glob_result =
+      entry.tool == "glob" && entry.status != "failed" ? parse_glob(entry.output) : std::nullopt;
   std::string output = entry.output;
   const ShellStatus shell_status = shell_tool ? take_shell_status(output) : ShellStatus{};
   const std::vector<ReadEnvelope> reads =
@@ -271,6 +56,15 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     if (grep_result->total > 0) {
       title += " · " + std::to_string(grep_result->total) +
                (grep_result->total == 1 ? " match" : " matches");
+    }
+  }
+  if (glob_result) {
+    title = "Glob";
+    const std::string pattern = glob_pattern(entry);
+    if (!pattern.empty()) title += " \"" + pattern + "\"";
+    if (!glob_result->paths.empty()) {
+      title += " · " + std::to_string(glob_result->paths.size()) +
+               (glob_result->paths.size() == 1 ? " file" : " files");
     }
   }
   const int columns = ftxui::Terminal::Size().dimx;
@@ -325,7 +119,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
-  } else if (!entry.input.empty() && !todos && !grep_result) {
+  } else if (!entry.input.empty() && !todos && !grep_result && !glob_result) {
     const std::size_t input_width =
         shell_tool ? std::max<std::size_t>(1, content_width - 2) : content_width;
     bool first = true;
@@ -422,6 +216,69 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       rows.push_back(ftxui::hbox({
           ftxui::text("│ ") | ftxui::color(border),
           ftxui::text(grep_result->footer) | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+  } else if (glob_result) {
+    constexpr std::size_t kGlobPaths = 12;
+    struct Group {
+      std::string dir;
+      std::vector<std::string> names;
+    };
+    std::vector<Group> groups;
+    for (const auto& path : glob_result->paths) {
+      const auto slash = path.rfind('/');
+      const std::string dir = slash == std::string::npos ? "" : path.substr(0, slash + 1);
+      const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+      if (name.empty()) continue;
+      auto group = std::find_if(groups.begin(), groups.end(),
+                                [&](const Group& candidate) { return candidate.dir == dir; });
+      if (group == groups.end()) {
+        groups.push_back({dir, {}});
+        group = groups.end() - 1;
+      }
+      group->names.push_back(name);
+    }
+    const std::size_t limit = expanded ? glob_result->paths.size() : kGlobPaths;
+    std::size_t shown = 0;
+    for (const auto& group : groups) {
+      if (shown >= limit) break;
+      if (!group.dir.empty()) {
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│ ") | ftxui::color(border),
+            ftxui::text(group.dir) | ftxui::dim | ftxui::flex,
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+      }
+      for (const auto& name : group.names) {
+        if (shown >= limit) break;
+        rows.push_back(ftxui::hbox({
+            ftxui::text(group.dir.empty() ? "│ " : "│   ") | ftxui::color(border),
+            ftxui::text(name) | ftxui::flex | ftxui::color(kText),
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+        ++shown;
+      }
+    }
+    if (glob_result->paths.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("No files") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+    if (!expanded && shown < glob_result->paths.size()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("… +" + std::to_string(glob_result->paths.size() - shown) +
+                      " paths · Ctrl+O") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+    if (!glob_result->footer.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text(glob_result->footer) | ftxui::dim | ftxui::flex,
           ftxui::text(" │") | ftxui::color(border),
       }));
     }

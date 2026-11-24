@@ -543,6 +543,47 @@ TEST_CASE("tool titles truncate on terminal cells") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("glob cards group paths by directory") {
+  ftxui::Terminal::SetFallbackSize({80, 26});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "glob";
+  entry.status = "completed";
+  entry.raw_input = R"({"pattern":"**/*.cpp"})";
+  for (int index = 1; index <= 6; ++index) {
+    entry.output += "src/file" + std::to_string(index) + ".cpp\n";
+  }
+  for (int index = 1; index <= 6; ++index) {
+    entry.output += "lib/file" + std::to_string(index) + ".cpp\n";
+  }
+  entry.output += "root.md";
+
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(80, 26);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Glob \"**/*.cpp\" · 13 files") != std::string::npos);
+  REQUIRE(text.find("src/") != std::string::npos);
+  REQUIRE(text.find("file1.cpp") != std::string::npos);
+  REQUIRE(text.find("lib/") != std::string::npos);
+  REQUIRE(text.find("… +1 paths · Ctrl+O") != std::string::npos);
+  REQUIRE(text.find("root.md") == std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(80, 34);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("root.md") != std::string::npos);
+
+  entry.output = "No files found";
+  auto empty = tool_view(entry, false);
+  ftxui::Screen empty_screen(80, 12);
+  ftxui::Render(empty_screen, std::move(empty));
+  const std::string empty_text = empty_screen.ToString();
+  REQUIRE(empty_text.find("Glob \"**/*.cpp\"") != std::string::npos);
+  REQUIRE(empty_text.find("No files") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("grep cards group matches by file") {
   ftxui::Terminal::SetFallbackSize({80, 24});
   TranscriptEntry entry;
