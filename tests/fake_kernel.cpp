@@ -238,6 +238,29 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("greptool") != std::string::npos) {
+        const std::string grep_output =
+            "Found 2 matches\n\nsrc/a.cpp\nLine 3: TODO one\nLine 9: TODO two\n";
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-grep"},
+                                      {"title", "grep"},
+                                      {"name", "grep"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"pattern", "TODO"}, {"path", "src"}}}}}}}});
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call_update"},
+                                      {"toolCallId", "t-grep"},
+                                      {"status", "completed"},
+                                      {"content", json::array({json{{"type", "content"},
+                                                                    {"content", {{"type", "text"},
+                                                                                 {"text", grep_output}}}}})}}}}}});
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("bigdiff") != std::string::npos) {
         std::string content;
         for (int index = 1; index <= 60; ++index) {

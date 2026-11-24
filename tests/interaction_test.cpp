@@ -512,6 +512,49 @@ TEST_CASE("tool titles truncate on terminal cells") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("grep cards group matches by file") {
+  ftxui::Terminal::SetFallbackSize({80, 24});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "grep";
+  entry.status = "completed";
+  entry.raw_input = R"({"pattern":"TODO","path":"src"})";
+  entry.output = "Found 12 matches\n\nsrc/a.cpp\n";
+  for (int index = 1; index <= 6; ++index) {
+    entry.output += "Line " + std::to_string(index) + ": TODO a" + std::to_string(index) + "\n";
+  }
+  entry.output += "\nsrc/b.cpp\n";
+  for (int index = 7; index <= 12; ++index) {
+    entry.output += "Line " + std::to_string(index) + ": TODO b" + std::to_string(index) + "\n";
+  }
+  entry.output += "\n(Full grep result stored at: /tmp/grep.txt.)";
+
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(80, 24);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Grep \"TODO\" · 12 matches") != std::string::npos);
+  REQUIRE(text.find("src/a.cpp") != std::string::npos);
+  REQUIRE(text.find("TODO a1") != std::string::npos);
+  REQUIRE(text.find("src/b.cpp") != std::string::npos);
+  REQUIRE(text.find("… +2 matches · Ctrl+O") != std::string::npos);
+  REQUIRE(text.find("TODO b12") == std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(80, 34);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("TODO b12") != std::string::npos);
+
+  entry.output = "No matches found";
+  auto empty = tool_view(entry, false);
+  ftxui::Screen empty_screen(80, 12);
+  ftxui::Render(empty_screen, std::move(empty));
+  const std::string empty_text = empty_screen.ToString();
+  REQUIRE(empty_text.find("Grep \"TODO\"") != std::string::npos);
+  REQUIRE(empty_text.find("No matches") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("queued prompts show their text and overflow count") {
   std::deque<std::string> queued{"first\nline", "second", "third", "fourth"};
   auto view = queued_view(queued);

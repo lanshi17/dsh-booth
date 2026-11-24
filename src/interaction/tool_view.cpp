@@ -147,6 +147,71 @@ ShellStatus take_shell_status(std::string& text) {
   return status;
 }
 
+struct GrepLine {
+  std::size_t number{0};
+  std::string text;
+};
+
+struct GrepGroup {
+  std::string path;
+  std::vector<GrepLine> lines;
+};
+
+struct GrepResult {
+  std::vector<GrepGroup> groups;
+  std::string footer;
+  std::size_t total{0};
+};
+
+std::optional<GrepResult> parse_grep(const std::string& output) {
+  std::istringstream input(output);
+  std::vector<std::string> lines;
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    lines.push_back(line);
+  }
+  std::size_t index = 0;
+  while (index < lines.size() && lines[index].empty()) ++index;
+  if (index >= lines.size()) return std::nullopt;
+  bool recognized = false;
+  if (lines[index].rfind("Found ", 0) == 0 || lines[index] == "No matches found") {
+    recognized = true;
+    ++index;
+  }
+  GrepResult result;
+  while (index < lines.size()) {
+    const std::string& row = lines[index++];
+    if (row.empty()) continue;
+    if (row.rfind("Line ", 0) == 0) {
+      const auto colon = row.find(": ", 5);
+      if (colon == std::string::npos || result.groups.empty()) continue;
+      std::size_t number = 0;
+      try {
+        number = static_cast<std::size_t>(std::stoul(row.substr(5, colon - 5)));
+      } catch (...) {
+        continue;
+      }
+      result.groups.back().lines.push_back({number, row.substr(colon + 2)});
+      ++result.total;
+      recognized = true;
+    } else if (row.front() == '(' && row.back() == ')') {
+      result.footer = row;
+      recognized = true;
+    } else {
+      result.groups.push_back({row, {}});
+    }
+  }
+  if (!recognized) return std::nullopt;
+  return result;
+}
+
+std::string grep_pattern(const TranscriptEntry& entry) {
+  const Json raw = Json::parse(entry.raw_input, nullptr, false);
+  if (!raw.is_discarded() && raw.is_object()) return raw.value("pattern", std::string{});
+  return entry.input;
+}
+
 std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
   std::vector<ReadEnvelope> envelopes;
   std::size_t start = output.find("<path>");
@@ -180,6 +245,8 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const ftxui::Color border = theme_color("border", ftxui::Color::RGB(108, 108, 108));
   const bool read_tool = entry.tool == "read" || entry.tool == "read_file";
   const bool shell_tool = is_shell_tool(entry.tool);
+  const std::optional<GrepResult> grep_result =
+      entry.tool == "grep" ? parse_grep(entry.output) : std::nullopt;
   std::string output = entry.output;
   const ShellStatus shell_status = shell_tool ? take_shell_status(output) : ShellStatus{};
   const std::vector<ReadEnvelope> reads =
@@ -195,6 +262,15 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
         return row.status == "completed";
       });
       title += " · " + std::to_string(done) + "/" + std::to_string(todos->size());
+    }
+  }
+  if (grep_result) {
+    title = "Grep";
+    const std::string pattern = grep_pattern(entry);
+    if (!pattern.empty()) title += " \"" + pattern + "\"";
+    if (grep_result->total > 0) {
+      title += " · " + std::to_string(grep_result->total) +
+               (grep_result->total == 1 ? " match" : " matches");
     }
   }
   const int columns = ftxui::Terminal::Size().dimx;
@@ -249,7 +325,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
-  } else if (!entry.input.empty() && !todos) {
+  } else if (!entry.input.empty() && !todos && !grep_result) {
     const std::size_t input_width =
         shell_tool ? std::max<std::size_t>(1, content_width - 2) : content_width;
     bool first = true;
@@ -305,7 +381,51 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   }
-  if (!output.empty() && (!todos || entry.status == "failed")) {
+  if (grep_result) {
+    constexpr std::size_t kGrepMatches = 10;
+    const std::size_t limit = expanded ? grep_result->total : kGrepMatches;
+    std::size_t shown = 0;
+    for (const auto& group : grep_result->groups) {
+      if (shown >= limit) break;
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text(group.path) | ftxui::flex | ftxui::color(kText),
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+      for (const auto& match : group.lines) {
+        if (shown >= limit) break;
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│ ") | ftxui::color(border),
+            ftxui::text(" " + std::to_string(match.number) + ": ") | ftxui::color(kDim),
+            ftxui::text(match.text) | ftxui::flex | ftxui::color(kText),
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+        ++shown;
+      }
+    }
+    if (grep_result->groups.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("No matches") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+    if (!expanded && shown < grep_result->total) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("… +" + std::to_string(grep_result->total - shown) +
+                      " matches · Ctrl+O") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+    if (!grep_result->footer.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text(grep_result->footer) | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+  } else if (!output.empty() && (!todos || entry.status == "failed")) {
     rows.push_back(ftxui::hbox({
         ftxui::text("├── Output ") | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),
