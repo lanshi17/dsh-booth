@@ -401,14 +401,19 @@ std::vector<std::string> table_chart_lines(const std::vector<std::vector<TableCe
   if (maximum <= 0) return {};
   const int bar_width = std::min(12, std::max(4, max_width - static_cast<int>(label_width) - 10));
   if (bar_width < 4) return {};
+  static constexpr std::string_view kEighths[] = {"", "▏", "▎", "▍", "▌", "▋", "▊", "▉"};
   std::vector<std::string> out;
   for (const auto& entry : entries) {
-    const int filled = static_cast<int>(std::llround(entry.value / maximum * bar_width));
+    const int eighths =
+        static_cast<int>(std::llround(entry.value / maximum * bar_width * 8.0));
+    const int filled = eighths / 8;
+    const int partial = eighths % 8;
     std::string line = entry.label;
     line += std::string(label_width - table_width(entry.label), ' ');
     line += "  ";
     line += rule("█", filled);
-    line += rule("░", bar_width - filled);
+    if (partial > 0) line += kEighths[partial];
+    line += rule("░", bar_width - filled - (partial > 0 ? 1 : 0));
     line += ' ';
     line += format_number(entry.value);
     out.push_back(std::move(line));

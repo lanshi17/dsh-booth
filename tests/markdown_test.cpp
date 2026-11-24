@@ -725,3 +725,25 @@ TEST_CASE("quoted lists style their markers") {
   REQUIRE(ordered);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("table charts use fractional blocks") {
+  std::vector<std::vector<TableCell>> rows{{TableCell{"name", "", false, false, false, false},
+                                            TableCell{"value", "", false, false, false, false}}};
+  for (const auto& [name, value] : std::vector<std::pair<std::string, std::string>>{
+           {"eight", "8"}, {"four", "4"}, {"one", "1"}}) {
+    TableCell label;
+    label.text = name;
+    TableCell amount;
+    amount.text = value;
+    rows.push_back({label, amount});
+  }
+  const auto chart = table_chart_lines(rows, 80);
+  REQUIRE(chart.size() == 3);
+  bool partial = false;
+  for (const auto& line : chart) {
+    for (const auto glyph : {"▏", "▎", "▍", "▌", "▋", "▊", "▉"}) {
+      if (line.find(glyph) != std::string::npos) partial = true;
+    }
+  }
+  REQUIRE(partial);
+}
