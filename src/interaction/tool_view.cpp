@@ -206,11 +206,13 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   if (entry.finished > entry.started && entry.started != std::chrono::system_clock::time_point{}) {
     const auto ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(entry.finished - entry.started);
-    footer = std::to_string(ms.count()) + "ms";
+    footer += " · " + std::to_string(ms.count()) + "ms";
   }
+  ftxui::Element status = ftxui::text(footer) | ftxui::dim;
+  if (entry.status == "failed") status = ftxui::text(footer) | ftxui::color(kRed);
   rows.push_back(ftxui::hbox({
       ftxui::text("╰─── ") | ftxui::color(border),
-      ftxui::text(footer) | ftxui::dim,
+      std::move(status),
       ftxui::text(" ") ,
       ftxui::separator() | ftxui::flex | ftxui::color(border),
       ftxui::text("╯") | ftxui::color(border),

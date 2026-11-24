@@ -426,3 +426,20 @@ TEST_CASE("session picker truncates CJK titles by cells") {
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("…") != std::string::npos);
 }
+
+TEST_CASE("tool footer keeps failure status with duration") {
+  ftxui::Terminal::SetFallbackSize({60, 8});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "bash";
+  entry.status = "failed";
+  entry.started = std::chrono::system_clock::now();
+  entry.finished = entry.started + std::chrono::milliseconds(12);
+  auto view = tool_view(entry, false);
+  ftxui::Screen screen(60, 8);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("failed") != std::string::npos);
+  REQUIRE(text.find("12ms") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
