@@ -70,3 +70,14 @@ TEST_CASE("other display math falls back to one line") {
   REQUIRE(lines.size() == 1);
   REQUIRE(lines[0].find("E = mc²") != std::string::npos);
 }
+
+TEST_CASE("display radicals draw a top bar") {
+  const auto root = math_block_lines("\\sqrt{x+1}");
+  REQUIRE(root.size() == 2);
+  REQUIRE(root[0].find("┌───") != std::string::npos);
+  REQUIRE(root[1].find("√ x+1") != std::string::npos);
+
+  const auto cube = math_block_lines("\\sqrt[3]{x}");
+  REQUIRE(cube.size() == 2);
+  REQUIRE(cube[1].find("∛ x") != std::string::npos);
+}

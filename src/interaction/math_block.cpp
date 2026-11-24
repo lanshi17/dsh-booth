@@ -88,6 +88,18 @@ std::vector<std::string> split_top_level(std::string_view text, std::string_view
   return parts;
 }
 
+std::vector<std::string> radical_lines(const std::string& body, const std::string& root) {
+  const std::string text = latex_to_unicode(body);
+  const int width = std::max(3, display_width(text));
+  std::string prefix = "√ ";
+  if (!root.empty()) prefix = root == "3" ? "∛ " : "√[" + root + "] ";
+  const int prefix_width = display_width(prefix);
+  std::string top(static_cast<std::size_t>(std::max(0, prefix_width - 1)), ' ');
+  top += "┌";
+  top += repeat("─", width);
+  return {top, prefix + text};
+}
+
 std::vector<std::string> fraction_lines(const std::string& numerator, const std::string& denominator) {
   const std::string top = latex_to_unicode(numerator);
   const std::string bottom = latex_to_unicode(denominator);
@@ -172,6 +184,22 @@ std::vector<std::string> math_block_lines(std::string_view source) {
     if (read_group(trimmed, index, numerator) && read_group(trimmed, index, denominator) &&
         index == trimmed.size()) {
       return fraction_lines(numerator, denominator);
+    }
+  }
+  if (starts_with(trimmed, "\\sqrt")) {
+    std::size_t index = 5;
+    while (index < trimmed.size() && trimmed[index] == ' ') ++index;
+    std::string root;
+    if (index < trimmed.size() && trimmed[index] == '[') {
+      const auto close = trimmed.find(']', index + 1);
+      if (close != std::string::npos) {
+        root = trim(trimmed.substr(index + 1, close - index - 1));
+        index = close + 1;
+      }
+    }
+    std::string body;
+    if (read_group(trimmed, index, body) && index == trimmed.size()) {
+      return radical_lines(body, root);
     }
   }
   if (starts_with(trimmed, "\\begin{")) {
