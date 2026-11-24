@@ -97,8 +97,6 @@ class Root : public ComponentBase {
   void shutdown() { booth::save_draft(draft_file_, state_.composer); cancel(); animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
   Element OnRender() override {
     mouse_.begin_frame();
-    if (state_.permission) return booth::permission_view(*state_.permission, &mouse_) |
-        ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     if (state_.help) return booth::help_view(help_scroll_.offset(), &mouse_) |
         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     return main_view();
@@ -265,6 +263,7 @@ class Root : public ComponentBase {
     }
     Elements view;
     view.push_back(ftxui::vbox(std::move(lines)) | ftxui::flex);
+    if (state_.permission) view.push_back(booth::permission_view(*state_.permission, &mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center);
     if (!state_.notice.empty()) view.push_back(ftxui::paragraph(state_.notice.text) | ftxui::color(state_.notice.error ? ftxui::Color::RGB(255, 95, 95) : ftxui::Color::RGB(150, 150, 150)));
     if (window.scroll > 0) {
       view.push_back(ftxui::text("  ↑ " + std::to_string(window.scroll) +
