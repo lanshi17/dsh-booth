@@ -172,6 +172,61 @@ bool is_table_separator(const std::string& line) {
   return dash;
 }
 
+std::string clean_cell(std::string text) {
+  text = render_math_in_text(text);
+  std::string out;
+  for (std::size_t index = 0; index < text.size();) {
+    if (text.compare(index, 2, "**") == 0 || text.compare(index, 2, "__") == 0 ||
+        text.compare(index, 2, "~~") == 0) {
+      index += 2;
+      continue;
+    }
+    if (text[index] == '*' || text[index] == '`') {
+      ++index;
+      continue;
+    }
+    if (text[index] == '!' && index + 1 < text.size() && text[index + 1] == '[') {
+      ++index;
+      continue;
+    }
+    if (text[index] == '[') {
+      const auto close = text.find("](", index);
+      const auto end = close == std::string::npos ? std::string::npos
+                                                  : text.find(')', close + 2);
+      if (close != std::string::npos && end != std::string::npos) {
+        out += text.substr(index + 1, close - index - 1);
+        index = end + 1;
+        continue;
+      }
+    }
+    if (text[index] == '<') {
+      const auto close = text.find('>', index);
+      if (close != std::string::npos) {
+        const std::string inner = text.substr(index + 1, close - index - 1);
+        if (inner.rfind("http://", 0) == 0 || inner.rfind("https://", 0) == 0 ||
+            inner.rfind("mailto:", 0) == 0) {
+          out += inner;
+          index = close + 1;
+          continue;
+        }
+      }
+    }
+    if (text[index] == '_') {
+      const bool before =
+          index > 0 && (std::isalnum(static_cast<unsigned char>(text[index - 1])) || text[index - 1] == '_');
+      const bool after =
+          index + 1 < text.size() &&
+          (std::isalnum(static_cast<unsigned char>(text[index + 1])) || text[index + 1] == '_');
+      if (!(before && after)) {
+        ++index;
+        continue;
+      }
+    }
+    out += text[index++];
+  }
+  return out;
+}
+
 bool is_table_start(const std::vector<std::string>& lines, std::size_t index) {
   return index + 1 < lines.size() && lines[index].find('|') != std::string::npos &&
          is_table_separator(lines[index + 1]);
@@ -420,6 +475,9 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       while (next < source.size() && source[next].find('|') != std::string::npos) {
         rows.push_back(table_cells(source[next]));
         ++next;
+      }
+      for (auto& row : rows) {
+        for (auto& cell : row) cell = clean_cell(cell);
       }
       lines.push_back(table_view(rows, aligns,
                                  std::max(20, ftxui::Terminal::Size().dimx - 4)));

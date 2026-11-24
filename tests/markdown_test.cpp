@@ -191,3 +191,23 @@ TEST_CASE("markdown autolinks bare urls") {
   REQUIRE(text.find("https://example.com/docs") != std::string::npos);
   REQUIRE(text.find("www.test.dev") != std::string::npos);
 }
+
+TEST_CASE("markdown tables clean inline markup and math") {
+  const std::string source =
+      "| name | value |\n"
+      "|---|---|\n"
+      "| **bold** | `code` |\n"
+      "| [link](https://x.test) | $x^2$ |\n"
+      "| ![alt](img.png) | snake_case |\n";
+  const std::string text = render_markdown(source, 60, 14);
+  REQUIRE(text.find("**bold**") == std::string::npos);
+  REQUIRE(text.find("bold") != std::string::npos);
+  REQUIRE(text.find("`code`") == std::string::npos);
+  REQUIRE(text.find("code") != std::string::npos);
+  REQUIRE(text.find("[link]") == std::string::npos);
+  REQUIRE(text.find("link") != std::string::npos);
+  REQUIRE(text.find("x²") != std::string::npos);
+  REQUIRE(text.find("![alt]") == std::string::npos);
+  REQUIRE(text.find("alt") != std::string::npos);
+  REQUIRE(text.find("snake_case") != std::string::npos);
+}

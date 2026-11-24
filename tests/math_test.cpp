@@ -39,3 +39,9 @@ TEST_CASE("math spans reject currency and honor delimiters") {
   REQUIRE_FALSE(math_span_at("$x$2", 0));
   REQUIRE_FALSE(math_span_at("$ x$", 0));
 }
+
+TEST_CASE("prose math replacement leaves currency alone") {
+  REQUIRE(render_math_in_text("value $x^2$") == "value x²");
+  REQUIRE(render_math_in_text("costs $5 and $10") == "costs $5 and $10");
+  REQUIRE(render_math_in_text("\\$5 stays literal") == "$5 stays literal");
+}

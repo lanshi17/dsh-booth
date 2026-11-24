@@ -366,6 +366,24 @@ std::string latex_to_unicode(std::string_view source) {
   return out;
 }
 
+std::string render_math_in_text(const std::string& text) {
+  std::string out;
+  for (std::size_t index = 0; index < text.size();) {
+    if (text[index] == '\\' && index + 1 < text.size() && text[index + 1] == '$') {
+      out += '$';
+      index += 2;
+      continue;
+    }
+    if (const auto span = math_span_at(text, index)) {
+      out += span->text;
+      index = span->end;
+      continue;
+    }
+    out += text[index++];
+  }
+  return out;
+}
+
 std::optional<MathSpan> math_span_at(const std::string& text, std::size_t at) {
   if (at >= text.size()) return std::nullopt;
   std::size_t opener_length = 0;

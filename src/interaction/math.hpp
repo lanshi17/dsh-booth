@@ -19,4 +19,7 @@ std::string latex_to_unicode(std::string_view source);
 /// Currency-like `$…$` spans are rejected; the caller handles escaped `\$`.
 std::optional<MathSpan> math_span_at(const std::string& text, std::size_t at);
 
+/// Replaces every recognized math span in prose with its Unicode rendering.
+std::string render_math_in_text(const std::string& text);
+
 }  // namespace booth
