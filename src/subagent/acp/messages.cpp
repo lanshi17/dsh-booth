@@ -205,20 +205,7 @@ std::vector<Event> session_updates(const Json& params) {
   }
 
   if (kind == "config_option_update") {
-    for (const auto& option : update.value("configOptions", Json::array())) {
-      if (!option.is_object()) continue;
-      const std::string category = option.value("category", std::string{});
-      if (category != "model" && category != "thought_level" && category != "model_config") {
-        continue;
-      }
-      const std::string id = option.value("id", std::string{});
-      std::string value;
-      if (option.contains("currentValue")) {
-        value = option["currentValue"].is_string() ? option["currentValue"].get<std::string>()
-                                                   : option["currentValue"].dump();
-      }
-      events.push_back(Event{SessionConfigChanged{session, id, value}});
-    }
+    events.push_back(Event{ConfigOptionsChanged{update.value("configOptions", Json::array()).dump()}});
     return events;
   }
 

@@ -309,6 +309,37 @@ TEST_CASE("context gauge fills and changes color at thresholds") {
   REQUIRE(context_color(90) == ftxui::Color::RGB(255, 95, 95));
 }
 
+TEST_CASE("config option updates refresh models and effort") {
+  AppState state;
+  nlohmann::json options = nlohmann::json::array({
+      {{"id", "model"},
+       {"name", "Model"},
+       {"category", "model"},
+       {"currentValue", "[\"provider\",\"model-two\"]"},
+       {"options",
+        nlohmann::json::array({{{"group", "provider"},
+                                {"name", "Provider"},
+                                {"options", nlohmann::json::array({
+                                    {{"value", "[\"provider\",\"model-two\"]"},
+                                     {"name", "model-two"}},
+                                    {{"value", "[\"provider\",\"model-three\"]"},
+                                     {"name", "model-three"}},
+                                })}}})}},
+      {{"id", "reasoning_effort"},
+       {"name", "Reasoning effort"},
+       {"category", "thought_level"},
+       {"currentValue", "low"},
+       {"options", nlohmann::json::array({{{"value", "low"}, {"name", "Low"}},
+                                           {{"value", "high"}, {"name", "High"}}})}},
+  });
+  apply(state, Event{ConfigOptionsChanged{options.dump()}});
+  REQUIRE(state.model == "model-two");
+  REQUIRE(state.models.size() == 2);
+  REQUIRE(state.reasoning.current == "low");
+  REQUIRE(state.reasoning.current_name == "Low");
+  REQUIRE(state.reasoning.choices.size() == 2);
+}
+
 TEST_CASE("reopening a session keeps one row for usage") {
   AppState state;
   apply(state, Event{SessionOpened{SessionId{"s-1"}, "/old", "auto"}});

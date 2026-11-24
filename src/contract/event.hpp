@@ -119,6 +119,10 @@ struct SessionOptionsChanged {
   ReasoningOptions reasoning;
 };
 
+struct ConfigOptionsChanged {
+  std::string options;  // configOptions JSON from a config_option_update notification
+};
+
 struct ReasoningChanged {
   std::string value;
   std::string name;
@@ -132,7 +136,8 @@ struct UsageChanged {
 
 using EventValue = std::variant<Snapshot, TranscriptEntry, StreamDelta, PermissionRequest,
                                 SetupProgress, Problem, StreamEnd, SessionOpened,
-                                SessionConfigChanged, SessionOptionsChanged, ReasoningChanged,
+                                SessionConfigChanged, SessionOptionsChanged, ConfigOptionsChanged,
+                                ReasoningChanged,
                                 UsageChanged, SessionsListed, SessionSwitched, TranscriptReplayed,
                                 SessionClosed>;
 

@@ -5,6 +5,7 @@
 #include <string>
 
 #include "interaction/tui_internal.hpp"
+#include "interaction/view.hpp"
 
 namespace booth {
 namespace {
@@ -226,6 +227,17 @@ void apply(AppState& state, const Event& event) {
   if (const auto* options = std::get_if<SessionOptionsChanged>(&event.value)) {
     state.models = options->models;
     state.reasoning = options->reasoning;
+    return;
+  }
+
+  if (const auto* options = std::get_if<ConfigOptionsChanged>(&event.value)) {
+    const auto parsed = nlohmann::json::parse(options->options, nullptr, false);
+    if (parsed.is_discarded() || !parsed.is_array()) return;
+    std::vector<ModelChoice> choices;
+    const std::string display = read_model_options(parsed, choices);
+    state.models = std::move(choices);
+    state.reasoning = read_reasoning_options(parsed);
+    if (!display.empty()) state.model = display;
     return;
   }
 

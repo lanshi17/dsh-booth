@@ -115,7 +115,9 @@ TEST_CASE("session updates become contract events") {
                                          {"currentValue", "deepseek-v4-pro"}}})}}}};
   auto config_events = session_updates(config);
   REQUIRE(config_events.size() == 1);
-  REQUIRE(std::get<SessionConfigChanged>(config_events[0].value).value == "deepseek-v4-pro");
+  REQUIRE(std::holds_alternative<ConfigOptionsChanged>(config_events[0].value));
+  REQUIRE(std::get<ConfigOptionsChanged>(config_events[0].value).options.find(
+              "deepseek-v4-pro") != std::string::npos);
 
   const Json usage{
       {"sessionId", "s-1"},
