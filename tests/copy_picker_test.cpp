@@ -72,6 +72,30 @@ TEST_CASE("copy picker includes tool output") {
   REQUIRE(picker.items()[0].text == "echo hi\n");
 }
 
+TEST_CASE("copy picker includes shell commands and blockquotes") {
+  AppState state;
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.tool = "bash";
+  tool.input = "printf hi";
+  tool.output = "hi";
+  state.entries.push_back(tool);
+  TranscriptEntry answer;
+  answer.kind = EntryKind::Assistant;
+  answer.text = "intro\n> quoted line\n> second line\noutro";
+  state.entries.push_back(answer);
+
+  CopyPicker picker;
+  REQUIRE(picker.open(state));
+  REQUIRE(picker.items().size() == 4);
+  REQUIRE(picker.items()[0].label.rfind("answer ·", 0) == 0);
+  REQUIRE(picker.items()[1].label.rfind("quote ·", 0) == 0);
+  REQUIRE(picker.items()[1].text == "quoted line\nsecond line");
+  REQUIRE(picker.items()[2].label.rfind("command · bash", 0) == 0);
+  REQUIRE(picker.items()[2].text == "printf hi");
+  REQUIRE(picker.items()[3].label.rfind("tool · bash", 0) == 0);
+}
+
 TEST_CASE("copy picker flattens read output") {
   AppState state;
   TranscriptEntry read;

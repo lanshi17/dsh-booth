@@ -6,6 +6,7 @@
 #include <cctype>
 
 #include "interaction/clipboard.hpp"
+#include "interaction/tool_parse.hpp"
 #include "interaction/view.hpp"
 
 namespace booth {
@@ -37,6 +38,29 @@ void collect_code(const std::string& text, std::vector<CopyItem>& items) {
   }
 }
 
+void collect_quotes(const std::string& text, std::vector<CopyItem>& items) {
+  std::istringstream input(text);
+  std::string quote;
+  std::string line;
+  const auto flush = [&] {
+    if (quote.empty()) return;
+    items.push_back({"quote · " + first_line(quote, 48), quote});
+    quote.clear();
+  };
+  while (std::getline(input, line)) {
+    const auto first = line.find_first_not_of(" \t");
+    if (first != std::string::npos && line[first] == '>') {
+      if (!quote.empty()) quote += '\n';
+      std::string rest = line.substr(first + 1);
+      if (!rest.empty() && rest.front() == ' ') rest.erase(0, 1);
+      quote += rest;
+    } else {
+      flush();
+    }
+  }
+  flush();
+}
+
 std::string lower_copy(const std::string& text) {
   std::string out(text);
   for (char& ch : out) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -64,6 +88,11 @@ bool CopyPicker::open(const AppState& state) {
   items_.clear();
   for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
     if (entry->kind == EntryKind::Tool) {
+      if (!entry->input.empty() && is_shell_tool(entry->tool)) {
+        items_.push_back({"command · " + entry->tool + " · " +
+                              first_line(entry->input, 48),
+                          entry->input});
+      }
       const bool read = entry->tool == "read" || entry->tool == "read_file";
       const std::string text = read ? read_output_text(entry->output) : entry->output;
       if (text.empty()) continue;
@@ -76,6 +105,7 @@ bool CopyPicker::open(const AppState& state) {
       items_.push_back({"answer · " + first_line(entry->text, 48), entry->text});
     }
     collect_code(entry->text, items_);
+    collect_quotes(entry->text, items_);
   }
   visible_ = !items_.empty();
   index_ = 0;
