@@ -14,6 +14,7 @@ struct TableCell {
   bool bold{false};
   bool code{false};
   bool italic{false};
+  bool strike{false};
 };
 
 enum class TableAlign { Left, Right, Center };

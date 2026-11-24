@@ -595,3 +595,33 @@ TEST_CASE("rust fences highlight keywords and ignore lifetimes") {
   REQUIRE(lifetime);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("table cells keep strike and image links") {
+  const auto cells = styled_cells({"~~gone~~", "![diagram](https://x.test/a.png)"});
+  REQUIRE(cells.size() == 2);
+  REQUIRE(cells[0].text == "gone");
+  REQUIRE(cells[0].strike);
+  REQUIRE(cells[1].text == "diagram");
+  REQUIRE(cells[1].href == "https://x.test/a.png");
+
+  ftxui::Terminal::SetFallbackSize({60, 10});
+  std::vector<std::vector<TableCell>> rows{{TableCell{"head", "", false, false, false, false}},
+                                           cells};
+  auto view = table_view(rows, {}, 60);
+  ftxui::Screen screen(60, 10);
+  ftxui::Render(screen, std::move(view));
+  bool struck = false;
+  bool linked = false;
+  for (int y = 0; y < 10; ++y) {
+    for (int x = 0; x < 60; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "g" && cell.strikethrough) struck = true;
+      if (cell.hyperlink != 0 && screen.Hyperlink(cell.hyperlink) == "https://x.test/a.png") {
+        linked = true;
+      }
+    }
+  }
+  REQUIRE(struck);
+  REQUIRE(linked);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

@@ -149,6 +149,9 @@ TableCell styled_cell(std::string raw) {
   } else if (wrapped("*", "*") || wrapped("_", "_")) {
     cell.italic = true;
     raw = raw.substr(1, raw.size() - 2);
+  } else if (wrapped("~~", "~~")) {
+    cell.strike = true;
+    raw = raw.substr(2, raw.size() - 4);
   } else if (!raw.empty() && raw.front() == '[') {
     const auto close = raw.find("](");
     const auto end = close == std::string::npos ? std::string::npos : raw.find(')', close + 2);
@@ -163,6 +166,10 @@ TableCell styled_cell(std::string raw) {
     const auto close = raw.find("](");
     const auto end = close == std::string::npos ? std::string::npos : raw.find(')', close + 2);
     if (close != std::string::npos && end != std::string::npos) {
+      std::string target = raw.substr(close + 2, end - close - 2);
+      const auto title = target.find_first_of(" \t");
+      if (title != std::string::npos) target = target.substr(0, title);
+      cell.href = decode_html_entities(target);
       raw = raw.substr(2, close - 2);
     }
   }
@@ -327,6 +334,7 @@ ftxui::Element table_view(const std::vector<std::vector<TableCell>>& rows,
         }
         if (header || cell.bold) part = part | ftxui::bold;
         if (cell.italic) part = part | ftxui::italic;
+        if (cell.strike) part = part | ftxui::strikethrough;
         if (!cell.href.empty()) part = ftxui::hyperlink(cell.href, std::move(part));
         line.push_back(std::move(part));
         line.push_back(ftxui::text("│") | ftxui::color(border));
