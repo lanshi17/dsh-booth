@@ -32,6 +32,10 @@ bool view_toggle(const ftxui::Event& event, const KeyBindings& keys, bool& expan
 /// Answers the pending permission with the requested option kind.
 void answer_permission_choice(Kernel& kernel, AppState& state, const char* kind);
 
+/// Handles a key while a permission is pending, including Ctrl+O expansion and armed Enter.
+void handle_permission_key(const ftxui::Event& event, AppState& state, Kernel& kernel,
+                           const KeyBindings& keys);
+
 /// The next reasoning choice after the current one, or nullopt when none are offered.
 std::optional<ModelChoice> next_reasoning(const ReasoningOptions& options);
 

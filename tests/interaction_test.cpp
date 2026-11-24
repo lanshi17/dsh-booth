@@ -13,6 +13,7 @@
 #include "interaction/commands_ui.hpp"
 #include "interaction/error_view.hpp"
 #include "interaction/thought_view.hpp"
+#include "subagent/kernel.hpp"
 #include "interaction/tool_diff.hpp"
 #include "interaction/tui_internal.hpp"
 #include "interaction/state.hpp"
@@ -20,6 +21,21 @@
 using namespace booth;
 
 namespace {
+
+class NullKernel final : public Kernel {
+ public:
+  Result<acp::Json> request(std::string_view, const acp::Json&, std::chrono::milliseconds) override {
+    return std::unexpected(Error{Layer::Protocol, "unused", std::nullopt});
+  }
+  void notify(std::string_view, const acp::Json&) override {}
+  Result<void> answer_permission(std::string_view request_id,
+                                 const std::optional<std::string>& option_id) override {
+    answered = std::string(request_id) + ":" + option_id.value_or("cancelled");
+    return {};
+  }
+  [[nodiscard]] bool connected() const override { return true; }
+  std::string answered;
+};
 
 std::string strip_ansi(const std::string& input) {
   std::string out;
@@ -175,6 +191,53 @@ TEST_CASE("the error banner caps long details and keeps a retry hint") {
   REQUIRE(text.find("detail 4") != std::string::npos);
   REQUIRE(text.find("detail 5") == std::string::npos);
   REQUIRE(text.find("… +4 lines") != std::string::npos);
+}
+
+TEST_CASE("permission Enter arms and Ctrl+O expands details") {
+  AppState state;
+  PermissionRequest request;
+  request.id = RequestId{"p-1"};
+  request.session = SessionId{"s-1"};
+  request.tool = "bash";
+  request.raw_input = R"({"command":"ls"})";
+  request.options = {PermissionOption{"allow", "Allow once", "allow_once"},
+                     PermissionOption{"deny", "Reject", "reject_once"}};
+  state.permission = request;
+  KeyBindings keys;
+  NullKernel kernel;
+
+  handle_permission_key(ftxui::Event::Return, state, kernel, keys);
+  REQUIRE(state.permission_armed);
+  REQUIRE(state.permission.has_value());
+
+  handle_permission_key(ftxui::Event::Character("\x0f"), state, kernel, keys);
+  REQUIRE(state.permission_expanded);
+
+  state.permission_armed_at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+  handle_permission_key(ftxui::Event::Return, state, kernel, keys);
+  REQUIRE_FALSE(state.permission.has_value());
+  REQUIRE(kernel.answered == "p-1:allow");
+}
+
+TEST_CASE("expanded permission cards reveal the full diff") {
+  PermissionRequest request;
+  request.tool = "edit";
+  request.options = {PermissionOption{"allow", "Allow once", "allow_once"}};
+  std::string raw = R"({"file_path":"src/a.cpp","old_string":")";
+  for (int index = 1; index <= 12; ++index) {
+    raw += "old " + std::to_string(index) + "\\n";
+  }
+  raw += R"(","new_string":"new"})";
+  request.raw_input = raw;
+  auto collapsed = permission_view(request, nullptr, false);
+  ftxui::Screen screen(70, 24);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string compact = strip_ansi(screen.ToString());
+  REQUIRE(compact.find("… +") != std::string::npos);
+  auto expanded = permission_view(request, nullptr, true);
+  ftxui::Screen full(70, 30);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(strip_ansi(full.ToString()).find("old 12") != std::string::npos);
 }
 
 TEST_CASE("notice assignment clears the error style") {

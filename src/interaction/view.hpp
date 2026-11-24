@@ -95,7 +95,8 @@ int help_max_offset();
 ftxui::Element help_view(int offset, MouseRouter* mouse = nullptr);
 
 /// The full-screen permission card.
-ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse = nullptr);
+ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse = nullptr,
+                               bool expanded = false);
 
 /// One line of phase, session and model, for `/status`.
 std::string status_text(const AppState& state);

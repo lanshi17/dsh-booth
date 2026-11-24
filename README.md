@@ -67,7 +67,8 @@ expression prints its value); neither is sent to the model or saved as prompt hi
 the editor. Drafts taller than eight rows scroll internally with a `↑N` marker; a permission card
 stays above the composer with the transcript visible, reuses the matching tool card's title and
 input, and shows only the choices dsh advertised
-(`y` once, `a` always, `n` deny, `d` deny always when offered).
+(`y` once, `a` always, `n` deny, `d` deny always when offered). `Enter` arms an allow and requires a
+second press after half a second; `Ctrl+O` expands the full diff.
 Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
 `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and

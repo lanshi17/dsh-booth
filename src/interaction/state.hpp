@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -52,6 +53,9 @@ struct AppState {
   ReasoningOptions reasoning;
   bool busy{false};
   std::optional<PermissionRequest> permission;
+  bool permission_expanded{false};
+  bool permission_armed{false};
+  std::chrono::steady_clock::time_point permission_armed_at{};
   std::vector<TodoItem> todos;
   Notice notice;
   std::string error;

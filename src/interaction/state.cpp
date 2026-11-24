@@ -224,6 +224,8 @@ void apply(AppState& state, const Event& event) {
       }
     }
     state.permission = std::move(pending);
+    state.permission_expanded = false;
+    state.permission_armed = false;
     return;
   }
 

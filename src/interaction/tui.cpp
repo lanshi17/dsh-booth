@@ -126,7 +126,7 @@ class Root : public ComponentBase {
       if (event == ftxui::Event::Escape || event == ftxui::Event::Return || event == ftxui::Event::Character('q')) state_.help = false;
       return true;
     }
-    if (state_.permission) { if (const char* kind = booth::permission_kind(event, *state_.permission)) booth::answer_permission_choice(supervisor_, state_, kind); return true; }
+    if (state_.permission) { booth::handle_permission_key(event, state_, supervisor_, keys_); return true; }
     if (matches_chord(keys_.reasoning, event)) {
       const auto choice = booth::next_reasoning(state_.reasoning);
       if (!choice) {
@@ -263,7 +263,7 @@ class Root : public ComponentBase {
     }
     Elements view;
     view.push_back(ftxui::vbox(std::move(lines)) | ftxui::flex);
-    if (state_.permission) view.push_back(booth::permission_view(*state_.permission, &mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center);
+    if (state_.permission) view.push_back(booth::permission_view(*state_.permission, &mouse_, state_.permission_expanded) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center);
     if (!state_.notice.empty()) view.push_back(ftxui::paragraph(state_.notice.text) | ftxui::color(state_.notice.error ? ftxui::Color::RGB(255, 95, 95) : ftxui::Color::RGB(150, 150, 150)));
     if (window.scroll > 0) {
       view.push_back(ftxui::text("  ↑ " + std::to_string(window.scroll) +

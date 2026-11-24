@@ -27,7 +27,8 @@ std::string hrule(std::size_t count) {
 
 }  // namespace
 
-ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse) {
+ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse,
+                               bool expanded) {
   ftxui::Elements body;
   std::string heading = "permission: " + request.tool;
   if (!request.title.empty() && request.title != request.tool) heading += " · " + request.title;
@@ -42,7 +43,7 @@ ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mo
       std::size_t shown = 0;
       std::size_t hidden = 0;
       for (const auto& line : diff) {
-        if (shown >= 8) {
+        if (!expanded && shown >= 8) {
           ++hidden;
           continue;
         }

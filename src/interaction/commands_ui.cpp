@@ -102,6 +102,42 @@ bool view_toggle(const ftxui::Event& event, const KeyBindings& keys, bool& expan
   return false;
 }
 
+void handle_permission_key(const ftxui::Event& event, AppState& state, Kernel& kernel,
+                           const KeyBindings& keys) {
+  if (!state.permission) return;
+  if (matches_chord(keys.tools, event)) {
+    state.permission_expanded = !state.permission_expanded;
+    return;
+  }
+  if (event == ftxui::Event::Return) {
+    const char* allow = nullptr;
+    for (const auto& option : state.permission->options) {
+      if (option.kind == "allow_once") allow = option.kind.c_str();
+    }
+    if (allow == nullptr) return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!state.permission_armed) {
+      state.permission_armed = true;
+      state.permission_armed_at = now;
+      state.notice = "press Enter again to allow";
+      return;
+    }
+    if (now - state.permission_armed_at < std::chrono::milliseconds(500)) {
+      state.notice = "release, then press Enter again";
+      return;
+    }
+    answer_permission_choice(kernel, state, allow);
+    state.permission_expanded = false;
+    state.permission_armed = false;
+    return;
+  }
+  if (const char* kind = permission_kind(event, *state.permission)) {
+    answer_permission_choice(kernel, state, kind);
+    state.permission_expanded = false;
+    state.permission_armed = false;
+  }
+}
+
 void answer_permission_choice(Kernel& kernel, AppState& state, const char* kind) {
   if (!state.permission || kind == nullptr) return;
   const auto& request = *state.permission;
