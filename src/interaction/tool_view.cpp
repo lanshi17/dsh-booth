@@ -12,6 +12,7 @@
 #include "interaction/fetch_view.hpp"
 #include "interaction/json_view.hpp"
 #include "interaction/skill_view.hpp"
+#include "interaction/spill_view.hpp"
 #include "interaction/patch_view.hpp"
 #include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
@@ -71,6 +72,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const std::optional<SkillResult> skill =
       entry.tool == "skill" && entry.status != "failed" ? parse_skill(entry) : std::nullopt;
   std::string output = entry.output;
+  const std::optional<SpillNotice> spill = take_spill_notice(output);
   const ShellStatus shell_status = shell_tool ? take_shell_status(output) : ShellStatus{};
   const std::vector<ReadEnvelope> reads =
       read_tool ? parse_read_envelopes(entry.output) : std::vector<ReadEnvelope>{};
@@ -566,6 +568,9 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
+  }
+  if (spill && !grep_result && !glob_result && !web_result && !web_fetch && !patch && !skill) {
+    rows.push_back(spill_notice_row(*spill));
   }
   std::string footer = entry.status.empty() ? "running" : entry.status;
   if (entry.finished > entry.started && entry.started != std::chrono::system_clock::time_point{}) {

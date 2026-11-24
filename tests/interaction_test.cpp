@@ -674,6 +674,31 @@ TEST_CASE("generic JSON output renders as a pretty tree") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("spill notices surface omitted bytes and the recovery path") {
+  ftxui::Terminal::SetFallbackSize({100, 24});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "goal";
+  entry.status = "completed";
+  for (int index = 1; index <= 20; ++index) {
+    entry.output += "line " + std::to_string(index) + "\n";
+  }
+  entry.output +=
+      "\n(Omitted 12345 bytes. Full formatted result stored at: /tmp/session/spill.txt. "
+      "Use read with offset/limit, or grep this path to search within it.)";
+
+  auto view = tool_view(entry, false);
+  ftxui::Screen screen(100, 24);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("Omitted 12345 bytes") != std::string::npos);
+  REQUIRE(text.find("/tmp/session/spill.txt") != std::string::npos);
+  REQUIRE(text.find("line 1") != std::string::npos);
+  REQUIRE(text.find("line 20") == std::string::npos);
+  REQUIRE(text.find("… +8 lines · Ctrl+O") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("skill cards show the base directory and instructions") {
   ftxui::Terminal::SetFallbackSize({100, 24});
   TranscriptEntry entry;

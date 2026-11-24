@@ -384,6 +384,27 @@ std::optional<SkillResult> parse_skill(const TranscriptEntry& entry) {
   return result;
 }
 
+std::optional<SpillNotice> take_spill_notice(std::string& text) {
+  const auto end = text.find_last_not_of("\r\n");
+  if (end == std::string::npos || text[end] != ')') return std::nullopt;
+  const auto newline = text.find_last_of('\n', end);
+  const std::size_t start = newline == std::string::npos ? 0 : newline + 1;
+  const std::string line = text.substr(start, end - start + 1);
+  const std::string location = " Full formatted result stored at: ";
+  const auto marker = line.find(location, 1);
+  if (line.empty() || line.front() != '(' || marker == std::string::npos) return std::nullopt;
+  const std::size_t path_start = marker + location.size();
+  const auto path_end = line.find(". ", path_start);
+  if (path_end == std::string::npos) return std::nullopt;
+  SpillNotice notice;
+  notice.summary = line.substr(1, marker - 1);
+  notice.path = line.substr(path_start, path_end - path_start);
+  notice.hint = line.substr(path_end + 2, line.size() - path_end - 3);
+  text.erase(start);
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+  return notice;
+}
+
 std::optional<std::string> pretty_json(const std::string& output) {
   const Json parsed = Json::parse(output, nullptr, false);
   if (parsed.is_discarded() || (!parsed.is_object() && !parsed.is_array())) return std::nullopt;

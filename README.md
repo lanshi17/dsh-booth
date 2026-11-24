@@ -48,8 +48,8 @@ full-width frames with input, output, diff statistics and duration; shell cards 
 output lines and the exit status, grep cards group matches by file, glob cards group paths by
 directory, web search cards show the answer and clickable sources, web fetch cards show the URL,
 HTTP status, preview and truncation notice, skill cards show the base directory and instructions,
-read cards use a dim line-number gutter, generic JSON tool output pretty-prints as an indented tree,
-and a diff shows old/new line
+spill notices stay visible with omitted bytes and the recovery path, read cards use a dim line-number
+gutter, generic JSON tool output pretty-prints as an indented tree, and a diff shows old/new line
 numbers, stopping at 40 lines until `Ctrl+O`; edit/write cards title the path with +/− stats, and
 `apply_patch` cards split per file with A/M/D labels and per-file +/− stats. `/copy` opens a
 filterable picker over answers, fenced code, blockquotes, tool

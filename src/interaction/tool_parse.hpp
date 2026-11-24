@@ -87,6 +87,15 @@ struct SkillResult {
 
 std::optional<SkillResult> parse_skill(const TranscriptEntry& entry);
 
+struct SpillNotice {
+  std::string summary;
+  std::string path;
+  std::string hint;
+};
+
+/// Consume a trailing spill-policy omission notice and return its path.
+std::optional<SpillNotice> take_spill_notice(std::string& text);
+
 /// Pretty-print a complete JSON object or array; empty for primitives or invalid JSON.
 std::optional<std::string> pretty_json(const std::string& output);
 
