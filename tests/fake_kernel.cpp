@@ -207,6 +207,36 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("readgroup") != std::string::npos) {
+        const auto read = [&](const std::string& call_id, const std::string& path,
+                              const std::string& body) {
+          send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+                {"params", {{"sessionId", "s-1"},
+                            {"update", {{"sessionUpdate", "tool_call"},
+                                        {"toolCallId", call_id},
+                                        {"title", path},
+                                        {"name", "read"},
+                                        {"status", "pending"}}}}}});
+          send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+                {"params", {{"sessionId", "s-1"},
+                            {"update", {{"sessionUpdate", "tool_call_update"},
+                                        {"toolCallId", call_id},
+                                        {"status", "completed"},
+                                        {"content",
+                                         json::array({json{{"type", "content"},
+                                                           {"content", {{"type", "text"},
+                                                                        {"text", body}}}}})}}}}}});
+        };
+        read("t-read-a", "src/a.cpp",
+             "<path>src/a.cpp</path>\n<type>file</type>\n<content>\n1: one\n2: two\n"
+             "(End of file - total 2 lines)\n</content>");
+        read("t-read-b", "src/b.cpp",
+             "<path>src/b.cpp</path>\n<type>file</type>\n<content>\n1: only\n"
+             "(End of file - total 1 lines)\n</content>");
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("longtool") != std::string::npos) {
         std::string lines;
         for (int index = 1; index <= 20; ++index) {

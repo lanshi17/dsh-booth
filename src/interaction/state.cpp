@@ -13,6 +13,20 @@ SessionRow* find_session(std::vector<SessionRow>& sessions, const SessionId& id)
   return nullptr;
 }
 
+bool is_read_tool(const TranscriptEntry& entry) {
+  return entry.kind == EntryKind::Tool &&
+         (entry.tool == "read" || entry.tool == "read_file");
+}
+
+std::size_t count_reads(const std::string& output) {
+  std::size_t count = 0;
+  for (std::size_t pos = output.find("<path>"); pos != std::string::npos;
+       pos = output.find("<path>", pos + 6)) {
+    ++count;
+  }
+  return count;
+}
+
 }  // namespace
 
 std::string active_activity(const AppState& state) {
@@ -58,21 +72,33 @@ void apply(AppState& state, const Event& event) {
     }
     finish_thought();
     if (!entry->id.empty()) {
-      for (auto& existing : state.entries) {
-        if (existing.id == entry->id && existing.kind == entry->kind) {
-          const auto started = existing.started;
-          const std::string input = existing.input;
-          const std::string raw_input = existing.raw_input;
-          const std::string text = existing.text;
-          const std::string tool = existing.tool;
-          existing = *entry;
-          if (existing.started == std::chrono::system_clock::time_point{}) existing.started = started;
-          if (existing.input.empty()) existing.input = input;
-          if (existing.raw_input.empty()) existing.raw_input = raw_input;
-          if (existing.text.empty()) existing.text = text;
-          if (existing.tool.empty()) existing.tool = tool;
-          return;
+      for (std::size_t index = 0; index < state.entries.size(); ++index) {
+        TranscriptEntry& existing = state.entries[index];
+        if (existing.id != entry->id || existing.kind != entry->kind) continue;
+        const auto started = existing.started;
+        const std::string input = existing.input;
+        const std::string raw_input = existing.raw_input;
+        const std::string text = existing.text;
+        const std::string tool = existing.tool;
+        existing = *entry;
+        if (existing.started == std::chrono::system_clock::time_point{}) existing.started = started;
+        if (existing.input.empty()) existing.input = input;
+        if (existing.raw_input.empty()) existing.raw_input = raw_input;
+        if (existing.text.empty()) existing.text = text;
+        if (existing.tool.empty()) existing.tool = tool;
+        if (index > 0 && existing.status == "completed") {
+          TranscriptEntry& previous = state.entries[index - 1];
+          if (is_read_tool(previous) && previous.status == "completed" &&
+              is_read_tool(existing) && !existing.output.empty()) {
+            previous.output += "\n" + existing.output;
+            previous.finished = existing.finished;
+            const std::size_t reads = count_reads(previous.output);
+            previous.text = "Read " + std::to_string(reads) +
+                            (reads == 1 ? " file" : " files");
+            state.entries.erase(state.entries.begin() + static_cast<std::ptrdiff_t>(index));
+          }
         }
+        return;
       }
     }
     state.entries.push_back(*entry);

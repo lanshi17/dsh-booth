@@ -82,6 +82,10 @@ add_test(NAME pty_read_card
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_read_card.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_read_group
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_read_group.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_image_placeholder
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_image_placeholder.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

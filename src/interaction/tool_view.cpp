@@ -86,15 +86,32 @@ ReadEnvelope parse_read_envelope(const std::string& output) {
   return envelope;
 }
 
+std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
+  std::vector<ReadEnvelope> envelopes;
+  std::size_t start = output.find("<path>");
+  while (start != std::string::npos) {
+    const std::size_t next = output.find("<path>", start + 6);
+    ReadEnvelope envelope =
+        parse_read_envelope(output.substr(start, next == std::string::npos ? std::string::npos
+                                                                          : next - start));
+    if (!envelope.path.empty() || !envelope.rows.empty() || !envelope.footer.empty()) {
+      envelopes.push_back(std::move(envelope));
+    }
+    start = next;
+  }
+  return envelopes;
+}
+
 }  // namespace
 
 ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const ftxui::Color border = theme_color("border", ftxui::Color::RGB(108, 108, 108));
   const bool read_tool = entry.tool == "read" || entry.tool == "read_file";
-  const ReadEnvelope read = read_tool ? parse_read_envelope(entry.output) : ReadEnvelope{};
-  const bool has_envelope = read_tool && (!read.rows.empty() || !read.footer.empty());
+  const std::vector<ReadEnvelope> reads =
+      read_tool ? parse_read_envelopes(entry.output) : std::vector<ReadEnvelope>{};
+  const bool has_envelope = !reads.empty();
   std::string title = entry.text.empty() ? entry.tool : entry.text;
-  if (!read.path.empty()) title = read.path;
+  if (reads.size() == 1 && !reads[0].path.empty()) title = reads[0].path;
   const int columns = ftxui::Terminal::Size().dimx;
   const std::size_t content_width =
       columns > 12 ? static_cast<std::size_t>(columns - 8) : 20;
@@ -142,18 +159,36 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     }));
     std::size_t shown = 0;
     std::size_t hidden = 0;
-    if (has_envelope) {
+    const auto push_output = [&](const std::string& text, ftxui::Color color, bool dim) {
+      for (const auto& wrapped : wrap_cells(text, content_width)) {
+        ftxui::Element line = ftxui::text(wrapped) | ftxui::flex | ftxui::color(color);
+        if (dim) line = line | ftxui::dim;
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│ ") | ftxui::color(border),
+            std::move(line),
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+      }
+    };
+    if (has_envelope && reads.size() == 1) {
+      const ReadEnvelope& read = reads[0];
       const std::size_t limit = expanded ? read.rows.size() : 3;
       for (; shown < std::min(limit, read.rows.size()); ++shown) {
-        for (const auto& wrapped : wrap_cells(read.rows[shown], content_width)) {
-          rows.push_back(ftxui::hbox({
-              ftxui::text("│ ") | ftxui::color(border),
-              ftxui::text(wrapped) | ftxui::flex | ftxui::color(kText),
-              ftxui::text(" │") | ftxui::color(border),
-          }));
-        }
+        push_output(read.rows[shown], kText, false);
       }
       hidden = read.rows.size() - shown;
+    } else if (has_envelope && !expanded) {
+      for (const auto& read : reads) {
+        push_output(read.path + " · " + std::to_string(read.rows.size()) + " lines", kText,
+                    false);
+      }
+      push_output("… Ctrl+O for file contents", kDim, true);
+    } else if (has_envelope) {
+      for (const auto& read : reads) {
+        push_output(read.path, kText, false);
+        for (const auto& row : read.rows) push_output(row, kText, false);
+        if (!read.footer.empty()) push_output(read.footer, kDim, true);
+      }
     } else {
       std::istringstream output(entry.output);
       std::string line;
@@ -180,10 +215,10 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
-    if (has_envelope && !read.footer.empty()) {
+    if (has_envelope && reads.size() == 1 && !reads[0].footer.empty()) {
       rows.push_back(ftxui::hbox({
           ftxui::text("│ ") | ftxui::color(border),
-          ftxui::text(read.footer) | ftxui::dim | ftxui::flex,
+          ftxui::text(reads[0].footer) | ftxui::dim | ftxui::flex,
           ftxui::text(" │") | ftxui::color(border),
       }));
     }

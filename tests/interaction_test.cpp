@@ -70,6 +70,59 @@ TEST_CASE("a tool entry is updated in place by id") {
   REQUIRE(state.entries[0].status == "completed");
 }
 
+TEST_CASE("consecutive read results merge into one card") {
+  AppState state;
+  const auto read_event = [](const std::string& id, const std::string& path,
+                             const std::string& body, const std::string& status) {
+    TranscriptEntry entry;
+    entry.kind = EntryKind::Tool;
+    entry.id = id;
+    entry.tool = "read";
+    entry.text = path;
+    entry.status = status;
+    if (status == "completed") {
+      entry.output = "<path>" + path + "</path>\n<type>file</type>\n<content>\n" + body +
+                     "\n(End of file)\n</content>";
+    }
+    return entry;
+  };
+  apply(state, Event{read_event("r-1", "src/a.cpp", "1: one", "pending")});
+  apply(state, Event{read_event("r-1", "src/a.cpp", "1: one", "completed")});
+  apply(state, Event{read_event("r-2", "src/b.cpp", "1: two", "pending")});
+  apply(state, Event{read_event("r-2", "src/b.cpp", "1: two", "completed")});
+  REQUIRE(state.entries.size() == 1);
+  REQUIRE(state.entries[0].text == "Read 2 files");
+  REQUIRE(state.entries[0].output.find("src/a.cpp") != std::string::npos);
+  REQUIRE(state.entries[0].output.find("src/b.cpp") != std::string::npos);
+}
+
+TEST_CASE("grouped read cards collapse to one line per file") {
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "read";
+  entry.text = "Read 2 files";
+  entry.output =
+      "<path>src/a.cpp</path>\n<type>file</type>\n<content>\n1: one\n2: two\n"
+      "(End of file - total 2 lines)\n</content>\n"
+      "<path>src/b.cpp</path>\n<type>file</type>\n<content>\n1: only\n"
+      "(End of file - total 1 lines)\n</content>";
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(80, 14);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Read 2 files") != std::string::npos);
+  REQUIRE(text.find("src/a.cpp · 2 lines") != std::string::npos);
+  REQUIRE(text.find("src/b.cpp · 1 lines") != std::string::npos);
+  REQUIRE(text.find("1: one") == std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(80, 20);
+  ftxui::Render(full, std::move(expanded));
+  const std::string all = full.ToString();
+  REQUIRE(all.find("1: one") != std::string::npos);
+  REQUIRE(all.find("1: only") != std::string::npos);
+}
+
 TEST_CASE("permission requests open a modal and a problem is a notice") {
   AppState state;
   PermissionRequest request;
