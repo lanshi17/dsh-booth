@@ -310,6 +310,11 @@ class Parser {
       const std::string denominator = group_or_atom(index);
       return fraction(numerator, denominator);
     }
+    if (name == "binom" || name == "dbinom" || name == "tbinom") {
+      const std::string numerator = group_or_atom(index);
+      const std::string denominator = group_or_atom(index);
+      return "C(" + numerator + "," + denominator + ")";
+    }
     if (name == "sqrt") {
       skip_spaces(index);
       std::string root;

@@ -115,6 +115,22 @@ std::vector<std::string> fraction_lines(const std::string& numerator, const std:
   return out;
 }
 
+std::vector<std::string> binomial_lines(const std::string& numerator,
+                                        const std::string& denominator) {
+  const auto body = fraction_lines(numerator, denominator);
+  int width = 0;
+  for (const auto& line : body) width = std::max(width, display_width(line));
+  std::vector<std::string> out;
+  for (std::size_t index = 0; index < body.size(); ++index) {
+    const bool top = index == 0;
+    const bool bottom = index + 1 == body.size();
+    const char* left = top ? "⎛" : bottom ? "⎝" : "⎜";
+    const char* right = top ? "⎞" : bottom ? "⎠" : "⎟";
+    out.push_back(std::string(left) + " " + centered(body[index], width) + " " + right);
+  }
+  return out;
+}
+
 struct Delimiters {
   const char* top_left;
   const char* middle_left;
@@ -192,6 +208,16 @@ std::vector<std::string> math_block_lines(std::string_view source) {
     if (read_group(trimmed, index, numerator) && read_group(trimmed, index, denominator) &&
         index == trimmed.size()) {
       return fraction_lines(numerator, denominator);
+    }
+  }
+  for (const std::string_view command : {"\\binom", "\\dbinom", "\\tbinom"}) {
+    if (!starts_with(trimmed, command)) continue;
+    std::size_t index = command.size();
+    std::string numerator;
+    std::string denominator;
+    if (read_group(trimmed, index, numerator) && read_group(trimmed, index, denominator) &&
+        index == trimmed.size()) {
+      return binomial_lines(numerator, denominator);
     }
   }
   if (starts_with(trimmed, "\\sqrt")) {

@@ -101,3 +101,14 @@ TEST_CASE("latex accents attach combining marks") {
   REQUIRE(latex_to_unicode("\\tilde{x}") == "x\u0303");
   REQUIRE(latex_to_unicode("\\overline{AB}") == "AB\u0304");
 }
+
+TEST_CASE("latex binomials render inline and stacked") {
+  REQUIRE(latex_to_unicode("\\binom{n}{k}") == "C(n,k)");
+  const auto lines = math_block_lines("\\binom{n}{k}");
+  REQUIRE(lines.size() == 3);
+  REQUIRE(lines[0].find("⎛") != std::string::npos);
+  REQUIRE(lines[0].find("n") != std::string::npos);
+  REQUIRE(lines[1].find("─") != std::string::npos);
+  REQUIRE(lines[2].find("⎝") != std::string::npos);
+  REQUIRE(lines[2].find("k") != std::string::npos);
+}
