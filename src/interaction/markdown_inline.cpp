@@ -23,6 +23,20 @@ bool starts_with(std::string_view text, std::string_view prefix) {
   return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
 }
 
+bool is_html_tag(const std::string& inner) {
+  std::size_t index = !inner.empty() && inner.front() == '/' ? 1 : 0;
+  if (index >= inner.size() || !std::isalpha(static_cast<unsigned char>(inner[index]))) {
+    return false;
+  }
+  while (index < inner.size() &&
+         (std::isalnum(static_cast<unsigned char>(inner[index])) || inner[index] == '-' ||
+          inner[index] == '_')) {
+    ++index;
+  }
+  return index == inner.size() || inner[index] == ' ' || inner[index] == '\t' ||
+         inner[index] == '/';
+}
+
 bool is_autolink_target(const std::string& text) {
   return starts_with(text, "http://") || starts_with(text, "https://") ||
          starts_with(text, "ftp://") || starts_with(text, "www.") ||
@@ -141,6 +155,13 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
           if (strike) link = link | ftxui::strikethrough;
           if (dim) link = link | ftxui::dim;
           parts.push_back(ftxui::hyperlink("mailto:" + inner, std::move(link)));
+          index = close + 1;
+          continue;
+        }
+        if (is_html_tag(inner)) {
+          if (inner == "br" || inner == "/br" || inner == "br/" || inner == "/br/") {
+            segment += ' ';
+          }
           index = close + 1;
           continue;
         }

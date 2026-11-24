@@ -633,3 +633,11 @@ TEST_CASE("blockquotes keep lazy continuation lines") {
   REQUIRE(text.find("│ continued line") != std::string::npos);
   REQUIRE(text.find("│ outside line") == std::string::npos);
 }
+
+TEST_CASE("inline html tags are hidden and br becomes a space") {
+  const std::string text = render_markdown(
+      "hello <b>bold</b><br>next <span class=\"x\">span</span>\n", 60, 10);
+  REQUIRE(text.find("hello bold next span") != std::string::npos);
+  REQUIRE(text.find("<b>") == std::string::npos);
+  REQUIRE(text.find("<span") == std::string::npos);
+}
