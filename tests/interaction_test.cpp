@@ -499,3 +499,13 @@ TEST_CASE("export strips read envelopes") {
   REQUIRE(markdown.find("1: one") != std::string::npos);
   REQUIRE(markdown.find("<content>") == std::string::npos);
 }
+
+TEST_CASE("permission card shows a shell prompt") {
+  PermissionRequest request;
+  request.tool = "bash";
+  request.detail = R"({"command":"rm -rf build"})";
+  auto view = permission_view(request);
+  ftxui::Screen screen(70, 12);
+  ftxui::Render(screen, std::move(view));
+  REQUIRE(screen.ToString().find("$ rm -rf build") != std::string::npos);
+}

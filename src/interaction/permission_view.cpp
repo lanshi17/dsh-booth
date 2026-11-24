@@ -53,7 +53,8 @@ ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mo
     } else {
       const auto parsed = nlohmann::json::parse(request.detail, nullptr, false);
       if (!parsed.is_discarded() && parsed.contains("command") && parsed["command"].is_string()) {
-        body.push_back(ftxui::paragraph(parsed["command"].get<std::string>()));
+        const std::string command = parsed["command"].get<std::string>();
+        body.push_back(ftxui::paragraph(request.tool == "bash" ? "$ " + command : command));
       } else {
         body.push_back(ftxui::paragraph(request.detail));
       }
