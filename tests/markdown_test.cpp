@@ -351,3 +351,32 @@ TEST_CASE("markdown leaves non-numeric tables uncharted") {
   const std::string text = render_markdown(source, 60, 14);
   REQUIRE(text.find("█") == std::string::npos);
 }
+
+TEST_CASE("markdown setext headings, closing hashes and plus bullets") {
+  auto view = markdown_view("Title\n===\nSub\n---\n# Hash ###\n+ plus\n", false);
+  ftxui::Screen screen(60, 16);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Title") != std::string::npos);
+  REQUIRE(text.find("Sub") != std::string::npos);
+  REQUIRE(text.find("Hash") != std::string::npos);
+  REQUIRE(text.find("plus") != std::string::npos);
+  REQUIRE(text.find("===") == std::string::npos);
+  REQUIRE(text.find("###") == std::string::npos);
+  REQUIRE(text.find("+ plus") == std::string::npos);
+
+  bool h1 = false;
+  bool h2 = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "T" && cell.underlined) h1 = true;
+      if (cell.character == "S" &&
+          cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) {
+        h2 = true;
+      }
+    }
+  }
+  REQUIRE(h1);
+  REQUIRE(h2);
+}

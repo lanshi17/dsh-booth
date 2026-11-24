@@ -154,6 +154,47 @@ bool is_math_environment(std::string_view env) {
   return false;
 }
 
+ftxui::Element heading_element(std::size_t level, std::string title) {
+  while (!title.empty() && title.back() == ' ') title.pop_back();
+  while (!title.empty() && title.back() == '#') title.pop_back();
+  while (!title.empty() && title.back() == ' ') title.pop_back();
+  ftxui::Element heading = ftxui::text(" " + title) | ftxui::bold;
+  if (level == 1) {
+    heading = heading | ftxui::color(kAccent) | ftxui::underlined;
+  } else if (level == 2) {
+    heading = heading | ftxui::color(kAccent);
+  } else if (level == 3) {
+    heading = heading | ftxui::color(kText);
+  } else {
+    heading = heading | ftxui::color(kDim);
+  }
+  return heading;
+}
+
+int setext_level(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t");
+  if (first == std::string::npos) return 0;
+  const auto last = line.find_last_not_of(" \t");
+  const std::string body = line.substr(first, last - first + 1);
+  if (body.empty()) return 0;
+  if (body.find_first_not_of('=') == std::string::npos) return 1;
+  if (body.find_first_not_of('-') == std::string::npos) return 2;
+  return 0;
+}
+
+bool can_setext(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t");
+  if (first == std::string::npos) return false;
+  const char ch = line[first];
+  if (ch == '-' || ch == '*' || ch == '+' || ch == '>' || ch == '#' || ch == '|' || ch == '`') {
+    return false;
+  }
+  if (std::isdigit(static_cast<unsigned char>(ch)) && line.find(". ", first) != std::string::npos) {
+    return false;
+  }
+  return line.find_first_not_of("=- \t") != std::string::npos;
+}
+
 ftxui::Element render_markdown(const std::string& text, bool dim) {
   ftxui::Elements lines;
   bool code = false;
@@ -259,6 +300,14 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       lines.push_back(ftxui::text(""));
       continue;
     }
+    if (index + 1 < source.size()) {
+      const int level = setext_level(source[index + 1]);
+      if (level > 0 && can_setext(line)) {
+        lines.push_back(heading_element(static_cast<std::size_t>(level), line));
+        ++index;
+        continue;
+      }
+    }
     if (line == "---" || line == "***" || line == "___") {
       const int width = std::min(80, std::max(20, ftxui::Terminal::Size().dimx - 4));
       std::string rule;
@@ -284,17 +333,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     std::size_t hashes = 0;
     while (hashes < line.size() && line[hashes] == '#') ++hashes;
     if (hashes > 0 && hashes < line.size() && line[hashes] == ' ') {
-      ftxui::Element heading = ftxui::text(" " + line.substr(hashes + 1)) | ftxui::bold;
-      if (hashes == 1) {
-        heading = heading | ftxui::color(kAccent) | ftxui::underlined;
-      } else if (hashes == 2) {
-        heading = heading | ftxui::color(kAccent);
-      } else if (hashes == 3) {
-        heading = heading | ftxui::color(kText);
-      } else {
-        heading = heading | ftxui::color(kDim);
-      }
-      lines.push_back(std::move(heading));
+      lines.push_back(heading_element(hashes, line.substr(hashes + 1)));
       continue;
     }
     const std::size_t leading = line.find_first_not_of(" \t");
@@ -312,7 +351,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       }
     }
     if (leading != std::string::npos &&
-        (line[leading] == '-' || line[leading] == '*') && leading + 1 < line.size() &&
+        (line[leading] == '-' || line[leading] == '*' || line[leading] == '+') && leading + 1 < line.size() &&
         line[leading + 1] == ' ') {
       lines.push_back(ftxui::hbox({
           ftxui::text(std::string(indent, ' ') + " "),
