@@ -421,10 +421,13 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
           ftxui::text("```") | ftxui::color(kLine),
           ftxui::text(line.substr(3)),
       }));
+      if (!code && index + 1 < source.size() && !source[index + 1].empty()) {
+        lines.push_back(ftxui::text(""));
+      }
       continue;
     }
     if (code) {
-      lines.push_back(code_line(line, lang));
+      lines.push_back(ftxui::hbox({ftxui::text("  "), code_line(line, lang)}));
       continue;
     }
     if (line.empty()) {

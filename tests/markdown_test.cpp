@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <sstream>
 #include <string>
+#include <vector>
 
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/screen.hpp>
@@ -24,6 +26,18 @@ std::string strip_ansi(const std::string& input) {
     out += input[index++];
   }
   return out;
+}
+
+std::vector<std::string> split_lines(const std::string& text) {
+  std::vector<std::string> lines;
+  std::istringstream input(text);
+  std::string line;
+  while (std::getline(input, line)) {
+    while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+    if (line.find_first_not_of(' ') == std::string::npos) line.clear();
+    lines.push_back(line);
+  }
+  return lines;
 }
 
 std::string render_markdown(const std::string& source, int width, int height) {
@@ -68,4 +82,28 @@ TEST_CASE("markdown tables wrap long cells inside the terminal") {
   REQUIRE(text.find("abcdefghijklmnopqrstuvwxyz") != std::string::npos);
   REQUIRE(text.find("0123456789") != std::string::npos);
   REQUIRE(text.find("└") != std::string::npos);
+}
+
+TEST_CASE("markdown code fences indent and space like omp") {
+  const std::string source =
+      "before\n"
+      "```cpp\n"
+      "int add(int a, int b) { return a + b; }\n"
+      "```\n"
+      "after\n";
+  const auto lines = split_lines(render_markdown(source, 60, 10));
+  std::size_t open = lines.size();
+  for (std::size_t index = 0; index < lines.size(); ++index) {
+    if (lines[index].find("```cpp") != std::string::npos) open = index;
+  }
+  REQUIRE(open < lines.size());
+  REQUIRE(open + 1 < lines.size());
+  REQUIRE(lines[open + 1].rfind("  int add(int a, int b) { return a + b; }", 0) == 0);
+  std::size_t close = open + 1;
+  while (close < lines.size() && lines[close].find("```") == std::string::npos) ++close;
+  REQUIRE(close < lines.size());
+  REQUIRE(close + 1 < lines.size());
+  REQUIRE(lines[close + 1].empty());
+  REQUIRE(close + 2 < lines.size());
+  REQUIRE(lines[close + 2].find("after") != std::string::npos);
 }
