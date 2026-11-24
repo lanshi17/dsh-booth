@@ -572,3 +572,26 @@ TEST_CASE("triple emphasis toggles bold and italic together") {
   REQUIRE(also);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("rust fences highlight keywords and ignore lifetimes") {
+  ftxui::Terminal::SetFallbackSize({60, 12});
+  auto view = markdown_view(
+      "```rust\nfn main<'a>() {\n    // note\n    let x = &'a 1;\n}\n```\n", false);
+  ftxui::Screen screen(60, 12);
+  ftxui::Render(screen, std::move(view));
+  bool keyword = false;
+  bool comment = false;
+  bool lifetime = false;
+  for (int y = 0; y < 12; ++y) {
+    for (int x = 0; x < 60; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "f" && cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) keyword = true;
+      if (cell.character == "n" && cell.dim) comment = true;
+      if (cell.character == "'" && cell.foreground_color == ftxui::Color::RGB(228, 228, 228)) lifetime = true;
+    }
+  }
+  REQUIRE(keyword);
+  REQUIRE(comment);
+  REQUIRE(lifetime);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

@@ -25,11 +25,16 @@ const ftxui::Color kRed = ftxui::Color::RGB(255, 95, 95);
 
 std::string normalize_lang(std::string lang) {
   for (char& ch : lang) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  if (lang == "c++" || lang == "cxx") return "cpp";
-  if (lang == "ts" || lang == "typescript") return "ts";
-  if (lang == "js" || lang == "javascript") return "ts";
+  if (lang == "c++" || lang == "cxx" || lang == "cc" || lang == "c" || lang == "h" ||
+      lang == "hpp" || lang == "hxx") {
+    return "cpp";
+  }
+  if (lang == "ts" || lang == "typescript" || lang == "tsx") return "ts";
+  if (lang == "js" || lang == "javascript" || lang == "jsx") return "ts";
   if (lang == "py") return "python";
-  if (lang == "sh" || lang == "shell") return "bash";
+  if (lang == "sh" || lang == "shell" || lang == "zsh") return "bash";
+  if (lang == "rs") return "rust";
+  if (lang == "jsonc" || lang == "json5") return "json";
   return lang;
 }
 
@@ -46,11 +51,17 @@ bool is_keyword(const std::string& lang, const std::string& word) {
   static const std::vector<std::string> bash = {
       "if", "then", "else", "fi", "for", "do", "done", "while", "function", "export", "local",
       "echo", "cd", "exit", "set"};
+  static const std::vector<std::string> rust = {
+      "as", "async", "await", "break", "const", "continue", "crate", "dyn", "else", "enum",
+      "extern", "false", "fn", "for", "if", "impl", "in", "let", "loop", "match", "mod", "move",
+      "mut", "pub", "ref", "return", "self", "Self", "static", "struct", "super", "trait",
+      "true", "type", "unsafe", "use", "where", "while", "yield"};
   const auto contains = [&](const std::vector<std::string>& words) {
     return std::find(words.begin(), words.end(), word) != words.end();
   };
   if (lang == "python") return contains(python);
   if (lang == "bash") return contains(bash);
+  if (lang == "rust") return contains(rust);
   if (lang == "cpp" || lang == "ts" || lang == "json") return contains(cpp);
   return false;
 }
@@ -141,7 +152,7 @@ std::vector<CodeSpan> highlight_line(const std::string& line, const std::string&
     return spans;
   }
   const bool hash_comment = lang == "python" || lang == "bash";
-  const bool slash_comment = lang == "cpp" || lang == "ts";
+  const bool slash_comment = lang == "cpp" || lang == "ts" || lang == "rust";
   std::vector<CodeSpan> spans;
   std::string plain;
   const auto flush = [&] {
@@ -158,7 +169,9 @@ std::vector<CodeSpan> highlight_line(const std::string& line, const std::string&
       spans.push_back(CodeSpan{line.substr(index), kDim, true});
       break;
     }
-    if (ch == '"' || ch == '\'' || (lang == "ts" && ch == '`')) {
+    const bool rust_lifetime = lang == "rust" && ch == '\'' &&
+                               !(index + 2 < line.size() && line[index + 2] == '\'');
+    if (!rust_lifetime && (ch == '"' || ch == '\'' || (lang == "ts" && ch == '`'))) {
       const char quote = ch;
       std::size_t end = index + 1;
       while (end < line.size() && line[end] != quote) {
