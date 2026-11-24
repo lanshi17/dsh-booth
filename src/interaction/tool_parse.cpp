@@ -274,6 +274,12 @@ std::string web_queries(const TranscriptEntry& entry) {
   return out;
 }
 
+std::optional<std::string> pretty_json(const std::string& output) {
+  const Json parsed = Json::parse(output, nullptr, false);
+  if (parsed.is_discarded() || (!parsed.is_object() && !parsed.is_array())) return std::nullopt;
+  return parsed.dump(2);
+}
+
 std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
   std::vector<ReadEnvelope> envelopes;
   std::size_t start = output.find("<path>");

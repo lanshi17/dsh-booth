@@ -65,6 +65,12 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       read_tool ? parse_read_envelopes(entry.output) : std::vector<ReadEnvelope>{};
   const bool has_envelope = !reads.empty();
   const std::optional<std::vector<TodoRow>> todos = parse_todos(entry);
+  const auto diff = booth::tool_diff(entry);
+  const std::optional<std::string> json_output =
+      !read_tool && !shell_tool && !todos && !grep_result && !glob_result && !web_result &&
+              entry.status != "failed" && diff.empty()
+          ? pretty_json(entry.output)
+          : std::nullopt;
   std::string title = entry.text.empty() ? entry.tool : entry.text;
   if (reads.size() == 1 && !reads[0].path.empty()) title = reads[0].path;
   if (todos) {
@@ -94,6 +100,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
                (glob_result->paths.size() == 1 ? " file" : " files");
     }
   }
+  if (json_output) title += " · JSON";
   if (web_result) {
     title = "Web search";
     const std::string query = web_queries(entry);
@@ -116,7 +123,6 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       ftxui::separator() | ftxui::flex | ftxui::color(border),
       ftxui::text("╮") | ftxui::color(border),
   }));
-  const auto diff = booth::tool_diff(entry);
   if (!diff.empty()) {
     std::size_t added = 0;
     std::size_t removed = 0;
@@ -300,6 +306,31 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   }
+  if (json_output) {
+    std::istringstream input(*json_output);
+    std::vector<std::string> lines;
+    std::string line;
+    while (std::getline(input, line)) lines.push_back(line);
+    constexpr std::size_t kJsonLines = 12;
+    const std::size_t limit = expanded ? lines.size() : kJsonLines;
+    for (std::size_t index = 0; index < std::min(limit, lines.size()); ++index) {
+      for (const auto& wrapped : wrap_cells(lines[index], content_width)) {
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│ ") | ftxui::color(border),
+            ftxui::text(wrapped) | ftxui::flex | ftxui::color(kText),
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+      }
+    }
+    if (!expanded && lines.size() > limit) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("… +" + std::to_string(lines.size() - limit) +
+                      " lines · Ctrl+O") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+  }
   if (grep_result) {
     constexpr std::size_t kGrepMatches = 10;
     const std::size_t limit = expanded ? grep_result->total : kGrepMatches;
@@ -407,7 +438,8 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
-  } else if (!output.empty() && (!todos || entry.status == "failed") && !web_result) {
+  } else if (!output.empty() && (!todos || entry.status == "failed") && !web_result &&
+             !json_output) {
     rows.push_back(ftxui::hbox({
         ftxui::text("├── Output ") | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),

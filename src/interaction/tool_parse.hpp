@@ -75,4 +75,7 @@ struct WebResult {
 std::optional<WebResult> parse_web_search(const std::string& output);
 std::string web_queries(const TranscriptEntry& entry);
 
+/// Pretty-print a complete JSON object or array; empty for primitives or invalid JSON.
+std::optional<std::string> pretty_json(const std::string& output);
+
 }  // namespace booth

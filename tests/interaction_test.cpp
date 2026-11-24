@@ -575,6 +575,34 @@ TEST_CASE("tool titles truncate on terminal cells") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("generic JSON output renders as a pretty tree") {
+  ftxui::Terminal::SetFallbackSize({80, 24});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "goal";
+  entry.status = "completed";
+  nlohmann::json value;
+  for (int index = 0; index < 15; ++index) {
+    value["key" + (index < 10 ? std::string("0") : std::string()) + std::to_string(index)] = index;
+  }
+  entry.output = value.dump();
+
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(80, 24);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("goal · JSON") != std::string::npos);
+  REQUIRE(text.find("\"key00\": 0") != std::string::npos);
+  REQUIRE(text.find("… +5 lines · Ctrl+O") != std::string::npos);
+  REQUIRE(text.find("key14") == std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(80, 40);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(strip_ansi(full.ToString()).find("key14") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("web search cards show the answer and sources") {
   ftxui::Terminal::SetFallbackSize({100, 32});
   TranscriptEntry entry;
