@@ -135,10 +135,12 @@ void list_sessions(PromptContext& context) {
       session.id = SessionId{row.value("sessionId", std::string{})};
       session.cwd = row.value("cwd", std::string{});
       session.title = row.value("title", std::string{});
-      if (session.title.empty()) {
-        session.title = session_title(context.sessions_dir, session.id.value);
-      }
+      const SessionSummary summary =
+          session_summary(context.sessions_dir, session.id.value);
+      if (session.title.empty()) session.title = summary.title;
       if (session.title.empty()) session.title = "untitled";
+      session.preview = summary.preview;
+      session.age_seconds = summary.age_seconds;
       session.status = "idle";
       sessions.push_back(std::move(session));
     }

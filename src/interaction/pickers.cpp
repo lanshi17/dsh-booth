@@ -13,6 +13,15 @@
 namespace booth {
 namespace {
 
+std::string relative_age(long long seconds) {
+  if (seconds < 60) return "now";
+  if (seconds < 3600) return std::to_string(seconds / 60) + "m";
+  if (seconds < 86400) return std::to_string(seconds / 3600) + "h";
+  if (seconds < 604800) return std::to_string(seconds / 86400) + "d";
+  return std::to_string(seconds / 604800) + "w";
+}
+
+
 #define kAccent (theme_color("accent", ftxui::Color::RGB(0, 175, 255)))
 #define kText (theme_color("text", ftxui::Color::RGB(228, 228, 228)))
 #define kDim (theme_color("dim", ftxui::Color::RGB(118, 118, 118)))
@@ -437,7 +446,7 @@ ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,
   if (matches.empty()) {
     rows.push_back(ftxui::text(loading ? " loading…" : " no saved sessions") | ftxui::dim);
   } else {
-    constexpr std::size_t kWindow = 8;
+    constexpr std::size_t kWindow = 5;
     std::size_t start = index >= kWindow ? index - kWindow / 2 : 0;
     if (start + kWindow > matches.size() && matches.size() > kWindow) {
       start = matches.size() - kWindow;
@@ -459,11 +468,15 @@ ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
           ftxui::text("● ") | ftxui::color(dot),
           ftxui::text(title) | (selected ? ftxui::bold : ftxui::nothing),
-          ftxui::text("  " + ellipsize(session.cwd, 16)) | ftxui::dim,
+          ftxui::text("  " + relative_age(session.age_seconds)) | ftxui::dim,
           ftxui::filler(),
       });
       paint_row(line, selected, hovered);
       rows.push_back(hit_row(std::move(line), MouseSurface::Session, row, mouse));
+      if (!session.preview.empty()) {
+        ftxui::Element preview = ftxui::text("     " + ellipsize(session.preview, 52)) | ftxui::dim;
+        rows.push_back(hit_row(std::move(preview), MouseSurface::Session, row, mouse));
+      }
     }
     if (end < matches.size()) {
       rows.push_back(ftxui::text("   ↓ " + std::to_string(matches.size() - end) + " more") |

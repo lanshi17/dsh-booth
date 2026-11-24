@@ -1,5 +1,7 @@
 #include "interaction/replay.hpp"
 
+#include "interaction/text_util.hpp"
+
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -107,13 +109,13 @@ struct CacheEntry {
 std::mutex cache_mutex;
 std::unordered_map<std::string, CacheEntry> replay_cache;
 
-struct TitleEntry {
+struct SummaryEntry {
   std::filesystem::file_time_type mtime;
   std::uintmax_t size{0};
-  std::string title;
+  SessionSummary summary;
 };
 
-std::unordered_map<std::string, TitleEntry> title_cache;
+std::unordered_map<std::string, SummaryEntry> summary_cache;
 
 std::string shell_quote(const std::string& value) {
   std::string out = "'";
@@ -221,8 +223,8 @@ std::vector<TranscriptEntry> parse_session_jsonl(std::istream& input, std::size_
   return entries;
 }
 
-std::string session_title(const std::filesystem::path& sessions_dir,
-                          const std::string& session_id) {
+SessionSummary session_summary(const std::filesystem::path& sessions_dir,
+                               const std::string& session_id) {
   const std::filesystem::path file = find_session_file(sessions_dir, session_id);
   if (file.empty()) return {};
   std::error_code stat_error;
@@ -231,35 +233,56 @@ std::string session_title(const std::filesystem::path& sessions_dir,
   const std::string key = file.string();
   {
     std::lock_guard<std::mutex> lock(cache_mutex);
-    const auto found = title_cache.find(key);
-    if (found != title_cache.end() && found->second.mtime == mtime &&
+    const auto found = summary_cache.find(key);
+    if (found != summary_cache.end() && found->second.mtime == mtime &&
         found->second.size == size) {
-      return found->second.title;
+      SessionSummary cached = found->second.summary;
+      cached.age_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                               std::filesystem::file_time_type::clock::now() - mtime)
+                               .count();
+      return cached;
     }
   }
   const std::string command =
-      "zstd -dc -- " + shell_quote(file.string()) + " 2>/dev/null | head -n 24";
+      "zstd -dc -- " + shell_quote(file.string()) + " 2>/dev/null | head -n 120";
   FILE* pipe = ::popen(command.c_str(), "r");
   if (pipe == nullptr) return {};
   std::string output;
   char buffer[4096];
   while (std::fgets(buffer, sizeof(buffer), pipe) != nullptr) output += buffer;
   ::pclose(pipe);
+  SessionSummary summary;
   std::istringstream input(output);
   std::string line;
   while (std::getline(input, line)) {
     const auto event = Json::parse(line, nullptr, false);
-    if (event.is_discarded() || event.value("type", std::string{}) != "session/title") continue;
+    if (event.is_discarded()) continue;
+    const std::string type = event.value("type", std::string{});
     const auto data = event.value("data", Json::object());
-    const std::string title = data.value("title", std::string{});
-    if (!title.empty()) {
-      std::lock_guard<std::mutex> lock(cache_mutex);
-      if (title_cache.size() >= 64) title_cache.erase(title_cache.begin());
-      title_cache[key] = TitleEntry{mtime, size, title};
-      return title;
+    if (type == "session/title" && summary.title.empty()) {
+      summary.title = data.value("title", std::string{});
+      continue;
     }
+    if (type != "user/message" || !summary.preview.empty()) continue;
+    const auto source = data.value("source", Json::object());
+    if (source.is_object() && source.value("kind", std::string{}) != "user") continue;
+    std::string text = text_of_content(data.value("content", Json::array()));
+    const auto first = text.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos) continue;
+    text.erase(0, first);
+    const auto line_end = text.find('\n');
+    if (line_end != std::string::npos) text.resize(line_end);
+    summary.preview = ellipsize(text, 160);
   }
-  return {};
+  summary.age_seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::filesystem::file_time_type::clock::now() - mtime)
+                            .count();
+  {
+    std::lock_guard<std::mutex> lock(cache_mutex);
+    if (summary_cache.size() >= 64) summary_cache.erase(summary_cache.begin());
+    summary_cache[key] = SummaryEntry{mtime, size, summary};
+  }
+  return summary;
 }
 
 Result<std::vector<TranscriptEntry>> replay_session(const std::filesystem::path& sessions_dir,

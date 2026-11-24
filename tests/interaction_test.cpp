@@ -1118,6 +1118,20 @@ TEST_CASE("todo tool pages a long checklist until expanded") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("session picker shows preview text and relative age") {
+  SessionRow row;
+  row.id = SessionId{"s-1"};
+  row.title = "session title";
+  row.preview = "first question";
+  row.age_seconds = 120;
+  auto view = session_picker_view({row}, {0}, 0, false, "");
+  ftxui::Screen screen(70, 8);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("first question") != std::string::npos);
+  REQUIRE(text.find("2m") != std::string::npos);
+}
+
 TEST_CASE("session picker truncates CJK titles by cells") {
   SessionRow row;
   row.id = SessionId{"s-1"};

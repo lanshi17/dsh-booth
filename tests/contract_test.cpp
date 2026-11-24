@@ -27,7 +27,7 @@ TEST_CASE("a result carries the failure instead of throwing") {
 TEST_CASE("a snapshot is one event value") {
   Snapshot snapshot;
   snapshot.phase = DshPhase::Ready;
-  snapshot.sessions.push_back(SessionRow{SessionId{"s-1"}, "first", "idle", "/tmp", "auto", 2});
+  snapshot.sessions.push_back(SessionRow{SessionId{"s-1"}, "first", "idle", "/tmp", "auto", 2, 0, 0, "", 0});
 
   Event event{snapshot};
   REQUIRE(std::holds_alternative<Snapshot>(event.value));

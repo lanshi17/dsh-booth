@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -68,6 +69,28 @@ TEST_CASE("nested tool-result content blocks are flattened") {
   const auto entries = parse_session_jsonl(input);
   REQUIRE(entries.size() == 1);
   REQUIRE(entries[0].output == "nested output");
+}
+
+TEST_CASE("session summary reads the title and first user prompt") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-summary-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir / "s-1");
+  const auto plain = dir / "session.jsonl";
+  {
+    std::ofstream out(plain);
+    out << R"({"type":"session/title","data":{"title":"stored title"}})" << '\n';
+    out << R"({"type":"user/message","data":{"source":{"kind":"user"},"content":[{"type":"text","text":"first question\nsecond line"}]}})" << '\n';
+  }
+  const auto compressed = dir / "s-1" / "session.v4.jsonl.zstd";
+  const std::string command = "zstd -q -f -o '" + compressed.string() + "' '" +
+                              plain.string() + "'";
+  REQUIRE(std::system(command.c_str()) == 0);
+  const auto summary = booth::session_summary(dir, "s-1");
+  REQUIRE(summary.title == "stored title");
+  REQUIRE(summary.preview == "first question");
+  REQUIRE(summary.age_seconds >= 0);
+  std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("a missing session store is empty, not an error") {

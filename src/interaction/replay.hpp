@@ -20,8 +20,14 @@ std::vector<TranscriptEntry> parse_session_jsonl(std::istream& input, std::size_
 Result<std::vector<TranscriptEntry>> replay_session(const std::filesystem::path& sessions_dir,
                                                     const std::string& session_id);
 
-/// Reads the persisted `session/title` event, or empty when absent.
-std::string session_title(const std::filesystem::path& sessions_dir,
-                          const std::string& session_id);
+struct SessionSummary {
+  std::string title;
+  std::string preview;
+  long long age_seconds{0};
+};
+
+/// Reads the persisted title and first user message head from one session file.
+SessionSummary session_summary(const std::filesystem::path& sessions_dir,
+                               const std::string& session_id);
 
 }  // namespace booth

@@ -29,6 +29,8 @@ struct SessionRow {
   std::size_t turns{0};
   std::size_t context_used{0};
   std::size_t context_size{0};
+  std::string preview;
+  long long age_seconds{0};
 };
 
 
