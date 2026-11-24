@@ -119,6 +119,21 @@ TEST_CASE("session updates become contract events") {
   REQUIRE(std::get<ConfigOptionsChanged>(config_events[0].value).options.find(
               "deepseek-v4-pro") != std::string::npos);
 
+  const Json image_result{
+      {"sessionId", "s-1"},
+      {"update", Json{{"sessionUpdate", "tool_call_update"},
+                      {"toolCallId", "t-image"},
+                      {"status", "completed"},
+                      {"content", Json::array({Json{
+                          {"type", "content"},
+                          {"content", Json{{"type", "image"},
+                                           {"mimeType", "image/png"},
+                                           {"data", "aGVsbG8="}}}}})}}}};
+  auto image_events = session_updates(image_result);
+  REQUIRE(image_events.size() == 1);
+  const auto& image_tool = std::get<TranscriptEntry>(image_events[0].value);
+  REQUIRE(image_tool.output.find("[image: image/png · 5B]") != std::string::npos);
+
   const Json usage{
       {"sessionId", "s-1"},
       {"update", Json{{"sessionUpdate", "usage_update"}, {"used", 12}, {"size", 128}}}};

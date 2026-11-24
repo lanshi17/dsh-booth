@@ -38,17 +38,39 @@ std::string tool_input_of(const Json& update) {
   return raw.dump();
 }
 
+std::size_t base64_bytes(const std::string& data) {
+  if (data.empty()) return 0;
+  std::size_t bytes = data.size() / 4 * 3;
+  if (data.size() >= 2 && data.compare(data.size() - 2, 2, "==") == 0) bytes -= 2;
+  else if (data.back() == '=') bytes -= 1;
+  return bytes;
+}
+
+std::string block_text(const Json& block) {
+  if (!block.is_object()) return {};
+  const std::string type = block.value("type", std::string{});
+  if (type == "text") return block.value("text", std::string{});
+  if (type == "image") {
+    std::string out = "[image: " + block.value("mimeType", std::string{"image"});
+    if (block.contains("data") && block["data"].is_string()) {
+      out += " · " + std::to_string(base64_bytes(block["data"].get<std::string>())) + "B";
+    }
+    return out + "]";
+  }
+  if (type == "resource_link") {
+    const std::string uri = block.value("uri", std::string{});
+    return uri.empty() ? "[link]" : "[link: " + uri + "]";
+  }
+  return {};
+}
+
 std::string tool_output_of(const Json& update) {
   if (!update.contains("content")) return {};
   std::string out;
   for (const auto& block : update["content"]) {
     std::string text;
     if (block.is_object()) {
-      if (block.contains("content")) {
-        text = text_of(block["content"]);
-      } else {
-        text = text_of(block);
-      }
+      text = block.contains("content") ? block_text(block["content"]) : block_text(block);
     }
     if (text.empty()) continue;
     if (!out.empty() && out.back() != '\n') out += '\n';
@@ -154,7 +176,7 @@ std::vector<Event> session_updates(const Json& params) {
       entry.kind = EntryKind::Image;
       entry.text = content.value("mimeType", std::string{"image"});
       if (content.contains("data") && content["data"].is_string()) {
-        const auto bytes = content["data"].get<std::string>().size() * 3 / 4;
+        const auto bytes = base64_bytes(content["data"].get<std::string>());
         entry.tool = std::to_string(bytes) + "B";
       } else if (content.contains("name") && content["name"].is_string()) {
         entry.tool = content["name"].get<std::string>();
