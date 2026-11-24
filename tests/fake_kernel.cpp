@@ -315,7 +315,7 @@ int main() {
         continue;
       }
       if (text.find("math") != std::string::npos) {
-        stream_text("Energy: $E = mc^2$ and $\\frac{1}{2}$.\n$$\n\\frac{a+b}{c}\n$$\n$$\n\\sqrt{x+1}\n$$\n");
+        stream_text("Energy: $E = mc^2$ and $\\frac{1}{2}$ and $\\hat{x}$.\n$$\n\\frac{a+b}{c}\n$$\n$$\n\\sqrt{x+1}\n$$\n");
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }

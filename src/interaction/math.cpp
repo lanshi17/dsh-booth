@@ -324,6 +324,25 @@ class Parser {
         name == "texttt") {
       return raw_group(index);
     }
+    if (name == "hat" || name == "widehat" || name == "bar" || name == "overline" ||
+        name == "vec" || name == "dot" || name == "ddot" || name == "tilde" ||
+        name == "widetilde" || name == "check" || name == "breve" || name == "acute" ||
+        name == "grave" || name == "underline") {
+      const std::string body = group_or_atom(index);
+      if (body.empty()) return body;
+      std::string mark = "\u0302";
+      if (name == "bar" || name == "overline") mark = "\u0304";
+      else if (name == "vec") mark = "\u20d7";
+      else if (name == "dot") mark = "\u0307";
+      else if (name == "ddot") mark = "\u0308";
+      else if (name == "tilde" || name == "widetilde") mark = "\u0303";
+      else if (name == "check") mark = "\u030c";
+      else if (name == "breve") mark = "\u0306";
+      else if (name == "acute") mark = "\u0301";
+      else if (name == "grave") mark = "\u0300";
+      else if (name == "underline") mark = "\u0332";
+      return body + mark;
+    }
     if (name == "color") {
       raw_group(index);
       return {};

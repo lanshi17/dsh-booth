@@ -91,3 +91,13 @@ TEST_CASE("nested fractions stack vertically") {
   REQUIRE(lines[3].find("─") != std::string::npos);
   REQUIRE(lines[4].find("c") != std::string::npos);
 }
+
+TEST_CASE("latex accents attach combining marks") {
+  REQUIRE(latex_to_unicode("\\hat{x}") == "x\u0302");
+  REQUIRE(latex_to_unicode("\\bar{x}") == "x\u0304");
+  REQUIRE(latex_to_unicode("\\vec{v}") == "v\u20d7");
+  REQUIRE(latex_to_unicode("\\dot{x}") == "x\u0307");
+  REQUIRE(latex_to_unicode("\\ddot{x}") == "x\u0308");
+  REQUIRE(latex_to_unicode("\\tilde{x}") == "x\u0303");
+  REQUIRE(latex_to_unicode("\\overline{AB}") == "AB\u0304");
+}

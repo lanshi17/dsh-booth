@@ -15,6 +15,7 @@ trap 'rm -rf "$state" "$output"' EXIT
 grep -aq "Energy" "$output"
 grep -aq "mc²" "$output"
 grep -aq "½" "$output"
+grep -aqF "x̂" "$output"
 grep -aqF "a+b" "$output"
 grep -aqF "───" "$output"
 grep -aqF "┌───" "$output"
