@@ -22,10 +22,12 @@ cat > "$root/session.jsonl" <<'JSONL'
 JSONL
 zstd -q -o "$root/dsh/sessions/--tmp--/s-old/session.v4.jsonl.zstd" "$root/session.jsonl"
 
-( printf 'hi\n'; sleep 1; printf '/sessions\n'; sleep 1; printf '\r'; sleep 2; printf '\x04' ) |
+( printf 'hi\n'; sleep 1; printf '/sessions\n'; sleep 1; printf '\r'; sleep 2
+  printf 'usage\n'; sleep 1; printf '/context\n'; sleep 0.8; printf '\x04' ) |
   timeout 20 env BOOTH_DSH_BIN="$kernel" BOOTH_STATE_DIR="$root/state" DSH_HOME="$root/dsh" \
     script -qec "$booth" /dev/null > "$out" 2>&1 || true
 
 grep -aq "replayed answer" "$out"
 grep -aq "tool-replay-output" "$out"
 grep -aq "resumed stored title" "$out"
+grep -aq "context: 1200 / 4800" "$out"

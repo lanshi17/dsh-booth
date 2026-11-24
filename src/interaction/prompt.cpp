@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <mutex>
+#include <optional>
 #include <utility>
 
 #include "interaction/replay.hpp"
@@ -12,21 +13,31 @@ namespace {
 
 constexpr auto kSessionTimeout = std::chrono::seconds(20);
 
-bool send_config(PromptContext& context, const std::string& id, const std::string& value) {
+std::optional<acp::Json> send_config(PromptContext& context, const std::string& id,
+                                      const std::string& value) {
   std::string session;
   {
     std::lock_guard<std::mutex> lock(context.mutex);
     session = context.session;
   }
-  if (session.empty()) return false;
+  if (session.empty()) return std::nullopt;
   auto selected = context.kernel.request(
       "session/set_config_option", acp::set_config_params(session, id, value),
       std::chrono::seconds(10));
   if (!selected) {
     context.publish(Event{Problem{selected.error().layer, selected.error().detail}});
-    return false;
+    return std::nullopt;
   }
-  return true;
+  return *selected;
+}
+
+std::string publish_config_options(PromptContext& context, const acp::Json& response) {
+  const auto options = response.value("configOptions", acp::Json::array());
+  std::vector<ModelChoice> choices;
+  const std::string display = read_model_options(options, choices);
+  context.publish(Event{SessionOptionsChanged{
+      std::move(choices), read_reasoning_options(options)}});
+  return display;
 }
 
 }  // namespace
@@ -54,12 +65,7 @@ std::string ensure_session(PromptContext& context) {
     context.session = session;
   }
   context.publish(Event{SessionOpened{SessionId{session}, context.cwd, "auto"}});
-  std::vector<ModelChoice> choices;
-  const std::string display =
-      read_model_options(created->value("configOptions", acp::Json::array()), choices);
-  context.publish(Event{SessionOptionsChanged{
-      std::move(choices),
-      read_reasoning_options(created->value("configOptions", acp::Json::array()))}});
+  const std::string display = publish_config_options(context, *created);
   if (!display.empty()) {
     context.publish(Event{SessionConfigChanged{SessionId{session}, "model", display}});
   }
@@ -103,9 +109,11 @@ void apply_model(PromptContext& context, const ModelChoice& choice) {
     std::lock_guard<std::mutex> lock(context.mutex);
     session = context.session;
   }
-  if (send_config(context, "model", choice.value)) {
-    context.publish(Event{SessionConfigChanged{SessionId{session}, "model", choice.name}});
-  }
+  const auto selected = send_config(context, "model", choice.value);
+  if (!selected) return;
+  std::string display = publish_config_options(context, *selected);
+  if (display.empty()) display = choice.name;
+  context.publish(Event{SessionConfigChanged{SessionId{session}, "model", display}});
 }
 
 void list_sessions(PromptContext& context) {
@@ -153,22 +161,19 @@ void resume_session(PromptContext& context, const SessionRow& selected) {
     std::lock_guard<std::mutex> lock(context.mutex);
     context.session = selected.id.value;
   }
-  std::vector<ModelChoice> choices;
-  const std::string display =
-      read_model_options(resumed->value("configOptions", acp::Json::array()), choices);
-  context.publish(Event{SessionOptionsChanged{
-      std::move(choices),
-      read_reasoning_options(resumed->value("configOptions", acp::Json::array()))}});
+  const std::string display = publish_config_options(context, *resumed);
   context.publish(Event{SessionSwitched{selected.id, selected.title}});
+  if (!display.empty()) {
+    context.publish(Event{SessionConfigChanged{selected.id, "model", display}});
+  }
+  context.publish(Event{SessionOpened{selected.id,
+                                      selected.cwd.empty() ? context.cwd : selected.cwd,
+                                      display}});
   auto entries = replay_session(context.sessions_dir, selected.id.value);
   if (!entries) {
     context.publish(Event{Problem{entries.error().layer, entries.error().detail}});
   } else if (!entries->empty()) {
     context.publish(Event{TranscriptReplayed{std::move(*entries)}});
-  }
-  if (!display.empty()) {
-    context.publish(
-        Event{SessionConfigChanged{selected.id, "model", display}});
   }
 }
 
@@ -215,9 +220,10 @@ void close_session(PromptContext& context) {
 void set_reasoning(PromptContext& context, const std::string& config_id,
                    const ModelChoice& choice) {
   if (config_id.empty()) return;
-  if (send_config(context, config_id, choice.value)) {
-    context.publish(Event{ReasoningChanged{choice.value, choice.name}});
-  }
+  const auto selected = send_config(context, config_id, choice.value);
+  if (!selected) return;
+  publish_config_options(context, *selected);
+  context.publish(Event{ReasoningChanged{choice.value, choice.name}});
 }
 
 }  // namespace booth

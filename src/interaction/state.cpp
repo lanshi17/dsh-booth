@@ -150,6 +150,11 @@ void apply(AppState& state, const Event& event) {
 
   if (const auto* opened = std::get_if<SessionOpened>(&event.value)) {
     state.session = opened->id.value;
+    if (SessionRow* row = find_session(state.snapshot.sessions, opened->id)) {
+      if (!opened->cwd.empty()) row->cwd = opened->cwd;
+      if (!opened->model.empty()) row->model = opened->model;
+      return;
+    }
     SessionRow row;
     row.id = opened->id;
     row.status = "idle";

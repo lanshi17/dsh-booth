@@ -307,6 +307,17 @@ TEST_CASE("context gauge fills and changes color at thresholds") {
   REQUIRE(context_color(90) == ftxui::Color::RGB(255, 95, 95));
 }
 
+TEST_CASE("reopening a session keeps one row for usage") {
+  AppState state;
+  apply(state, Event{SessionOpened{SessionId{"s-1"}, "/old", "auto"}});
+  apply(state, Event{SessionOpened{SessionId{"s-1"}, "/new", "model-two"}});
+  REQUIRE(state.snapshot.sessions.size() == 1);
+  REQUIRE(state.snapshot.sessions[0].cwd == "/new");
+  REQUIRE(state.snapshot.sessions[0].model == "model-two");
+  apply(state, Event{UsageChanged{SessionId{"s-1"}, 1200, 4800}});
+  REQUIRE(context_text(state).find("1200 / 4800") != std::string::npos);
+}
+
 TEST_CASE("permission requests inherit the matching tool card") {
   AppState state;
   TranscriptEntry tool;

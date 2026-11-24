@@ -105,7 +105,34 @@ int main() {
       ])");
       reply(id, {{"sessionId", "s-1"}, {"configOptions", config_options}});
     } else if (method == "session/set_config_option") {
-      reply(id, {{"configOptions", json::array()}});
+      const auto params = message.value("params", json::object());
+      const std::string config_id = params.value("configId", std::string{});
+      const std::string config_value = params.value("value", std::string{});
+      const std::string model_value =
+          config_id == "model" ? config_value : "[\"provider\",\"model-one\"]";
+      const std::string effort_value = config_id == "reasoning_effort" ? config_value : "low";
+      const json config_options = json::array(
+          {json{{"id", "model"},
+                {"name", "Model"},
+                {"category", "model"},
+                {"currentValue", model_value},
+                {"options", json::array({json{{"group", "provider"},
+                                              {"name", "Provider"},
+                                              {"options", json::array({
+                                                  json{{"value", "[\"provider\",\"model-one\"]"},
+                                                       {"name", "model-one"}},
+                                                  json{{"value", "[\"provider\",\"model-two\"]"},
+                                                       {"name", "model-two"}},
+                                                  json{{"value", "[\"provider\",\"model-three\"]"},
+                                                       {"name", "model-three"}},
+                                              })}}})}},
+           json{{"id", "reasoning_effort"},
+                {"name", "Reasoning effort"},
+                {"category", "thought_level"},
+                {"currentValue", effort_value},
+                {"options", json::array({json{{"value", "low"}, {"name", "Low"}},
+                                         json{{"value", "high"}, {"name", "High"}}})}}});
+      reply(id, {{"configOptions", config_options}});
     } else if (method == "session/list") {
       const std::string cursor =
           message.value("params", json::object()).value("cursor", std::string{});
@@ -141,8 +168,10 @@ int main() {
       if (text.find("<model agent=") != std::string::npos) stream_text("mention-tag");
       if (!resource.empty()) stream_text("resource:" + resource);
       if (text.find("usage") != std::string::npos) {
+        const std::string prompt_session =
+            message.value("params", json::object()).value("sessionId", std::string{"s-1"});
         send({{"jsonrpc", "2.0"}, {"method", "session/update"},
-              {"params", {{"sessionId", "s-1"},
+              {"params", {{"sessionId", prompt_session},
                           {"update", {{"sessionUpdate", "usage_update"},
                                       {"used", 1200}, {"size", 4800}}}}}});
       }
