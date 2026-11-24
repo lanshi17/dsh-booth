@@ -123,6 +123,7 @@ add_library(booth_interaction STATIC
   src/interaction/replay.cpp
   src/interaction/pickers.cpp
   src/interaction/export.cpp
+  src/interaction/error_view.cpp
   src/interaction/fetch_view.cpp
   src/interaction/json_view.cpp
   src/interaction/skill_view.cpp

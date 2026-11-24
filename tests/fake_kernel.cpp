@@ -164,6 +164,12 @@ int main() {
       const std::string text = prompt_text(message);
       const std::string resource = prompt_resource(message);
       const std::string image = prompt_image(message);
+      if (text.find("failing") != std::string::npos) {
+        send({{"jsonrpc", "2.0"},
+              {"id", id},
+              {"error", {{"code", -32000}, {"message", "model authentication failed"}}}});
+        continue;
+      }
       if (!image.empty()) stream_text("image:" + image);
       if (text.find("<model agent=") != std::string::npos) stream_text("mention-tag");
       if (!resource.empty()) stream_text("resource:" + resource);

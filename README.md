@@ -70,7 +70,8 @@ reuses the matching tool card's title and input, and shows only the choices dsh 
 Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
 `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and
-`/notify off` persist terminal notifications in `$BOOTH_STATE_DIR/notify`. Notifications default to
+`/notify off` persist terminal notifications in `$BOOTH_STATE_DIR/notify`. Kernel and protocol
+failures pin a red `error · /retry` banner above the composer until the next prompt. Notifications default to
 on and use OSC 9 for permission requests and turns lasting at least five seconds (tmux passthrough
 is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.

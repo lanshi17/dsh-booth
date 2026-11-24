@@ -147,6 +147,7 @@ void apply(AppState& state, const Event& event) {
     state.entries.clear();
     state.todos.clear();
     state.attachments.clear();
+    state.error.clear();
     state.streaming.clear();
     state.busy = false;
     state.session = switched->id.value;
@@ -172,6 +173,7 @@ void apply(AppState& state, const Event& event) {
     state.attachments.clear();
     state.entries.clear();
     state.todos.clear();
+    state.error.clear();
     state.streaming.clear();
     state.busy = false;
     state.notice = "session closed";
@@ -275,6 +277,7 @@ void apply(AppState& state, const Event& event) {
     finish_thought();
     state.notice = problem->detail;
     state.notice.error = true;
+    state.error = problem->detail;
   }
 }
 

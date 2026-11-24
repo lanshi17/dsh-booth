@@ -54,6 +54,7 @@ struct AppState {
   std::optional<PermissionRequest> permission;
   std::vector<TodoItem> todos;
   Notice notice;
+  std::string error;
   bool help{false};
   std::vector<Attachment> attachments;
 };

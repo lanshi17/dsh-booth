@@ -49,6 +49,7 @@
 #include "interaction/link_picker.hpp"
 #include "interaction/mouse_mode.hpp"
 #include "interaction/commands_ui.hpp"
+#include "interaction/error_view.hpp"
 #include "interaction/copy_picker.hpp"
 #include "interaction/draft.hpp"
 #include "interaction/state.hpp"
@@ -264,17 +265,14 @@ class Root : public ComponentBase {
     }
     Elements view;
     view.push_back(ftxui::vbox(std::move(lines)) | ftxui::flex);
-    if (!state_.notice.empty()) {
-      const ftxui::Color color = state_.notice.error ? ftxui::Color::RGB(255, 95, 95)
-                                                     : ftxui::Color::RGB(150, 150, 150);
-      view.push_back(ftxui::paragraph(state_.notice.text) | ftxui::color(color));
-    }
+    if (!state_.notice.empty()) view.push_back(ftxui::paragraph(state_.notice.text) | ftxui::color(state_.notice.error ? ftxui::Color::RGB(255, 95, 95) : ftxui::Color::RGB(150, 150, 150)));
     if (window.scroll > 0) {
       view.push_back(ftxui::text("  ↑ " + std::to_string(window.scroll) +
                                  " entries back · PageDown to follow") |
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
     if (auto hud = booth::todo_hud(state_.todos)) view.push_back(std::move(*hud));
+    if (!state_.error.empty()) view.push_back(booth::error_banner_view(state_.error));
     if (!queued_.empty()) view.push_back(booth::queued_view(queued_));
     if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.matches(),
                                                 copy_picker_.index(), copy_picker_.query(), &mouse_));
@@ -415,7 +413,7 @@ class Root : public ComponentBase {
   }
   void send_prompt(std::string text) {
     turn_failed_ = false;
-    state_.notice.clear(); state_.busy = true; animate_ = true;
+    state_.notice.clear(); state_.error.clear(); state_.busy = true; animate_ = true;
     text = booth::expand_emojis(text);
     const std::string display = text;
     std::vector<std::string> efforts; for (const auto& choice : state_.reasoning.choices) efforts.push_back(choice.value);

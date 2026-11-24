@@ -11,6 +11,7 @@
 
 #include "interaction/context_gauge.hpp"
 #include "interaction/commands_ui.hpp"
+#include "interaction/error_view.hpp"
 #include "interaction/thought_view.hpp"
 #include "interaction/tool_diff.hpp"
 #include "interaction/tui_internal.hpp"
@@ -159,6 +160,23 @@ TEST_CASE("grouped read cards collapse to one line per file") {
   REQUIRE(all.find("1: only") != std::string::npos);
 }
 
+TEST_CASE("the error banner caps long details and keeps a retry hint") {
+  std::string error;
+  for (int index = 1; index <= 8; ++index) {
+    if (!error.empty()) error += "\n";
+    error += "detail " + std::to_string(index);
+  }
+  auto view = error_banner_view(error);
+  ftxui::Screen screen(60, 10);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("error · /retry") != std::string::npos);
+  REQUIRE(text.find("detail 1") != std::string::npos);
+  REQUIRE(text.find("detail 4") != std::string::npos);
+  REQUIRE(text.find("detail 5") == std::string::npos);
+  REQUIRE(text.find("… +4 lines") != std::string::npos);
+}
+
 TEST_CASE("notice assignment clears the error style") {
   AppState state;
   state.notice = "info";
@@ -188,6 +206,7 @@ TEST_CASE("permission requests open a modal and a problem is a notice") {
   apply(state, Event{Problem{Layer::Kernel, "connection closed"}});
   REQUIRE(state.notice == "connection closed");
   REQUIRE(state.notice.error);
+  REQUIRE(state.error == "connection closed");
 }
 
 TEST_CASE("sessions keep their model and usage") {
