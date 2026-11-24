@@ -13,7 +13,7 @@ cleanup() {
 trap cleanup EXIT
 
 ( printf 'markdown\n'; sleep 2; printf '\x04' ) |
-  timeout 20 script -qec "stty rows 50 cols 100; BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
+  timeout 20 script -qec "stty rows 70 cols 100; BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
   >"$output" 2>&1 || true
 
 grep -aq "italic" "$output"
@@ -21,5 +21,9 @@ grep -aq "gone" "$output"
 grep -aq "first ordered" "$output"
 grep -aq "quoted line" "$output"
 grep -aq "nested bullet" "$output"
+grep -aq "☑" "$output"
+grep -aq "☐" "$output"
+grep -aq "shipped" "$output"
+grep -aq "pending" "$output"
 grep -aq "┌" "$output"
 grep -aq "└" "$output"

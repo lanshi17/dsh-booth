@@ -23,6 +23,21 @@ std::string strip_ansi(const std::string& input) {
       if (index < input.size()) ++index;
       continue;
     }
+    if (input[index] == '\x1b' && index + 1 < input.size() && input[index + 1] == ']') {
+      index += 2;
+      while (index < input.size()) {
+        if (input[index] == '\x07') {
+          ++index;
+          break;
+        }
+        if (input[index] == '\x1b' && index + 1 < input.size() && input[index + 1] == '\\') {
+          index += 2;
+          break;
+        }
+        ++index;
+      }
+      continue;
+    }
     out += input[index++];
   }
   return out;
@@ -385,7 +400,7 @@ TEST_CASE("markdown parses link titles and image alt text") {
   auto view = markdown_view("[docs](https://x.test \"Docs\") ![diagram](img.png)\n", false);
   ftxui::Screen screen(60, 8);
   ftxui::Render(screen, std::move(view));
-  const std::string text = screen.ToString();
+  const std::string text = strip_ansi(screen.ToString());
   REQUIRE(text.find("docs") != std::string::npos);
   REQUIRE(text.find("diagram") != std::string::npos);
   REQUIRE(text.find("Docs") == std::string::npos);
@@ -435,4 +450,35 @@ TEST_CASE("markdown resolves reference links") {
 TEST_CASE("reference links stay raw in code spans") {
   const std::string text = render_markdown("`[d][d]`\n\n[d]: https://x.test\n", 60, 10);
   REQUIRE(text.find("[d][d]") != std::string::npos);
+}
+
+TEST_CASE("task list checkboxes render like omp") {
+  const std::string text = render_markdown(
+      "- [x] shipped\n"
+      "- [ ] pending\n"
+      "1. [X] numbered\n",
+      60, 10);
+  REQUIRE(text.find("☑ shipped") != std::string::npos);
+  REQUIRE(text.find("☐ pending") != std::string::npos);
+  REQUIRE(text.find("1. ☑ numbered") != std::string::npos);
+  REQUIRE(text.find("[x]") == std::string::npos);
+}
+
+TEST_CASE("markdown images keep their url") {
+  ftxui::Terminal::SetFallbackSize({60, 6});
+  auto view = markdown_view("see ![diagram](https://example.com/a.png \"title\")", false);
+  ftxui::Screen screen(60, 6);
+  ftxui::Render(screen, std::move(view));
+  bool linked = false;
+  for (int y = 0; y < 6; ++y) {
+    for (int x = 0; x < 60; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.hyperlink != 0 && screen.Hyperlink(cell.hyperlink) == "https://example.com/a.png") {
+        linked = true;
+      }
+    }
+  }
+  REQUIRE(linked);
+  REQUIRE(strip_ansi(screen.ToString()).find("[image: diagram]") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
 }

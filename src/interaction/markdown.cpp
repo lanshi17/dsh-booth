@@ -128,6 +128,15 @@ std::vector<CodeSpan> highlight_line(const std::string& line, const std::string&
   return spans;
 }
 
+bool task_marker(const std::string& text, std::string& box, std::string& rest) {
+  if (text.size() < 4 || text[0] != '[' || text[2] != ']' || text[3] != ' ') return false;
+  const char state = static_cast<char>(std::tolower(static_cast<unsigned char>(text[1])));
+  if (state != ' ' && state != 'x') return false;
+  box = state == 'x' ? "☑ " : "☐ ";
+  rest = text.substr(4);
+  return true;
+}
+
 ftxui::Element code_line(const std::string& line, const std::string& lang) {
   if (line.empty()) return ftxui::text("");
   ftxui::Elements spans;
@@ -433,11 +442,18 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     if (leading != std::string::npos && std::isdigit(static_cast<unsigned char>(line[leading]))) {
       const auto dot = line.find(". ", leading);
       if (dot != std::string::npos) {
+        std::string content = line.substr(dot + 2);
+        std::string box;
+        std::string rest;
+        std::string marker = line.substr(leading, dot - leading + 1) + " ";
+        if (task_marker(content, box, rest)) {
+          content = rest;
+          marker += box;
+        }
         lines.push_back(ftxui::hbox({
             ftxui::text(std::string(indent, ' ') + " "),
-            ftxui::text(line.substr(leading, dot - leading + 1) + " ") |
-                ftxui::color(kAccent),
-            render_inline(line.substr(dot + 2), dim) | ftxui::flex,
+            ftxui::text(marker) | ftxui::color(kAccent),
+            render_inline(content, dim) | ftxui::flex,
         }));
         continue;
       }
@@ -445,10 +461,18 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     if (leading != std::string::npos &&
         (line[leading] == '-' || line[leading] == '*' || line[leading] == '+') && leading + 1 < line.size() &&
         line[leading + 1] == ' ') {
+      std::string content = line.substr(leading + 2);
+      std::string box;
+      std::string rest;
+      std::string marker = "- ";
+      if (task_marker(content, box, rest)) {
+        content = rest;
+        marker += box;
+      }
       lines.push_back(ftxui::hbox({
           ftxui::text(std::string(indent, ' ') + " "),
-          ftxui::text("- ") | ftxui::color(kAccent),
-          render_inline(line.substr(leading + 2), dim) | ftxui::flex,
+          ftxui::text(marker) | ftxui::color(kAccent),
+          render_inline(content, dim) | ftxui::flex,
       }));
       continue;
     }

@@ -107,8 +107,15 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
       if (label_end != std::string::npos && url_end != std::string::npos) {
         flush();
         const std::string label = text.substr(index + 2, label_end - index - 2);
+        std::string url = text.substr(label_end + 2, url_end - label_end - 2);
+        const auto title = url.find_first_of(" \t");
+        if (title != std::string::npos) url = url.substr(0, title);
+        if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
+          url = url.substr(1, url.size() - 2);
+        }
         ftxui::Element image =
             ftxui::text(label.empty() ? "[image]" : "[image: " + label + "]") | ftxui::color(kDim);
+        if (!url.empty()) image = ftxui::hyperlink(url, std::move(image));
         parts.push_back(std::move(image));
         index = url_end + 1;
         continue;
