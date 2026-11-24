@@ -12,6 +12,7 @@
 #include "interaction/context_gauge.hpp"
 #include "interaction/commands_ui.hpp"
 #include "interaction/thought_view.hpp"
+#include "interaction/tool_diff.hpp"
 #include "interaction/tui_internal.hpp"
 #include "interaction/state.hpp"
 
@@ -855,6 +856,38 @@ TEST_CASE("shell cards tail output and report the exit status") {
   ftxui::Screen clean_screen(60, 12);
   ftxui::Render(clean_screen, std::move(clean));
   REQUIRE(clean_screen.ToString().find("exit 0") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
+TEST_CASE("apply_patch cards show per-file operations and stats") {
+  ftxui::Terminal::SetFallbackSize({100, 24});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "apply_patch";
+  entry.status = "completed";
+  entry.raw_input =
+      R"({"input":"*** Begin Patch\n*** Add File: new.txt\n+alpha\n+beta\n)"
+      R"(*** Update File: src/a.cpp\n*** Move to: src/b.cpp\n@@\n-old\n+new\n)"
+      R"(*** Delete File: old.txt\n*** End Patch"})";
+  entry.output = "Success. Updated the following files:\nA new.txt\nM src/b.cpp\nD old.txt";
+  const auto files = codex_patch(entry);
+  REQUIRE(files.has_value());
+  REQUIRE(files->size() == 3);
+  REQUIRE(files->at(2).path == "old.txt");
+  REQUIRE(files->at(2).op == PatchOp::Delete);
+
+  auto view = tool_view(entry, false);
+  ftxui::Screen screen(100, 40);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("Patch · 3 files · +3 −1") != std::string::npos);
+  REQUIRE(text.find("A new.txt") != std::string::npos);
+  REQUIRE(text.find("M src/a.cpp -> src/b.cpp") != std::string::npos);
+  REQUIRE(text.find("D old.txt") != std::string::npos);
+  REQUIRE(text.find("+alpha") != std::string::npos);
+  REQUIRE(text.find("-old") != std::string::npos);
+  REQUIRE(text.find("+new") != std::string::npos);
+  REQUIRE(text.find("Success. Updated") == std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 

@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 
+#include "interaction/patch_view.hpp"
 #include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/tool_diff.hpp"
@@ -59,6 +60,8 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const std::optional<WebResult> web_result =
       entry.tool == "web_search" && entry.status != "failed" ? parse_web_search(entry.output)
                                                              : std::nullopt;
+  const std::optional<std::vector<PatchFile>> patch =
+      entry.tool == "apply_patch" && entry.status != "failed" ? codex_patch(entry) : std::nullopt;
   std::string output = entry.output;
   const ShellStatus shell_status = shell_tool ? take_shell_status(output) : ShellStatus{};
   const std::vector<ReadEnvelope> reads =
@@ -68,7 +71,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const auto diff = booth::tool_diff(entry);
   const std::optional<std::string> json_output =
       !read_tool && !shell_tool && !todos && !grep_result && !glob_result && !web_result &&
-              entry.status != "failed" && diff.empty()
+              !patch && entry.status != "failed" && diff.empty()
           ? pretty_json(entry.output)
           : std::nullopt;
   std::string title = entry.text.empty() ? entry.tool : entry.text;
@@ -101,6 +104,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     }
   }
   if (json_output) title += " · JSON";
+  if (patch) title = patch_title(*patch);
   if (web_result) {
     title = "Web search";
     const std::string query = web_queries(entry);
@@ -123,7 +127,10 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       ftxui::separator() | ftxui::flex | ftxui::color(border),
       ftxui::text("╮") | ftxui::color(border),
   }));
-  if (!diff.empty()) {
+  if (patch) {
+    for (auto& row : patch_rows(*patch, expanded, content_width)) rows.push_back(std::move(row));
+  }
+  if (!diff.empty() && !patch) {
     std::size_t added = 0;
     std::size_t removed = 0;
     for (const auto& line : diff) {
@@ -172,7 +179,8 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
-  } else if (!entry.input.empty() && !todos && !grep_result && !glob_result && !web_result) {
+  } else if (!entry.input.empty() && !todos && !grep_result && !glob_result && !web_result &&
+             !patch) {
     const std::size_t input_width =
         shell_tool ? std::max<std::size_t>(1, content_width - 2) : content_width;
     bool first = true;
@@ -450,7 +458,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   } else if (!output.empty() && (!todos || entry.status == "failed") && !web_result &&
-             !json_output) {
+             !json_output && !patch) {
     rows.push_back(ftxui::hbox({
         ftxui::text("├── Output ") | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),

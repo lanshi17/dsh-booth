@@ -176,6 +176,80 @@ std::vector<DiffLine> from_patch(const std::string& patch) {
 
 }  // namespace
 
+std::optional<std::vector<PatchFile>> codex_patch(const TranscriptEntry& entry) {
+  if (entry.tool != "apply_patch") return std::nullopt;
+  const Json raw = Json::parse(entry.raw_input, nullptr, false);
+  if (raw.is_discarded() || !raw.is_object()) return std::nullopt;
+  const std::string patch = raw.value("input", std::string{});
+  if (patch.rfind("*** Begin Patch", 0) != 0) return std::nullopt;
+
+  std::vector<PatchFile> files;
+  PatchFile current;
+  const auto flush = [&] {
+    if (current.path.empty()) return;
+    files.push_back(std::move(current));
+    current = {};
+  };
+  const auto after = [](const std::string& line, std::string_view prefix) {
+    return line.substr(prefix.size());
+  };
+
+  std::istringstream input(patch);
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.rfind("*** Add File: ", 0) == 0) {
+      flush();
+      current.op = PatchOp::Add;
+      current.path = after(line, "*** Add File: ");
+      continue;
+    }
+    if (line.rfind("*** Update File: ", 0) == 0) {
+      flush();
+      current.op = PatchOp::Update;
+      current.path = after(line, "*** Update File: ");
+      continue;
+    }
+    if (line.rfind("*** Delete File: ", 0) == 0) {
+      flush();
+      current.op = PatchOp::Delete;
+      current.path = after(line, "*** Delete File: ");
+      continue;
+    }
+    if (line.rfind("*** Move to: ", 0) == 0) {
+      if (!current.path.empty()) {
+        current.op = PatchOp::Move;
+        current.destination = after(line, "*** Move to: ");
+      }
+      continue;
+    }
+    if (line == "*** End Patch") {
+      flush();
+      break;
+    }
+    if (line == "*** End of File" || line.rfind("*** Begin Patch", 0) == 0) continue;
+    if (current.path.empty()) continue;
+    if (line.rfind("@@", 0) == 0) {
+      current.lines.push_back({line, 0});
+      continue;
+    }
+    if (!line.empty() && line.front() == '+') {
+      current.lines.push_back({line, 1});
+      ++current.added;
+      continue;
+    }
+    if (!line.empty() && line.front() == '-') {
+      current.lines.push_back({line, -1});
+      ++current.removed;
+      continue;
+    }
+    current.lines.push_back({line, 0});
+  }
+  flush();
+  if (files.empty()) return std::nullopt;
+  return files;
+}
+
 std::vector<DiffLine> tool_diff(const TranscriptEntry& entry) {
   Json raw = Json::parse(entry.raw_input, nullptr, false);
   if (raw.is_discarded() || !raw.is_object()) return {};
