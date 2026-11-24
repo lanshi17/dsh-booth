@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/terminal.hpp>
 
 namespace booth {
 namespace {
@@ -228,64 +229,161 @@ bool is_table_start(const std::vector<std::string>& lines, std::size_t index) {
          is_table_separator(lines[index + 1]);
 }
 
-std::string truncate_cells(const std::string& text, std::size_t width) {
-  std::string out;
-  std::size_t used = 0;
-  for (std::size_t index = 0; index < text.size();) {
-    std::size_t end = index + 1;
-    while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) ++end;
-    const std::string glyph = text.substr(index, end - index);
-    const int cells = ftxui::string_width(glyph);
-    if (used + static_cast<std::size_t>(cells) > width) break;
-    out += glyph;
-    used += static_cast<std::size_t>(cells);
-    index = end;
+enum class TableAlign { Left, Right, Center };
+
+std::vector<TableAlign> table_alignments(const std::string& line) {
+  std::vector<TableAlign> aligns;
+  for (const auto& cell : table_cells(line)) {
+    const bool left = !cell.empty() && cell.front() == ':';
+    const bool right = !cell.empty() && cell.back() == ':';
+    aligns.push_back(left && right ? TableAlign::Center
+                                   : right ? TableAlign::Right
+                                           : TableAlign::Left);
   }
+  return aligns;
+}
+
+int display_width(const std::string& text) { return ftxui::string_width(text); }
+
+std::size_t glyph_end(const std::string& text, std::size_t index) {
+  std::size_t end = index + 1;
+  while (end < text.size() && (static_cast<unsigned char>(text[end]) & 0xC0) == 0x80) ++end;
+  return end;
+}
+
+std::string rule(const std::string& glyph, int count) {
+  std::string out;
+  for (int index = 0; index < std::max(0, count); ++index) out += glyph;
   return out;
 }
 
-ftxui::Element table_view(const std::vector<std::vector<std::string>>& rows) {
+std::vector<std::string> wrap_cell(const std::string& text, int width) {
+  if (width <= 0) return {text};
+  std::vector<std::string> lines(1);
+  int used = 0;
+  std::size_t last_space = std::string::npos;
+  for (std::size_t index = 0; index < text.size();) {
+    const std::size_t end = glyph_end(text, index);
+    const std::string glyph = text.substr(index, end - index);
+    const int cells = display_width(glyph);
+    if (used + cells > width && !lines.back().empty()) {
+      if (last_space != std::string::npos) {
+        std::string carry = lines.back().substr(last_space + 1);
+        lines.back() = lines.back().substr(0, last_space);
+        lines.push_back(std::move(carry));
+        used = display_width(lines.back());
+      } else {
+        lines.emplace_back();
+        used = 0;
+      }
+      last_space = std::string::npos;
+      const auto space = lines.back().find_last_of(' ');
+      if (space != std::string::npos) last_space = space;
+    }
+    lines.back() += glyph;
+    used += cells;
+    if (glyph == " ") last_space = lines.back().size() - 1;
+    index = end;
+  }
+  return lines;
+}
+
+std::string pad_cell(const std::string& text, int width, TableAlign align) {
+  const int padding = std::max(0, width - display_width(text));
+  int left = 0;
+  if (align == TableAlign::Right) left = padding;
+  else if (align == TableAlign::Center) left = padding / 2;
+  return std::string(static_cast<std::size_t>(left), ' ') + text +
+         std::string(static_cast<std::size_t>(padding - left), ' ');
+}
+
+std::vector<int> fit_columns(const std::vector<int>& natural, int available) {
+  std::vector<int> widths = natural;
+  std::vector<int> minimums(natural.size(), 1);
+  for (std::size_t index = 0; index < natural.size(); ++index) {
+    minimums[index] = std::min(natural[index], 6);
+  }
+  int total = 0;
+  for (const int width : widths) total += width;
+  while (total > available) {
+    std::size_t widest = 0;
+    bool found = false;
+    for (std::size_t index = 0; index < widths.size(); ++index) {
+      if (widths[index] <= minimums[index]) continue;
+      if (!found || widths[index] > widths[widest]) {
+        widest = index;
+        found = true;
+      }
+    }
+    if (!found) break;
+    --widths[widest];
+    --total;
+  }
+  return widths;
+}
+
+ftxui::Element table_view(const std::vector<std::vector<std::string>>& rows,
+                          const std::vector<TableAlign>& aligns, int max_width) {
   const ftxui::Color border = ftxui::Color::RGB(72, 72, 72);
   std::size_t columns = 0;
   for (const auto& row : rows) columns = std::max(columns, row.size());
-  std::vector<std::size_t> widths(columns, 0);
+  if (columns == 0) return ftxui::text("");
+  std::vector<int> natural(columns, 0);
   for (const auto& row : rows) {
     for (std::size_t column = 0; column < row.size(); ++column) {
-      widths[column] = std::max(widths[column],
-                                static_cast<std::size_t>(ftxui::string_width(row[column])));
+      natural[column] = std::max(natural[column], display_width(row[column]));
     }
   }
-  for (auto& width : widths) width = std::min<std::size_t>(width, 24);
-
-  ftxui::Elements body;
-  const auto paint = [&](const std::vector<std::string>& row, bool header) {
-    ftxui::Elements line;
-    line.push_back(ftxui::text("│") | ftxui::color(border));
-    for (std::size_t column = 0; column < columns; ++column) {
-      std::string cell = column < row.size() ? row[column] : "";
-      if (ftxui::string_width(cell) > static_cast<int>(widths[column])) {
-        cell = truncate_cells(cell, widths[column]);
-      }
-      cell += std::string(widths[column] - ftxui::string_width(cell), ' ');
-      ftxui::Element part = ftxui::text(" " + cell + " ") | ftxui::color(kText);
-      if (header) part = part | ftxui::bold;
-      line.push_back(std::move(part));
-      line.push_back(ftxui::text("│") | ftxui::color(border));
-    }
-    body.push_back(ftxui::hbox(std::move(line)));
+  const int overhead = static_cast<int>(3 * columns + 1);
+  const int available = std::max(static_cast<int>(columns), max_width - overhead);
+  const std::vector<int> widths = fit_columns(natural, available);
+  const auto alignment = [&](std::size_t column) {
+    return column < aligns.size() ? aligns[column] : TableAlign::Left;
   };
 
+  ftxui::Elements body;
+  const auto border_line = [&](const char* left, const char* mid, const char* right) {
+    ftxui::Elements line;
+    line.push_back(ftxui::text(left) | ftxui::color(border));
+    for (std::size_t column = 0; column < columns; ++column) {
+      line.push_back(ftxui::text(rule("─", widths[column] + 2)) | ftxui::color(border));
+      line.push_back(ftxui::text(column + 1 == columns ? right : mid) | ftxui::color(border));
+    }
+    return ftxui::hbox(std::move(line));
+  };
+  const auto paint = [&](const std::vector<std::string>& row, bool header) {
+    std::vector<std::vector<std::string>> cells(columns);
+    std::size_t height = 1;
+    for (std::size_t column = 0; column < columns; ++column) {
+      const std::string text = column < row.size() ? row[column] : "";
+      cells[column] = wrap_cell(text, widths[column]);
+      height = std::max(height, cells[column].size());
+    }
+    for (std::size_t line_index = 0; line_index < height; ++line_index) {
+      ftxui::Elements line;
+      line.push_back(ftxui::text("│") | ftxui::color(border));
+      for (std::size_t column = 0; column < columns; ++column) {
+        const std::string& text =
+            line_index < cells[column].size() ? cells[column][line_index] : "";
+        ftxui::Element part =
+            ftxui::text(" " + pad_cell(text, widths[column], alignment(column)) + " ") |
+            ftxui::color(kText);
+        if (header) part = part | ftxui::bold;
+        line.push_back(std::move(part));
+        line.push_back(ftxui::text("│") | ftxui::color(border));
+      }
+      body.push_back(ftxui::hbox(std::move(line)));
+    }
+  };
+
+  body.push_back(border_line("┌", "┬", "┐"));
   paint(rows.front(), true);
-  ftxui::Elements separator;
-  separator.push_back(ftxui::text("├") | ftxui::color(border));
-  for (std::size_t column = 0; column < columns; ++column) {
-    std::string rule;
-    for (std::size_t cell = 0; cell < widths[column] + 2; ++cell) rule += "─";
-    separator.push_back(ftxui::text(rule) | ftxui::color(border));
-    separator.push_back(ftxui::text(column + 1 == columns ? "┤" : "┼") | ftxui::color(border));
+  body.push_back(border_line("├", "┼", "┤"));
+  for (std::size_t row = 1; row < rows.size(); ++row) {
+    paint(rows[row], false);
+    if (row + 1 < rows.size()) body.push_back(border_line("├", "┼", "┤"));
   }
-  body.push_back(ftxui::hbox(std::move(separator)));
-  for (std::size_t row = 1; row < rows.size(); ++row) paint(rows[row], false);
+  body.push_back(border_line("└", "┴", "┘"));
   return ftxui::vbox(std::move(body));
 }
 
@@ -304,12 +402,14 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     if (!code && is_table_start(source, index)) {
       std::vector<std::vector<std::string>> rows;
       rows.push_back(table_cells(line));
+      const auto aligns = table_alignments(source[index + 1]);
       std::size_t next = index + 2;
       while (next < source.size() && source[next].find('|') != std::string::npos) {
         rows.push_back(table_cells(source[next]));
         ++next;
       }
-      lines.push_back(table_view(rows));
+      lines.push_back(table_view(rows, aligns,
+                                 std::max(20, ftxui::Terminal::Size().dimx - 4)));
       index = next - 1;
       continue;
     }
