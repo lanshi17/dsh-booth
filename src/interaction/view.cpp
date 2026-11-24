@@ -245,14 +245,13 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
       ftxui::hbox(std::move(band)),
       ftxui::text("") | ftxui::color(kChip),
       ftxui::text("─") | ftxui::color(kAccent),
-      ftxui::text(context_bar(percent, 6)) | ftxui::color(context_color(percent)),
-      ftxui::text(" "),
-      ftxui::text(std::to_string(percent) + "%") | ftxui::color(context_color(percent)),
-      window.hidden_above > 0
-          ? (ftxui::text("↑" + std::to_string(window.hidden_above) + " ") | ftxui::color(kDim))
-          : ftxui::text(""),
-      ftxui::separator() | ftxui::flex | ftxui::color(kLine),
   };
+  if (size > 0) {
+    top.push_back(ftxui::text(context_bar(percent, 6)) | ftxui::color(context_color(percent)));
+    top.push_back(ftxui::text(" "));
+    top.push_back(ftxui::text(std::to_string(percent) + "%") |
+                  ftxui::color(context_color(percent)));
+  }
   if (size > 0) {
     top.push_back(ftxui::text("󰁨") | ftxui::color(kToken));
     top.push_back(ftxui::text(compact_tokens(used) + "/" + compact_tokens(size) + " ") |
@@ -267,6 +266,11 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
     top.push_back(ftxui::text(" 󰆍 " + label + " ") | ftxui::color(kText) |
                   ftxui::bgcolor(kChip));
   }
+  top.push_back(window.hidden_above > 0
+                    ? (ftxui::text("↑" + std::to_string(window.hidden_above) + " ") |
+                       ftxui::color(kDim))
+                    : ftxui::text(""));
+  top.push_back(ftxui::separator() | ftxui::flex | ftxui::color(kLine));
   top.push_back(ftxui::text("─╮") | ftxui::color(kBorder));
   ftxui::Element top_line = ftxui::hbox(std::move(top));
 

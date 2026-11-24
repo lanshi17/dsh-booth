@@ -509,3 +509,14 @@ TEST_CASE("permission card shows a shell prompt") {
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("$ rm -rf build") != std::string::npos);
 }
+
+TEST_CASE("composer hides the context gauge when size is unknown") {
+  AppState state;
+  GitStatus git;
+  std::vector<std::string> lines = {"hi"};
+  auto view = composer_view(state, "/tmp", git, "title", -1, "", lines, 0, 0, "", 0, "", 0,
+                             nullptr);
+  ftxui::Screen screen(100, 12);
+  ftxui::Render(screen, std::move(view));
+  REQUIRE(screen.ToString().find("0%") == std::string::npos);
+}
