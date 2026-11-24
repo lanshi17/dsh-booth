@@ -78,4 +78,7 @@ std::string web_queries(const TranscriptEntry& entry);
 /// Pretty-print a complete JSON object or array; empty for primitives or invalid JSON.
 std::optional<std::string> pretty_json(const std::string& output);
 
+/// A short activity label derived from the tool arguments.
+std::string tool_activity(const TranscriptEntry& entry);
+
 }  // namespace booth

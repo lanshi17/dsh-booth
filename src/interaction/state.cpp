@@ -4,6 +4,7 @@
 #include <set>
 #include <string>
 
+#include "interaction/tool_parse.hpp"
 #include "interaction/tui_internal.hpp"
 #include "interaction/view.hpp"
 
@@ -48,8 +49,7 @@ std::string active_activity(const AppState& state) {
   for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
     if (entry->kind != EntryKind::Tool) continue;
     if (entry->status == "pending" || entry->status == "running" || entry->status == "in_progress") {
-      if (!entry->text.empty()) return entry->text;
-      if (!entry->tool.empty()) return entry->tool;
+      return tool_activity(*entry);
     }
     break;
   }

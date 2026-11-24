@@ -330,6 +330,21 @@ TEST_CASE("active activity follows the latest running tool") {
   tool.text.clear();
   state.entries[0] = tool;
   REQUIRE(active_activity(state) == "read");
+
+  tool.tool = "bash";
+  tool.raw_input = R"({"command":"make test\nsecond"})";
+  state.entries[0] = tool;
+  REQUIRE(active_activity(state) == "$ make test");
+
+  tool.tool = "grep";
+  tool.raw_input = R"({"pattern":"TODO"})";
+  state.entries[0] = tool;
+  REQUIRE(active_activity(state) == "grep \"TODO\"");
+
+  tool.tool = "edit";
+  tool.raw_input = R"({"file_path":"src/a.cpp"})";
+  state.entries[0] = tool;
+  REQUIRE(active_activity(state) == "src/a.cpp");
 }
 
 TEST_CASE("context gauge fills and changes color at thresholds") {

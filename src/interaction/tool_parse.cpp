@@ -274,6 +274,46 @@ std::string web_queries(const TranscriptEntry& entry) {
   return out;
 }
 
+std::string tool_activity(const TranscriptEntry& entry) {
+  const Json raw = Json::parse(entry.raw_input, nullptr, false);
+  const auto field = [&](std::initializer_list<const char*> keys) -> std::string {
+    if (raw.is_discarded() || !raw.is_object()) return {};
+    for (const char* key : keys) {
+      if (raw.contains(key) && raw[key].is_string()) return raw[key].get<std::string>();
+    }
+    return {};
+  };
+  const auto first_line = [](const std::string& text) {
+    const auto end = text.find('\n');
+    return end == std::string::npos ? text : text.substr(0, end);
+  };
+  if (!entry.text.empty() && entry.text != entry.tool) return entry.text;
+  std::string label;
+  if (is_shell_tool(entry.tool)) {
+    const std::string command = first_line(field({"command", "cmd"}));
+    if (!command.empty()) label = "$ " + command;
+  } else if (entry.tool == "read" || entry.tool == "read_file") {
+    label = field({"path", "file_path"});
+  } else if (entry.tool == "grep") {
+    const std::string pattern = field({"pattern"});
+    if (!pattern.empty()) label = "grep \"" + pattern + "\"";
+  } else if (entry.tool == "glob") {
+    const std::string pattern = field({"pattern"});
+    if (!pattern.empty()) label = "glob \"" + pattern + "\"";
+  } else if (entry.tool == "web_search") {
+    const std::string query = web_queries(entry);
+    if (!query.empty()) label = "web \"" + query + "\"";
+  } else if (entry.tool == "edit" || entry.tool == "write") {
+    label = field({"file_path", "path"});
+  } else if (entry.tool == "todo_write") {
+    label = "Updating todos";
+  } else if (entry.tool == "subagent" || entry.tool == "task") {
+    label = field({"description", "agent"});
+  }
+  if (!label.empty()) return label;
+  return entry.text.empty() ? entry.tool : entry.text;
+}
+
 std::optional<std::string> pretty_json(const std::string& output) {
   const Json parsed = Json::parse(output, nullptr, false);
   if (parsed.is_discarded() || (!parsed.is_object() && !parsed.is_array())) return std::nullopt;
