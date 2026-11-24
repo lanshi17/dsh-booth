@@ -182,6 +182,31 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("readtool") != std::string::npos) {
+        std::string lines;
+        for (int index = 1; index <= 10; ++index) {
+          if (!lines.empty()) lines += '\n';
+          lines += "line " + std::to_string(index);
+        }
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-read"},
+                                      {"title", "src/a.cpp"},
+                                      {"name", "read"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"path", "src/a.cpp"}}}}}}}});
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call_update"},
+                                      {"toolCallId", "t-read"},
+                                      {"status", "completed"},
+                                      {"content", json::array({json{{"type", "content"},
+                                                                    {"content", {{"type", "text"}, {"text", lines}}}}})}}}}}});
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("longtool") != std::string::npos) {
         std::string lines;
         for (int index = 1; index <= 20; ++index) {

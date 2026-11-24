@@ -78,6 +78,10 @@ add_test(NAME pty_chart
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_chart.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_read_card
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_read_card.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_activity
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_activity.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

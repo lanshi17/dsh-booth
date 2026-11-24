@@ -99,8 +99,9 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     std::string line;
     std::size_t shown = 0;
     std::size_t hidden = 0;
+    const std::size_t limit = !expanded && (entry.tool == "read" || entry.tool == "read_file") ? 3 : 12;
     while (std::getline(output, line)) {
-      if (!expanded && shown >= 12) {
+      if (!expanded && shown >= limit) {
         ++hidden;
         continue;
       }

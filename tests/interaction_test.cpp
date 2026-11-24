@@ -266,3 +266,26 @@ TEST_CASE("permission card previews an edit diff") {
   REQUIRE(text.find("- old") != std::string::npos);
   REQUIRE(text.find("+ new") != std::string::npos);
 }
+
+TEST_CASE("read tool cards collapse long output") {
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "read";
+  entry.text = "src/a.cpp";
+  entry.status = "completed";
+  entry.output = "one\ntwo\nthree\nfour\nfive\nsix";
+
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen compact(70, 20);
+  ftxui::Render(compact, std::move(collapsed));
+  const std::string compact_text = compact.ToString();
+  REQUIRE(compact_text.find("one") != std::string::npos);
+  REQUIRE(compact_text.find("three") != std::string::npos);
+  REQUIRE(compact_text.find("four") == std::string::npos);
+  REQUIRE(compact_text.find("… +3 lines") != std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(70, 20);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("six") != std::string::npos);
+}
