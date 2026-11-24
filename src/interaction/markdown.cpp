@@ -259,9 +259,19 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       lines.push_back(ftxui::text(rule) | ftxui::color(kLine));
       continue;
     }
-    if (line.rfind("> ", 0) == 0) {
-      lines.push_back(ftxui::hbox({ftxui::text(" │ ") | ftxui::color(kLine),
-                                   inline_words_view(line.substr(2), true) | ftxui::flex}));
+    std::size_t quote_depth = 0;
+    std::size_t quote_start = 0;
+    while (quote_start < line.size() && line[quote_start] == '>') {
+      ++quote_depth;
+      ++quote_start;
+      if (quote_start < line.size() && line[quote_start] == ' ') ++quote_start;
+    }
+    if (quote_depth > 0) {
+      std::string prefix;
+      for (std::size_t depth = 0; depth < quote_depth; ++depth) prefix += "│ ";
+      lines.push_back(ftxui::hbox({ftxui::text(prefix) | ftxui::color(kLine),
+                                   inline_words_view(line.substr(quote_start), true) |
+                                       ftxui::flex}));
       continue;
     }
     std::size_t hashes = 0;

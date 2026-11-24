@@ -312,3 +312,19 @@ TEST_CASE("markdown keeps emphasis on link labels") {
   }
   REQUIRE(emphasized);
 }
+
+TEST_CASE("markdown renders nested blockquotes") {
+  const std::string text = render_markdown("> outer\n> > inner\n> \n", 60, 10);
+  REQUIRE(text.find("outer") != std::string::npos);
+  REQUIRE(text.find("inner") != std::string::npos);
+  std::size_t bars = 0;
+  for (std::size_t index = 0; index + 3 <= text.size();) {
+    if (text.compare(index, 3, "│") == 0) {
+      ++bars;
+      index += 3;
+    } else {
+      ++index;
+    }
+  }
+  REQUIRE(bars >= 3);
+}
