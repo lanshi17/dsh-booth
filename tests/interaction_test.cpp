@@ -674,6 +674,38 @@ TEST_CASE("generic JSON output renders as a pretty tree") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("skill cards show the base directory and instructions") {
+  ftxui::Terminal::SetFallbackSize({100, 24});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "skill";
+  entry.status = "completed";
+  entry.raw_input = R"({"name":"demo-skill"})";
+  entry.output =
+      "<skill_content name=\"demo-skill\">\n"
+      "<skill_resources>\n"
+      "Base directory for this skill: /skills/demo\n"
+      "</skill_resources>\n"
+      "\n"
+      "<skill_instructions>\n"
+      "Follow these instructions.\n"
+      "Then run the checks.\n"
+      "</skill_instructions>\n"
+      "</skill_content>";
+
+  auto view = tool_view(entry, false);
+  ftxui::Screen screen(100, 24);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("Skill · demo-skill") != std::string::npos);
+  REQUIRE(text.find("Base directory for this skill: /skills/demo") != std::string::npos);
+  REQUIRE(text.find("Follow these instructions.") != std::string::npos);
+  REQUIRE(text.find("Then run the checks.") != std::string::npos);
+  REQUIRE(text.find("<skill_content") == std::string::npos);
+  REQUIRE(text.find("<skill_instructions>") == std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("web fetch cards show the page preview and truncation") {
   ftxui::Terminal::SetFallbackSize({100, 30});
   TranscriptEntry entry;

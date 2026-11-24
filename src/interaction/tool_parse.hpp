@@ -79,6 +79,14 @@ struct WebFetchResult {
 
 std::optional<WebFetchResult> parse_web_fetch(const std::string& output);
 
+struct SkillResult {
+  std::string name;
+  std::string base;
+  std::vector<std::string> instructions;
+};
+
+std::optional<SkillResult> parse_skill(const TranscriptEntry& entry);
+
 /// Pretty-print a complete JSON object or array; empty for primitives or invalid JSON.
 std::optional<std::string> pretty_json(const std::string& output);
 

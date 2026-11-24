@@ -310,6 +310,9 @@ std::string tool_activity(const TranscriptEntry& entry) {
     label = field({"file_path", "path"});
   } else if (entry.tool == "todo_write") {
     label = "Updating todos";
+  } else if (entry.tool == "skill") {
+    label = field({"name"});
+    if (!label.empty()) label = "skill " + label;
   } else if (entry.tool == "subagent" || entry.tool == "task") {
     label = field({"description", "agent"});
   }
@@ -344,6 +347,40 @@ std::optional<WebFetchResult> parse_web_fetch(const std::string& output) {
   }
   while (!result.body.empty() && result.body.front().empty()) result.body.erase(result.body.begin());
   while (!result.body.empty() && result.body.back().empty()) result.body.pop_back();
+  return result;
+}
+
+std::optional<SkillResult> parse_skill(const TranscriptEntry& entry) {
+  if (entry.tool != "skill") return std::nullopt;
+  SkillResult result;
+  bool in_instructions = false;
+  std::istringstream input(entry.output);
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    const std::string prefix = "<skill_content name=\"";
+    if (line.rfind(prefix, 0) == 0) {
+      const auto end = line.find('"', prefix.size());
+      if (end != std::string::npos) {
+        result.name = line.substr(prefix.size(), end - prefix.size());
+      }
+      continue;
+    }
+    if (line == "<skill_instructions>") {
+      in_instructions = true;
+      continue;
+    }
+    if (line == "</skill_instructions>" || line == "</skill_content>") {
+      in_instructions = false;
+      continue;
+    }
+    if (line.rfind("Base directory for this skill:", 0) == 0) {
+      result.base = line;
+      continue;
+    }
+    if (in_instructions) result.instructions.push_back(line);
+  }
+  if (result.name.empty() && result.instructions.empty()) return std::nullopt;
   return result;
 }
 

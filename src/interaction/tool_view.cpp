@@ -11,6 +11,7 @@
 
 #include "interaction/fetch_view.hpp"
 #include "interaction/json_view.hpp"
+#include "interaction/skill_view.hpp"
 #include "interaction/patch_view.hpp"
 #include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
@@ -67,6 +68,8 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const std::optional<WebFetchResult> web_fetch =
       entry.tool == "web_fetch" && entry.status != "failed" ? parse_web_fetch(entry.output)
                                                             : std::nullopt;
+  const std::optional<SkillResult> skill =
+      entry.tool == "skill" && entry.status != "failed" ? parse_skill(entry) : std::nullopt;
   std::string output = entry.output;
   const ShellStatus shell_status = shell_tool ? take_shell_status(output) : ShellStatus{};
   const std::vector<ReadEnvelope> reads =
@@ -82,7 +85,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   }
   const std::optional<std::string> json_output =
       !read_tool && !shell_tool && !todos && !grep_result && !glob_result && !web_result &&
-              !patch && !web_fetch && entry.status != "failed" && diff.empty()
+              !patch && !web_fetch && !skill && entry.status != "failed" && diff.empty()
           ? pretty_json(entry.output)
           : std::nullopt;
   std::string title = entry.text.empty() ? entry.tool : entry.text;
@@ -125,6 +128,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   if (json_output) title += " · JSON";
   if (patch) title = patch_title(*patch);
   if (web_fetch) title = web_fetch_title(*web_fetch);
+  if (skill) title = skill_title(*skill);
   if (web_result) {
     title = "Web search";
     const std::string query = web_queries(entry);
@@ -148,6 +152,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       ftxui::text("╮") | ftxui::color(border),
   }));
   if (web_fetch) for (auto& row : web_fetch_rows(*web_fetch, expanded, content_width)) rows.push_back(std::move(row));
+  if (skill) for (auto& row : skill_rows(*skill, expanded, content_width)) rows.push_back(std::move(row));
   if (patch) {
     for (auto& row : patch_rows(*patch, expanded, content_width)) rows.push_back(std::move(row));
   }
@@ -195,7 +200,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   } else if (!entry.input.empty() && !todos && !grep_result && !glob_result && !web_result &&
-             !patch && !web_fetch) {
+             !patch && !web_fetch && !skill) {
     const std::size_t input_width =
         shell_tool ? std::max<std::size_t>(1, content_width - 2) : content_width;
     bool first = true;
@@ -451,7 +456,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   } else if (!output.empty() && (!todos || entry.status == "failed") && !web_result &&
-             !json_output && !patch && !web_fetch) {
+             !json_output && !patch && !web_fetch && !skill) {
     rows.push_back(ftxui::hbox({
         ftxui::text("├── Output ") | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),

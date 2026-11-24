@@ -47,8 +47,9 @@ markdown (lists, links, tables, inline code, LaTeX math, syntax-highlighted fenc
 full-width frames with input, output, diff statistics and duration; shell cards show the last 10
 output lines and the exit status, grep cards group matches by file, glob cards group paths by
 directory, web search cards show the answer and clickable sources, web fetch cards show the URL,
-HTTP status, preview and truncation notice, read cards use a dim line-number
-gutter, generic JSON tool output pretty-prints as an indented tree, and a diff shows old/new line
+HTTP status, preview and truncation notice, skill cards show the base directory and instructions,
+read cards use a dim line-number gutter, generic JSON tool output pretty-prints as an indented tree,
+and a diff shows old/new line
 numbers, stopping at 40 lines until `Ctrl+O`; edit/write cards title the path with +/− stats, and
 `apply_patch` cards split per file with A/M/D labels and per-file +/− stats. `/copy` opens a
 filterable picker over answers, fenced code, blockquotes, tool
