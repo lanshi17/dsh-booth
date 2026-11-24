@@ -134,3 +134,14 @@ TEST_CASE("markdown renders inline latex outside code") {
   const std::string code = render_markdown("`$x^2$`\n```\n$x^2$\n```\n", 60, 12);
   REQUIRE(code.find("$x^2$") != std::string::npos);
 }
+
+TEST_CASE("markdown renders display latex blocks") {
+  const std::string display = render_markdown("$$\nE = mc^2\n$$\n", 60, 10);
+  REQUIRE(display.find("E = mc²") != std::string::npos);
+  REQUIRE(display.find("$$") == std::string::npos);
+
+  const std::string aligned =
+      render_markdown("\\begin{aligned}\na &= b \\\\ c &= d\n\\end{aligned}\n", 60, 12);
+  REQUIRE(aligned.find("a = b") != std::string::npos);
+  REQUIRE(aligned.find("c = d") != std::string::npos);
+}

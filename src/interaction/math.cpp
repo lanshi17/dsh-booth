@@ -356,9 +356,12 @@ class Parser {
 
 std::string latex_to_unicode(std::string_view source) {
   if (source.empty()) return {};
-  std::string out = Parser(source).render();
-  for (char& ch : out) {
-    if (ch == '\n' || ch == '\t') ch = ' ';
+  const std::string raw = Parser(source).render();
+  std::string out;
+  for (const char ch : raw) {
+    const char normalized = ch == '\n' || ch == '\t' ? ' ' : ch;
+    if (normalized == ' ' && !out.empty() && out.back() == ' ') continue;
+    out += normalized;
   }
   return out;
 }

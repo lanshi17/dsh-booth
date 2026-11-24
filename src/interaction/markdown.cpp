@@ -5,6 +5,7 @@
 #include <cctype>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <ftxui/dom/elements.hpp>
@@ -400,9 +401,28 @@ ftxui::Element table_view(const std::vector<std::vector<std::string>>& rows,
   return ftxui::vbox(std::move(body));
 }
 
+bool is_math_environment(std::string_view env) {
+  static constexpr std::string_view kEnvironments[] = {
+      "matrix", "smallmatrix", "pmatrix", "bmatrix", "Bmatrix", "vmatrix", "Vmatrix",
+      "cases", "dcases", "rcases", "drcases", "aligned", "alignedat", "align", "alignat",
+      "split", "gathered", "gatheredat", "gather", "multline", "equation", "eqnarray",
+      "array", "subarray",
+  };
+  for (const auto candidate : kEnvironments) {
+    if (env == candidate) return true;
+    if (env.size() == candidate.size() + 1 && env.back() == '*' && env.substr(0, env.size() - 1) == candidate) {
+      return true;
+    }
+  }
+  return false;
+}
+
 ftxui::Element render_markdown(const std::string& text, bool dim) {
   ftxui::Elements lines;
   bool code = false;
+  bool math_block = false;
+  std::string math_close;
+  std::string math_source;
   std::string lang;
   std::vector<std::string> source;
   {
@@ -410,8 +430,54 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     std::string line;
     while (std::getline(input, line)) source.push_back(line);
   }
+  const auto append_math = [&](std::string_view part) {
+    if (!math_source.empty() && !part.empty()) math_source += '\n';
+    math_source += part;
+  };
+  const auto flush_math = [&] {
+    const std::string rendered = latex_to_unicode(math_source);
+    if (!rendered.empty()) {
+      ftxui::Element row = ftxui::text("  " + rendered) | ftxui::color(kText);
+      if (dim) row = std::move(row) | ftxui::dim;
+      lines.push_back(std::move(row));
+      lines.push_back(ftxui::text(""));
+    }
+    math_block = false;
+    math_close.clear();
+    math_source.clear();
+  };
   for (std::size_t index = 0; index < source.size(); ++index) {
     const std::string& line = source[index];
+    if (math_block) {
+      const auto close = line.find(math_close);
+      if (close == std::string::npos) {
+        append_math(line);
+      } else {
+        append_math(line.substr(0, close));
+        flush_math();
+      }
+      continue;
+    }
+    if (!code) {
+      if (line.rfind("$$", 0) == 0 && line.find("$$", 2) == std::string::npos) {
+        math_block = true;
+        math_close = "$$";
+        append_math(line.substr(2));
+        continue;
+      }
+      if (line.rfind("\\begin{", 0) == 0) {
+        const auto brace = line.find('}');
+        if (brace != std::string::npos) {
+          const std::string env = line.substr(7, brace - 7);
+          if (is_math_environment(env)) {
+            math_block = true;
+            math_close = "\\end{" + env + "}";
+            append_math(line);
+            continue;
+          }
+        }
+      }
+    }
     if (!code && is_table_start(source, index)) {
       std::vector<std::vector<std::string>> rows;
       rows.push_back(table_cells(line));
@@ -492,6 +558,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     lines.push_back(ftxui::hbox({ftxui::text(" "),
                                  inline_words(line, dim) | ftxui::flex}));
   }
+  if (math_block) flush_math();
   return ftxui::vbox(std::move(lines));
 }
 

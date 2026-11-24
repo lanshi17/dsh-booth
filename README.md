@@ -43,7 +43,7 @@ keeps the transcript above a two-row composer. The composer's top border is a da
 the model, reasoning effort when dsh reports it, cwd, git branch/dirty counts, working timer and
 context usage; the bottom row merges
 the prompt with the key hints. User turns keep omp's full-width band, assistant turns render
-markdown (lists, links, tables, inline code, inline LaTeX math, syntax-highlighted fences), and tool calls render as
+markdown (lists, links, tables, inline code, LaTeX math, syntax-highlighted fences), and tool calls render as
 full-width frames with input, output and duration. `/copy` puts the last answer on the terminal
 clipboard with OSC 52 (tmux passthrough included); `/export [path]` writes the full transcript as Markdown (default:
 `$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk the prompt history,
