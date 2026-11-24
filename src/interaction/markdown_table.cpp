@@ -204,6 +204,17 @@ TableCell styled_cell(std::string raw) {
       raw = raw.substr(2, close - 2);
     }
   }
+  if (!cell.code && cell.href.empty() && !raw.empty() && raw.front() == '[') {
+    const auto close = raw.find("](");
+    const auto end = close == std::string::npos ? std::string::npos : link_end(raw, close + 2);
+    if (close != std::string::npos && end != std::string::npos) {
+      std::string target = raw.substr(close + 2, end - close - 2);
+      const auto title = target.find_first_of(" \t");
+      if (title != std::string::npos) target = target.substr(0, title);
+      cell.href = decode_html_entities(target);
+      raw = raw.substr(1, close - 1);
+    }
+  }
   cell.text = clean_cell(raw);
   return cell;
 }

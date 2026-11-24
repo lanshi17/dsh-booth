@@ -759,3 +759,13 @@ TEST_CASE("table cells hide html tags") {
   REQUIRE(cells[0].text == "x bold y");
   REQUIRE(cells[1].text == "plain span");
 }
+
+TEST_CASE("emphasized table links keep their href") {
+  const auto cells = styled_cells({"**[docs](https://x.test)**", "~~[gone](https://x.test/g)~~"});
+  REQUIRE(cells[0].bold);
+  REQUIRE(cells[0].text == "docs");
+  REQUIRE(cells[0].href == "https://x.test");
+  REQUIRE(cells[1].strike);
+  REQUIRE(cells[1].text == "gone");
+  REQUIRE(cells[1].href == "https://x.test/g");
+}
