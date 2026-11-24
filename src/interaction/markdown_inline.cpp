@@ -17,6 +17,16 @@ namespace {
 const ftxui::Color kAccent = ftxui::Color::RGB(0, 175, 255);
 const ftxui::Color kGreen = ftxui::Color::RGB(0, 255, 135);
 
+bool starts_with(std::string_view text, std::string_view prefix) {
+  return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
+}
+
+bool is_autolink_target(const std::string& text) {
+  return starts_with(text, "http://") || starts_with(text, "https://") ||
+         starts_with(text, "ftp://") || starts_with(text, "www.") ||
+         starts_with(text, "mailto:");
+}
+
 ftxui::Element inline_words(const std::string& text, bool dim) {
   ftxui::Elements parts;
   bool code = false;
@@ -24,20 +34,46 @@ ftxui::Element inline_words(const std::string& text, bool dim) {
   bool italic = false;
   bool strike = false;
   std::string segment;
+  const auto styled = [&](ftxui::Element part) {
+    if (code) {
+      part = part | ftxui::color(kGreen);
+    } else if (dim) {
+      part = part | ftxui::dim;
+    }
+    if (bold) part = part | ftxui::bold;
+    if (italic) part = part | ftxui::italic;
+    if (strike) part = part | ftxui::strikethrough;
+    return part;
+  };
   const auto flush = [&] {
     std::istringstream words(segment);
     std::string word;
     while (words >> word) {
-      ftxui::Element part = ftxui::text(word + " ");
-      if (code) {
-        part = part | ftxui::color(kGreen);
-      } else if (dim) {
-        part = part | ftxui::dim;
+      if (!code) {
+        std::string url = word;
+        std::string suffix;
+        if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
+          url = url.substr(1, url.size() - 2);
+        } else {
+          while (!url.empty() && std::string(".,;:!?").find(url.back()) != std::string::npos) {
+            suffix.insert(suffix.begin(), url.back());
+            url.pop_back();
+          }
+        }
+        if (is_autolink_target(url)) {
+          const std::string href = starts_with(url, "www.") ? "https://" + url : url;
+          ftxui::Element label =
+              ftxui::text(url) | ftxui::color(kAccent) | ftxui::underlined;
+          if (bold) label = label | ftxui::bold;
+          if (italic) label = label | ftxui::italic;
+          if (strike) label = label | ftxui::strikethrough;
+          if (dim) label = label | ftxui::dim;
+          parts.push_back(ftxui::hyperlink(href, std::move(label)));
+          parts.push_back(styled(ftxui::text(suffix + " ")));
+          continue;
+        }
       }
-      if (bold) part = part | ftxui::bold;
-      if (italic) part = part | ftxui::italic;
-      if (strike) part = part | ftxui::strikethrough;
-      parts.push_back(std::move(part));
+      parts.push_back(styled(ftxui::text(word + " ")));
     }
     segment.clear();
   };

@@ -175,3 +175,19 @@ TEST_CASE("markdown applies italic and strikethrough styles") {
   REQUIRE(italic);
   REQUIRE(strike);
 }
+
+TEST_CASE("markdown autolinks bare urls") {
+  auto view = markdown_view("Visit https://example.com/docs. and www.test.dev\n", false);
+  ftxui::Screen screen(80, 10);
+  ftxui::Render(screen, std::move(view));
+  bool linked = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      if (screen.CellAt(x, y).hyperlink != 0) linked = true;
+    }
+  }
+  REQUIRE(linked);
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("https://example.com/docs") != std::string::npos);
+  REQUIRE(text.find("www.test.dev") != std::string::npos);
+}
