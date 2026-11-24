@@ -9,6 +9,7 @@
 #include <ftxui/screen/terminal.hpp>
 
 #include "interaction/view.hpp"
+#include "interaction/markdown_table.hpp"
 
 using namespace booth;
 
@@ -518,4 +519,15 @@ TEST_CASE("diff fences color added and removed lines") {
   REQUIRE(removed);
   REQUIRE(hunk);
   ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
+TEST_CASE("table cells keep escaped and code pipes") {
+  const auto cells = table_cells("| `a | b` | c \\| d |");
+  REQUIRE(cells.size() == 2);
+  REQUIRE(cells[0] == "`a | b`");
+  REQUIRE(cells[1] == "c | d");
+  const std::string text = render_markdown(
+      "| code | value |\n|------|-------|\n| `a | b` | 1 |\n", 60, 10);
+  REQUIRE(text.find("a | b") != std::string::npos);
+  REQUIRE(text.find("value") != std::string::npos);
 }

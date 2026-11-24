@@ -32,14 +32,31 @@ std::vector<std::string> table_cells(const std::string& line) {
   if (!body.empty() && body.front() == '|') body.erase(body.begin());
   if (!body.empty() && body.back() == '|') body.pop_back();
   std::vector<std::string> cells;
-  std::size_t start = 0;
-  while (true) {
-    const auto pipe = body.find('|', start);
-    cells.push_back(trim_copy(body.substr(start, pipe == std::string::npos ? std::string::npos
-                                                                          : pipe - start)));
-    if (pipe == std::string::npos) break;
-    start = pipe + 1;
+  std::string cell;
+  bool code = false;
+  for (std::size_t index = 0; index < body.size();) {
+    const char ch = body[index];
+    if (ch == '\\' && index + 1 < body.size() && body[index + 1] == '|') {
+      cell += '|';
+      index += 2;
+      continue;
+    }
+    if (ch == '`') {
+      code = !code;
+      cell += ch;
+      ++index;
+      continue;
+    }
+    if (ch == '|' && !code) {
+      cells.push_back(trim_copy(cell));
+      cell.clear();
+      ++index;
+      continue;
+    }
+    cell += ch;
+    ++index;
   }
+  cells.push_back(trim_copy(cell));
   return cells;
 }
 
