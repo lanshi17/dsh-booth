@@ -21,6 +21,7 @@ const ftxui::Color kText = ftxui::Color::RGB(228, 228, 228);
 const ftxui::Color kDim = ftxui::Color::RGB(118, 118, 118);
 const ftxui::Color kLine = ftxui::Color::RGB(72, 72, 72);
 const ftxui::Color kGreen = ftxui::Color::RGB(0, 255, 135);
+const ftxui::Color kRed = ftxui::Color::RGB(255, 95, 95);
 
 std::string normalize_lang(std::string lang) {
   for (char& ch : lang) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -61,6 +62,24 @@ struct CodeSpan {
 };
 
 std::vector<CodeSpan> highlight_line(const std::string& line, const std::string& lang) {
+  if (lang == "diff") {
+    if (line.empty()) return {};
+    ftxui::Color color = kText;
+    bool dim = true;
+    if (line.rfind("+++", 0) == 0 || line.rfind("---", 0) == 0) {
+      color = kDim;
+    } else if (line[0] == '+') {
+      color = kGreen;
+      dim = false;
+    } else if (line[0] == '-') {
+      color = kRed;
+      dim = false;
+    } else if (line[0] == '@') {
+      color = kAccent;
+      dim = false;
+    }
+    return {CodeSpan{line, color, dim}};
+  }
   const bool hash_comment = lang == "python" || lang == "bash";
   const bool slash_comment = lang == "cpp" || lang == "ts";
   std::vector<CodeSpan> spans;

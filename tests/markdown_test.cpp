@@ -497,3 +497,25 @@ TEST_CASE("escaped math delimiters fall back to literal text") {
   const std::string text = render_markdown("a \\( b and c \\[ d\n", 60, 10);
   REQUIRE(text.find("a ( b and c [ d") != std::string::npos);
 }
+
+TEST_CASE("diff fences color added and removed lines") {
+  ftxui::Terminal::SetFallbackSize({60, 12});
+  auto view = markdown_view("```diff\n+added\n-removed\n@@ hunk\n unchanged\n```\n", false);
+  ftxui::Screen screen(60, 12);
+  ftxui::Render(screen, std::move(view));
+  bool added = false;
+  bool removed = false;
+  bool hunk = false;
+  for (int y = 0; y < 12; ++y) {
+    for (int x = 0; x < 60; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "+" && cell.foreground_color == ftxui::Color::RGB(0, 255, 135)) added = true;
+      if (cell.character == "-" && cell.foreground_color == ftxui::Color::RGB(255, 95, 95)) removed = true;
+      if (cell.character == "@" && cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) hunk = true;
+    }
+  }
+  REQUIRE(added);
+  REQUIRE(removed);
+  REQUIRE(hunk);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
