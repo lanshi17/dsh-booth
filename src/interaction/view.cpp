@@ -358,6 +358,13 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
       return ftxui::vbox({markdown_view(entry.text, false), ftxui::text(" ")});
     case EntryKind::Thought:
       return thought_view(entry);
+    case EntryKind::Image: {
+      std::string label = entry.text.empty() ? "image" : entry.text;
+      if (!entry.tool.empty()) label += " · " + entry.tool;
+      return ftxui::vbox({ftxui::text("  [image: " + label + "]") |
+                              ftxui::color(kAccent) | ftxui::dim,
+                          ftxui::text(" ")});
+    }
     case EntryKind::Tool:
       return ftxui::vbox({tool_view(entry, expand_tools), ftxui::text(" ")});
     case EntryKind::User: {

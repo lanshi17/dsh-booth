@@ -368,6 +368,7 @@ std::string stats_text(const AppState& state, std::size_t queued) {
       case EntryKind::Tool: ++tools; break;
       case EntryKind::Thought: ++thoughts; break;
       case EntryKind::Notice: break;
+      case EntryKind::Image: break;
     }
   }
   return "entries " + std::to_string(state.entries.size()) + " · you " + std::to_string(user) +

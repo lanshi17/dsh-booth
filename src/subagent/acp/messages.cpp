@@ -144,7 +144,21 @@ std::vector<Event> session_updates(const Json& params) {
   const std::string kind = update.value("sessionUpdate", std::string{});
 
   if (kind == "agent_message_chunk" || kind == "agent_thought_chunk") {
-    const auto text = text_of(update.value("content", Json::object()));
+    const auto content = update.value("content", Json::object());
+    if (content.value("type", std::string{}) == "image") {
+      TranscriptEntry entry;
+      entry.kind = EntryKind::Image;
+      entry.text = content.value("mimeType", std::string{"image"});
+      if (content.contains("data") && content["data"].is_string()) {
+        const auto bytes = content["data"].get<std::string>().size() * 3 / 4;
+        entry.tool = std::to_string(bytes) + "B";
+      } else if (content.contains("name") && content["name"].is_string()) {
+        entry.tool = content["name"].get<std::string>();
+      }
+      events.push_back(Event{std::move(entry)});
+      return events;
+    }
+    const auto text = text_of(content);
     if (text.empty()) return events;
     if (kind == "agent_message_chunk") {
       events.push_back(Event{StreamDelta{text}});

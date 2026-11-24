@@ -273,6 +273,17 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("imagechunk") != std::string::npos) {
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "agent_message_chunk"},
+                                      {"content", {{"type", "image"},
+                                                   {"mimeType", "image/png"},
+                                                   {"data", "aGVsbG8="}}}}}}}});
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("math") != std::string::npos) {
         stream_text("Energy: $E = mc^2$ and $\\frac{1}{2}$.\n$$\n\\frac{a+b}{c}\n$$\n$$\n\\sqrt{x+1}\n$$\n");
         reply(id, {{"stopReason", "end_turn"}});

@@ -41,7 +41,7 @@ struct Snapshot {
   bool stale{false};
 };
 
-enum class EntryKind { User, Assistant, Thought, Tool, Notice };
+enum class EntryKind { User, Assistant, Thought, Tool, Notice, Image };
 
 struct TranscriptEntry {
   EntryKind kind{EntryKind::Assistant};

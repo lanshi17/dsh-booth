@@ -42,6 +42,9 @@ std::string transcript_markdown(const AppState& state) {
       case EntryKind::Thought:
         out += "> " + entry.text + "\n\n";
         break;
+      case EntryKind::Image:
+        out += "> **image**: " + entry.text + (entry.tool.empty() ? "" : " · " + entry.tool) + "\n\n";
+        break;
       case EntryKind::Notice:
         out += "> **notice**: " + entry.text + "\n\n";
         break;

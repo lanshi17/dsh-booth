@@ -51,6 +51,7 @@ std::string kind_name(EntryKind kind) {
     case EntryKind::Thought: return "thought";
     case EntryKind::Tool: return "tool";
     case EntryKind::Notice: return "notice";
+    case EntryKind::Image: return "image";
   }
   return "unknown";
 }

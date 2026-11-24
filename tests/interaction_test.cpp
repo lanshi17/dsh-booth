@@ -317,3 +317,15 @@ TEST_CASE("read envelopes render clean numbered cards") {
   ftxui::Render(full, std::move(expanded));
   REQUIRE(full.ToString().find("4: four") != std::string::npos);
 }
+
+TEST_CASE("assistant images render as placeholders") {
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Image;
+  entry.text = "image/png";
+  entry.tool = "4B";
+  auto view = entry_element(entry);
+  ftxui::Screen screen(60, 4);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("[image: image/png · 4B]") != std::string::npos);
+}
