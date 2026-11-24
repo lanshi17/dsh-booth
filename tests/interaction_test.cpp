@@ -460,3 +460,16 @@ TEST_CASE("command menu truncates long descriptions") {
   REQUIRE(screen.ToString().find("…") != std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("status text reports context percentage") {
+  AppState state;
+  state.snapshot.phase = DshPhase::Ready;
+  state.session = "s-1";
+  SessionRow row;
+  row.id = SessionId{"s-1"};
+  row.context_used = 50;
+  row.context_size = 100;
+  state.snapshot.sessions.push_back(row);
+  const std::string text = status_text(state);
+  REQUIRE(text.find("context 50%") != std::string::npos);
+}
