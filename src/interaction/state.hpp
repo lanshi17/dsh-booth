@@ -35,4 +35,7 @@ struct AppState {
 /// Apply one event. The only mutation point for the screen.
 void apply(AppState& state, const Event& event);
 
+/// The latest running tool title for the busy line, or "Working…" when none runs.
+std::string active_activity(const AppState& state);
+
 }  // namespace booth

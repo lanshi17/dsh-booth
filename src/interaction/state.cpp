@@ -15,6 +15,18 @@ SessionRow* find_session(std::vector<SessionRow>& sessions, const SessionId& id)
 
 }  // namespace
 
+std::string active_activity(const AppState& state) {
+  for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
+    if (entry->kind != EntryKind::Tool) continue;
+    if (entry->status == "pending" || entry->status == "running" || entry->status == "in_progress") {
+      if (!entry->text.empty()) return entry->text;
+      if (!entry->tool.empty()) return entry->tool;
+    }
+    break;
+  }
+  return "Working…";
+}
+
 void apply(AppState& state, const Event& event) {
   const auto now = std::chrono::system_clock::now();
   const auto finish_thought = [&] {

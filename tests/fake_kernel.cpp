@@ -146,6 +146,18 @@ int main() {
                           {"update", {{"sessionUpdate", "usage_update"},
                                       {"used", 1200}, {"size", 4800}}}}}});
       }
+      if (text.find("runningtool") != std::string::npos) {
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-run"},
+                                      {"title", "Reading long file"},
+                                      {"name", "read"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"path", "README.md"}}}}}}}});
+        waiting_for_cancel = id;
+        continue;
+      }
       if (text.find("slow") != std::string::npos) {
         waiting_for_cancel = id;
         continue;

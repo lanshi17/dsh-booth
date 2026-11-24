@@ -218,3 +218,24 @@ TEST_CASE("an oversized composer keeps the cursor in an eight-row window") {
   REQUIRE(window.hidden_above == 0);
   REQUIRE(window.hidden_below == 0);
 }
+
+TEST_CASE("active activity follows the latest running tool") {
+  AppState state;
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.id = "t-1";
+  tool.tool = "read";
+  tool.text = "Reading the config";
+  tool.status = "pending";
+  state.entries.push_back(tool);
+  REQUIRE(active_activity(state) == "Reading the config");
+
+  tool.status = "completed";
+  state.entries[0] = tool;
+  REQUIRE(active_activity(state) == "Working…");
+
+  tool.status = "in_progress";
+  tool.text.clear();
+  state.entries[0] = tool;
+  REQUIRE(active_activity(state) == "read");
+}

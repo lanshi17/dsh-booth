@@ -257,8 +257,9 @@ class Root : public ComponentBase {
       const auto seconds =
           std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
       const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+      const std::string activity = booth::active_activity(state_);
       lines.push_back(ftxui::text(std::string("  ") + kSpinner[(ms / 120) % 8] + " " +
-                                  std::to_string(seconds) + "s Working…") |
+                                  activity + " · " + std::to_string(seconds) + "s") |
                       ftxui::color(ftxui::Color::RGB(228, 228, 228)));
     }
     Elements view;
