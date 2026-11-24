@@ -17,6 +17,38 @@
 
 using namespace booth;
 
+namespace {
+
+std::string strip_ansi(const std::string& input) {
+  std::string out;
+  for (std::size_t index = 0; index < input.size();) {
+    if (input[index] == '\x1b' && index + 1 < input.size() && input[index + 1] == '[') {
+      index += 2;
+      while (index < input.size() && !(input[index] >= '@' && input[index] <= '~')) ++index;
+      if (index < input.size()) ++index;
+      continue;
+    }
+    if (input[index] == '\x1b' && index + 1 < input.size() && input[index + 1] == ']') {
+      index += 2;
+      while (index < input.size()) {
+        if (input[index] == '\x07') {
+          ++index;
+          break;
+        }
+        if (input[index] == '\x1b' && index + 1 < input.size() && input[index + 1] == '\\') {
+          index += 2;
+          break;
+        }
+        ++index;
+      }
+      continue;
+    }
+    out += input[index++];
+  }
+  return out;
+}
+
+}  // namespace
 TEST_CASE("streamed text becomes one assistant entry at the turn end") {
   AppState state;
   apply(state, Event{StreamDelta{"hel"}});
@@ -112,7 +144,7 @@ TEST_CASE("grouped read cards collapse to one line per file") {
   auto collapsed = tool_view(entry, false);
   ftxui::Screen screen(80, 14);
   ftxui::Render(screen, std::move(collapsed));
-  const std::string text = screen.ToString();
+  const std::string text = strip_ansi(screen.ToString());
   REQUIRE(text.find("Read 2 files") != std::string::npos);
   REQUIRE(text.find("src/a.cpp · 2 lines") != std::string::npos);
   REQUIRE(text.find("src/b.cpp · 1 line") != std::string::npos);
@@ -121,7 +153,7 @@ TEST_CASE("grouped read cards collapse to one line per file") {
   auto expanded = tool_view(entry, true);
   ftxui::Screen full(80, 20);
   ftxui::Render(full, std::move(expanded));
-  const std::string all = full.ToString();
+  const std::string all = strip_ansi(full.ToString());
   REQUIRE(all.find("1: one") != std::string::npos);
   REQUIRE(all.find("1: only") != std::string::npos);
 }
@@ -474,7 +506,7 @@ TEST_CASE("read tool cards collapse long output") {
   auto collapsed = tool_view(entry, false);
   ftxui::Screen compact(70, 20);
   ftxui::Render(compact, std::move(collapsed));
-  const std::string compact_text = compact.ToString();
+  const std::string compact_text = strip_ansi(compact.ToString());
   REQUIRE(compact_text.find("one") != std::string::npos);
   REQUIRE(compact_text.find("three") != std::string::npos);
   REQUIRE(compact_text.find("four") == std::string::npos);
@@ -499,7 +531,7 @@ TEST_CASE("read envelopes render clean numbered cards") {
   auto collapsed = tool_view(entry, false);
   ftxui::Screen compact(70, 20);
   ftxui::Render(compact, std::move(collapsed));
-  const std::string compact_text = compact.ToString();
+  const std::string compact_text = strip_ansi(compact.ToString());
   REQUIRE(compact_text.find("src/b.cpp") != std::string::npos);
   REQUIRE(compact_text.find("1: one") != std::string::npos);
   REQUIRE(compact_text.find("3: three") != std::string::npos);
@@ -511,7 +543,7 @@ TEST_CASE("read envelopes render clean numbered cards") {
   auto expanded = tool_view(entry, true);
   ftxui::Screen full(70, 20);
   ftxui::Render(full, std::move(expanded));
-  REQUIRE(full.ToString().find("4: four") != std::string::npos);
+  REQUIRE(strip_ansi(full.ToString()).find("4: four") != std::string::npos);
 }
 
 TEST_CASE("assistant images render as placeholders") {

@@ -4,6 +4,7 @@
 #include <ftxui/screen/terminal.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -15,6 +16,29 @@
 
 namespace booth {
 namespace {
+
+struct ReadRowParts {
+  std::string number;
+  std::string text;
+};
+
+ReadRowParts split_read_row(const std::string& row) {
+  std::size_t digits = 0;
+  while (digits < row.size() && std::isdigit(static_cast<unsigned char>(row[digits]))) ++digits;
+  if (digits == 0 || digits + 1 >= row.size() || row[digits] != ':' || row[digits + 1] != ' ') {
+    return {};
+  }
+  return {row.substr(0, digits), row.substr(digits + 2)};
+}
+
+std::size_t read_gutter(const std::vector<std::string>& rows) {
+  std::size_t width = 1;
+  for (const auto& row : rows) {
+    const auto parts = split_read_row(row);
+    if (!parts.number.empty()) width = std::max(width, parts.number.size());
+  }
+  return width;
+}
 
 #define kText (theme_color("text", ftxui::Color::RGB(228, 228, 228)))
 #define kDim (theme_color("dim", ftxui::Color::RGB(118, 118, 118)))
@@ -402,11 +426,34 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
         }));
       }
     };
+    const auto push_read_row = [&](const std::string& row, std::size_t gutter) {
+      const auto parts = split_read_row(row);
+      if (parts.number.empty()) {
+        push_output(row, kText, false);
+        return;
+      }
+      const std::string pad(gutter - parts.number.size(), ' ');
+      std::vector<std::string> lines =
+          wrap_cells(parts.text, std::max<std::size_t>(1, content_width - gutter - 2));
+      if (lines.empty()) lines.emplace_back();
+      bool first = true;
+      for (const auto& line : lines) {
+        const std::string prefix =
+            first ? "│ " + pad + parts.number + ": " : "│ " + std::string(gutter + 2, ' ');
+        first = false;
+        rows.push_back(ftxui::hbox({
+            ftxui::text(prefix) | ftxui::color(kDim),
+            ftxui::text(line) | ftxui::flex | ftxui::color(kText),
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+      }
+    };
     if (has_envelope && reads.size() == 1) {
       const ReadEnvelope& read = reads[0];
+      const std::size_t gutter = read_gutter(read.rows);
       const std::size_t limit = expanded ? read.rows.size() : 3;
       for (; shown < std::min(limit, read.rows.size()); ++shown) {
-        push_output(read.rows[shown], kText, false);
+        push_read_row(read.rows[shown], gutter);
       }
       hidden = read.rows.size() - shown;
     } else if (has_envelope && !expanded) {
@@ -420,7 +467,8 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     } else if (has_envelope) {
       for (const auto& read : reads) {
         push_output(read.path, kText, false);
-        for (const auto& row : read.rows) push_output(row, kText, false);
+        const std::size_t gutter = read_gutter(read.rows);
+        for (const auto& row : read.rows) push_read_row(row, gutter);
         if (!read.footer.empty()) push_output(read.footer, kDim, true);
       }
     } else if (shell_tool) {
