@@ -209,12 +209,12 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
   band.push_back(chip("", kLine));
   band.push_back(chip(" ", kText));
   band.push_back(chip("󰪟 ", kAccent));
-  band.push_back(chip(state.model + " ", kText));
+  band.push_back(chip(ellipsize(state.model, 24) + " ", kText));
   if (!reasoning.empty()) {
     band.push_back(chip("\xee\x82\xb1", kLine));
     band.push_back(chip(" ", kText));
     band.push_back(chip("effort ", kDim));
-    band.push_back(chip(reasoning + " ", kText));
+    band.push_back(chip(ellipsize(reasoning, 12) + " ", kText));
   }
   if (!state.attachments.empty()) {
     band.push_back(chip("\xee\x82\xb1", kLine));
@@ -224,7 +224,7 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
   band.push_back(chip("", kLine));
   band.push_back(chip(" ", kText));
   band.push_back(chip(" ", kText));
-  band.push_back(chip(short_path(cwd, keep) + " ", kText));
+  band.push_back(chip(ellipsize(short_path(cwd, keep), 24) + " ", kText));
   if (git.valid) {
     band.push_back(chip("", kLine));
     band.push_back(chip(" ", kText));

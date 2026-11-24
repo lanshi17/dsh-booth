@@ -473,3 +473,15 @@ TEST_CASE("status text reports context percentage") {
   const std::string text = status_text(state);
   REQUIRE(text.find("context 50%") != std::string::npos);
 }
+
+TEST_CASE("composer band truncates long labels") {
+  AppState state;
+  state.model = "a-very-long-model-name-that-keeps-going-on";
+  GitStatus git;
+  std::vector<std::string> lines = {"hi"};
+  auto view = composer_view(state, "/very/long/path/with/many/segments/project", git, "title",
+                             -1, "", lines, 0, 0, "", 0, "", 0, nullptr);
+  ftxui::Screen screen(100, 12);
+  ftxui::Render(screen, std::move(view));
+  REQUIRE(screen.ToString().find("…") != std::string::npos);
+}
