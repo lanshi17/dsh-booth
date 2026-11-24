@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +14,9 @@ struct CommandHint {
   const char* keywords;
   const char* aliases;  // space-separated, without the leading slash
 };
+
+/// Every command the slash menu and the help card must document.
+std::span<const CommandHint> command_hints();
 
 /// Rewrites a command alias to its canonical name, preserving any arguments.
 std::string normalize_command(std::string line);

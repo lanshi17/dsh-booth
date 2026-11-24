@@ -378,41 +378,70 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
   return ftxui::text(entry.text);
 }
 
-ftxui::Element help_view(MouseRouter* mouse) {
+std::vector<HelpLine> help_lines() {
+  return {
+      {"Enter send · Alt+Enter newline · ↑/↓ history"},
+      {"Tab word completion · ^G editor · ^C cancel · ^D quit"},
+      {"Ctrl+Z undo · Alt+Z redo · Ctrl/Alt+←→ word"},
+      {"Ctrl+W/U/K/Y kill/yank · Alt+Up edits queue"},
+      {"Ctrl+R history · Ctrl+O tools · Ctrl+T thinking"},
+      {"Alt+H help · Alt+M model · Alt+S sessions · Alt+C copy"},
+      {"Ctrl+V image · :tada: emoji · BOOTH_VIM for Vim"},
+      {"!command runs local /bin/sh · output stays local"},
+      {"$python runs Python locally; an expression prints its value"},
+      {"^model mention applies a model · Alt+M picks one"},
+      {"/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"},
+      {"PageUp/PageDown or wheel browse transcript"},
+      {"Local while running: /theme /notify /copy /clear /export"},
+      {"  /status /context /stats /effort /queue /help /quit"},
+      {"/theme [key=#rrggbb] reload or set a live color"},
+      {"/notify [on|off] terminal attention alerts"},
+      {"/links transcript URLs · Alt+L · a-z hints"},
+      {"/mouse [on|off] tmux scrollback vs app mouse"},
+      {"/status phase, session and model"},
+      {"/model auto|<id>"},
+      {"/effort [level|next] · Shift+Tab · /context"},
+      {"/stats transcript counters"},
+      {"/copy last answer · /clear clear transcript"},
+      {"/retry last prompt · /export markdown transcript"},
+      {"/sessions resume · /new fresh · /close stop"},
+      {"/session /acp /cancel · /find · /attach <path> · /detach"},
+      {"/help this card · /quit leave"},
+      {"Aliases: /resume /models /reasoning /hotkeys /keys /exit /q", true},
+  };
+}
+
+int help_visible_lines() {
+  const int rows = std::max(12, ftxui::Terminal::Size().dimy);
+  return std::max(4, rows - 7);
+}
+
+int help_max_offset() {
+  const int total = static_cast<int>(help_lines().size());
+  return std::max(0, total - std::min(total, help_visible_lines()));
+}
+
+ftxui::Element help_view(int offset, MouseRouter* mouse) {
+  const auto lines = help_lines();
+  const int total = static_cast<int>(lines.size());
+  const int visible = std::min(total, help_visible_lines());
+  const int first = std::clamp(offset, 0, std::max(0, total - visible));
+
   ftxui::Elements body;
   body.push_back(ftxui::text("booth — keys and commands") | ftxui::bold | ftxui::color(kAccent));
   body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
-  body.push_back(ftxui::text("Enter send · Alt+Enter newline · ↑/↓ history"));
-  body.push_back(ftxui::text("Tab word completion · ^G editor · ^C cancel · ^D quit"));
-  body.push_back(ftxui::text("Ctrl+Z undo · Alt+Z redo · Ctrl/Alt+←→ word"));
-  body.push_back(ftxui::text("Ctrl+W/U/K/Y kill/yank · Alt+Up edits queue"));
-  body.push_back(ftxui::text("Ctrl+R history · Ctrl+O tools · Ctrl+T thinking"));
-  body.push_back(ftxui::text("Alt+H help · Alt+M model · Alt+S sessions · Alt+C copy"));
-  body.push_back(ftxui::text("Ctrl+V image · :tada: emoji · BOOTH_VIM for Vim"));
-  body.push_back(ftxui::text("!command runs a local shell command (not sent to the model)"));
-  body.push_back(ftxui::text("$python runs Python locally; an expression prints its value"));
-  body.push_back(ftxui::text("^model mention applies a model · Alt+M picks one"));
-  body.push_back(ftxui::text("/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"));
-  body.push_back(ftxui::text("PageUp/PageDown or wheel  browse transcript"));
-  body.push_back(ftxui::text("!<command> runs local /bin/sh · 60s limit · output stays local"));
-  body.push_back(ftxui::text("Local while running: /theme /notify /copy /clear /export /status"));
-  body.push_back(ftxui::text("  /context /stats /effort /queue /help /quit"));
-  body.push_back(ftxui::text("/theme [key=#rrggbb] reload or set a live color"));
-  body.push_back(ftxui::text("/notify [on|off] terminal attention alerts"));
-  body.push_back(ftxui::text("/links    transcript URLs · Alt+L · a-z hints"));
-  body.push_back(ftxui::text("/mouse [on|off] tmux scrollback/selection vs app mouse"));
-  body.push_back(ftxui::text("/status   phase, session and model"));
-  body.push_back(ftxui::text("/model    auto|<id>"));
-  body.push_back(ftxui::text("/effort   [level|next] · Shift+Tab · /context"));
-  body.push_back(ftxui::text("/stats    transcript counters"));
-  body.push_back(ftxui::text("/copy     last answer · /clear  clear transcript"));
-  body.push_back(ftxui::text("/retry    last prompt · /export  markdown transcript"));
-  body.push_back(ftxui::text("/sessions resume · /new fresh · /close stop"));
-  body.push_back(ftxui::text("/session /acp /cancel · /find · /attach <path> · /detach"));
-  body.push_back(ftxui::text("/help     this card · /quit  leave"));
-  body.push_back(ftxui::text("Aliases: /resume /models /reasoning /hotkeys /exit /q") | ftxui::dim);
-  body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
-  body.push_back(ftxui::text("Esc or q closes") | ftxui::dim);
+  for (int index = first; index < first + visible; ++index) {
+    ftxui::Element row = ftxui::text(lines[static_cast<std::size_t>(index)].text);
+    if (lines[static_cast<std::size_t>(index)].dim) row = std::move(row) | ftxui::dim;
+    body.push_back(std::move(row));
+  }
+  const std::string position = std::to_string(first + 1) + "-" +
+                               std::to_string(first + visible) + " / " + std::to_string(total);
+  body.push_back(ftxui::hbox({
+      ftxui::text(total > visible ? "↑/↓ scroll · Esc/q close" : "Esc/q close") | ftxui::dim,
+      ftxui::filler(),
+      ftxui::text(position) | ftxui::dim,
+  }));
   auto card = ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
               ftxui::bgcolor(kPanel);
   if (mouse != nullptr) card = mouse->zone(std::move(card), MouseSurface::Help, 0);

@@ -7,12 +7,14 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <string_view>
 
 #include "interaction/commands.hpp"
 #include "interaction/commands_ui.hpp"
 #include "interaction/scroll.hpp"
 #include "interaction/state.hpp"
 #include "interaction/theme.hpp"
+#include "interaction/view.hpp"
 
 using namespace booth;
 
@@ -25,6 +27,24 @@ TEST_CASE("command aliases normalize to canonical names") {
   REQUIRE(normalize_command("/exit") == "/quit");
   REQUIRE(normalize_command("/q") == "/quit");
   REQUIRE(normalize_command("/unknown") == "/unknown");
+}
+
+TEST_CASE("help documents every command and alias") {
+  std::string text;
+  for (const auto& line : help_lines()) text += line.text + "\n";
+  for (const auto& hint : command_hints()) {
+    REQUIRE(text.find(hint.name) != std::string::npos);
+    std::string_view rest = hint.aliases;
+    while (!rest.empty()) {
+      const auto space = rest.find(' ');
+      const std::string_view alias = rest.substr(0, space);
+      if (!alias.empty()) REQUIRE(text.find("/" + std::string(alias)) != std::string::npos);
+      if (space == std::string_view::npos) break;
+      rest.remove_prefix(space + 1);
+    }
+  }
+  REQUIRE(help_visible_lines() >= 4);
+  REQUIRE(help_max_offset() >= 0);
 }
 
 TEST_CASE("local commands include aliases and stay available during a run") {

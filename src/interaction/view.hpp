@@ -66,8 +66,23 @@ ftxui::Element markdown_view(const std::string& text, bool dim);
 /// Inline emphasis/code spans for one line (used by the user band).
 ftxui::Element inline_words_view(const std::string& text, bool dim);
 
-/// The full-screen help card.
-ftxui::Element help_view(MouseRouter* mouse = nullptr);
+/// One scrollable row of the help card.
+struct HelpLine {
+  std::string text;
+  bool dim{false};
+};
+
+/// The scrollable help body: key hints, command reference, aliases.
+std::vector<HelpLine> help_lines();
+
+/// How many help body rows fit above the composer at the current terminal height.
+int help_visible_lines();
+
+/// Largest valid scroll offset for the help body.
+int help_max_offset();
+
+/// The help card; `offset` is clamped to the scrollable range for this frame.
+ftxui::Element help_view(int offset, MouseRouter* mouse = nullptr);
 
 /// The full-screen permission card.
 ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse = nullptr);

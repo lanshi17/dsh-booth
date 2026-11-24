@@ -66,6 +66,10 @@ add_test(NAME pty_commands
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_commands.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_help
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_help.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_slash_fuzzy
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_slash_fuzzy.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

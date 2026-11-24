@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cctype>
 #include <atomic>
 #include <cstdlib>
@@ -28,6 +29,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "interaction/help_scroll.hpp"
 #include "interaction/keymap.hpp"
 #include "interaction/editor.hpp"
 #include "interaction/emoji.hpp"
@@ -96,7 +98,7 @@ class Root : public ComponentBase {
     mouse_.begin_frame();
     if (state_.permission) return booth::permission_view(*state_.permission, &mouse_) |
         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
-    if (state_.help) return booth::help_view(&mouse_) |
+    if (state_.help) return booth::help_view(help_scroll_.offset(), &mouse_) |
         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     return main_view();
   }
@@ -104,6 +106,7 @@ class Root : public ComponentBase {
     if (event == ftxui::Event::Custom) { drain(); return true; }
     if (matches_chord(keys_.cancel, event)) { cancel(); return true; }
     if (event.is_mouse() && !mouse_enabled_) return true;
+    if (state_.help && event.is_mouse() && help_scroll_.wheel(event)) return true;
     if (event.is_mouse()) {
       const auto in = mouse_.handle(event, &screen_);
       if (in.kind == booth::MouseInput::Kind::Moved) { screen_.PostEvent(ftxui::Event::Custom); return true; }
@@ -120,8 +123,8 @@ class Root : public ComponentBase {
       }
     }
     if (state_.help) {
-      if (event == ftxui::Event::Escape || event == ftxui::Event::Return ||
-          event == ftxui::Event::Character('q')) state_.help = false;
+      if (help_scroll_.key(event)) return true;
+      if (event == ftxui::Event::Escape || event == ftxui::Event::Return || event == ftxui::Event::Character('q')) state_.help = false;
       return true;
     }
     if (state_.permission) { if (const char* kind = booth::permission_kind(event)) booth::answer_permission_choice(supervisor_, state_, kind); return true; }
@@ -189,7 +192,7 @@ class Root : public ComponentBase {
       std::vector<std::string> transcript; for (const auto& entry : state_.entries) if (entry.kind == EntryKind::User || entry.kind == EntryKind::Assistant) transcript.push_back(entry.text);
       if (const auto suffix = booth::word_completion_suffix(state_.composer, editor_.CursorOffset(), booth::build_word_vocabulary(history_, transcript))) return editor_.HandleEvent(ftxui::Event::Character(*suffix));
     }
-    if (matches_chord(keys_.help, event)) { state_.help = true; return true; }
+    if (matches_chord(keys_.help, event)) { state_.help = true; help_scroll_.reset(); return true; }
     if (matches_chord(keys_.model, event)) { if (!state_.models.empty()) model_picker_.open(state_.models, state_.model); return true; }
     if (matches_chord(keys_.sessions, event)) { handle_command("/sessions"); return true; }
     if (matches_chord(keys_.copy, event)) { handle_command("/copy"); return true; }
@@ -435,6 +438,7 @@ class Root : public ComponentBase {
     line = booth::normalize_command(std::move(line));
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
                                     draft_file_.parent_path(), line)) {
+      if (line == "/help") help_scroll_.reset();
       if (line == "/theme" || line.rfind("/theme ", 0) == 0) screen_.PostEvent(ftxui::Event::Custom);
       return;
     }
@@ -538,6 +542,7 @@ class Root : public ComponentBase {
   std::filesystem::path draft_file_;
   std::filesystem::path socket_file_;
   booth::GitStatus git_;
+  booth::HelpScroll help_scroll_;
   std::string session_title_;
   std::atomic<bool> animate_{false};
   std::atomic<bool> alive_{true};

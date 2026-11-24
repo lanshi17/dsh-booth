@@ -35,6 +35,8 @@ constexpr CommandHint kCommandHints[] = {
     {"/quit", "leave booth", "exit quit", "exit q"},
 };
 
+std::span<const CommandHint> command_hints() { return kCommandHints; }
+
 namespace {
 
 std::string lower_ascii(std::string_view text) {
