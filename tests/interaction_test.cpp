@@ -451,3 +451,12 @@ TEST_CASE("model picker truncates long labels by cells") {
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("…") != std::string::npos);
 }
+
+TEST_CASE("command menu truncates long descriptions") {
+  ftxui::Terminal::SetFallbackSize({40, 10});
+  auto view = command_menu_view("/queue", 0, nullptr);
+  ftxui::Screen screen(40, 10);
+  ftxui::Render(screen, std::move(view));
+  REQUIRE(screen.ToString().find("…") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

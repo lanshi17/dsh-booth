@@ -148,6 +148,9 @@ ftxui::Element command_menu_view(const std::string& composer, std::size_t index,
   }
   const std::size_t end = std::min(start + kRows, matches.size());
   const std::size_t selected = std::min(index, matches.size() - 1);
+  const int columns = ftxui::Terminal::Size().dimx;
+  const std::size_t description_width =
+      static_cast<std::size_t>(std::max(10, columns - static_cast<int>(name_width) - 8));
 
   if (start > 0) {
     rows.push_back(ftxui::text("   ↑ " + std::to_string(start) + " more") | ftxui::dim);
@@ -182,7 +185,8 @@ ftxui::Element command_menu_view(const std::string& composer, std::size_t index,
     ftxui::Element line = ftxui::hbox({
         ftxui::text(active ? " › " : "   ") | ftxui::color(kAccent),
         ftxui::hbox(std::move(label)),
-        ftxui::text("  " + std::string(matches[row]->description)) | ftxui::dim,
+        ftxui::text("  " + ellipsize(matches[row]->description, description_width)) |
+            ftxui::dim,
         ftxui::filler(),
     });
     paint_row(line, active, hovered);
