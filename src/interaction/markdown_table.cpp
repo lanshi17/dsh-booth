@@ -168,7 +168,11 @@ TableCell styled_cell(std::string raw) {
            raw.compare(0, open.size(), open) == 0 &&
            raw.compare(raw.size() - close.size(), close.size(), close) == 0;
   };
-  if (wrapped("**", "**")) {
+  if (wrapped("***", "***") || wrapped("___", "___")) {
+    cell.bold = true;
+    cell.italic = true;
+    raw = raw.substr(3, raw.size() - 6);
+  } else if (wrapped("**", "**")) {
     cell.bold = true;
     raw = raw.substr(2, raw.size() - 4);
   } else if (wrapped("__", "__")) {

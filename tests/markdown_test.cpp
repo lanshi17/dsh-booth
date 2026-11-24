@@ -769,3 +769,13 @@ TEST_CASE("emphasized table links keep their href") {
   REQUIRE(cells[1].text == "gone");
   REQUIRE(cells[1].href == "https://x.test/g");
 }
+
+TEST_CASE("table cells support triple emphasis") {
+  const auto cells = styled_cells({"***both***", "___also___"});
+  REQUIRE(cells[0].bold);
+  REQUIRE(cells[0].italic);
+  REQUIRE(cells[0].text == "both");
+  REQUIRE(cells[1].bold);
+  REQUIRE(cells[1].italic);
+  REQUIRE(cells[1].text == "also");
+}
