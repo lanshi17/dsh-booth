@@ -445,9 +445,13 @@ ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,
       const bool selected = row == index;
       const bool hovered = row_hovered(mouse, MouseSurface::Session, row, selected);
       std::string title = session.title.empty() ? session.id.value : session.title;
-      title = ellipsize(title, 40);
+      title = ellipsize(title, 36);
+      const ftxui::Color dot = session.status == "running" ? kGreen
+                               : session.status == "idle"  ? kDim
+                                                           : kText;
       ftxui::Element line = ftxui::hbox({
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
+          ftxui::text("● ") | ftxui::color(dot),
           ftxui::text(title) | (selected ? ftxui::bold : ftxui::nothing),
           ftxui::text("  " + ellipsize(session.cwd, 16)) | ftxui::dim,
           ftxui::filler(),

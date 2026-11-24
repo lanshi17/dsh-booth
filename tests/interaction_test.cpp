@@ -537,3 +537,21 @@ TEST_CASE("export includes session metadata") {
   REQUIRE(markdown.find("- title: demo") != std::string::npos);
   REQUIRE(markdown.find("- model: model-one") != std::string::npos);
 }
+
+TEST_CASE("session picker shows a running status dot") {
+  SessionRow row;
+  row.id = SessionId{"s-1"};
+  row.title = "demo";
+  row.status = "running";
+  auto view = session_picker_view({row}, {0}, 0, false, "");
+  ftxui::Screen screen(70, 10);
+  ftxui::Render(screen, std::move(view));
+  bool dot = false;
+  for (int y = 0; y < 10; ++y) {
+    for (int x = 0; x < 70; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "●" && cell.foreground_color == ftxui::Color::RGB(0, 255, 135)) dot = true;
+    }
+  }
+  REQUIRE(dot);
+}
