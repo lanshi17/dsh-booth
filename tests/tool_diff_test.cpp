@@ -44,3 +44,44 @@ TEST_CASE("non-edit tools produce no diff") {
   entry.raw_input = "not json";
   REQUIRE(tool_diff(entry).empty());
 }
+
+TEST_CASE("edit diffs keep shared context lines") {
+  TranscriptEntry entry;
+  entry.tool = "edit";
+  entry.raw_input =
+      R"({"file_path":"src/a.cpp","old_string":"a\nb\nc\nd\ne","new_string":"a\nb\nX\nd\ne"})";
+  const auto lines = tool_diff(entry);
+  REQUIRE(lines.size() == 7);
+  REQUIRE(lines[1].text == "  a");
+  REQUIRE(lines[2].text == "  b");
+  REQUIRE(lines[3].text == "- c");
+  REQUIRE(lines[4].text == "+ X");
+  REQUIRE(lines[5].text == "  d");
+  REQUIRE(lines[6].text == "  e");
+}
+
+TEST_CASE("long unchanged runs collapse to an ellipsis") {
+  TranscriptEntry entry;
+  entry.tool = "edit";
+  entry.raw_input =
+      R"({"file_path":"src/a.cpp","old_string":"1\n2\n3\n4\n5\n6\n7\n8\n9\n10","new_string":"1\n2\n3\n4\nFIVE\n6\n7\n8\n9\n10"})";
+  const auto lines = tool_diff(entry);
+  REQUIRE(lines[0].text == "src/a.cpp");
+  REQUIRE(lines[1].text == "…");
+  REQUIRE(lines[2].text == "  3");
+  REQUIRE(lines[3].text == "  4");
+  REQUIRE(lines[4].text == "- 5");
+  REQUIRE(lines[5].text == "+ FIVE");
+  REQUIRE(lines[6].text == "  6");
+  REQUIRE(lines[7].text == "  7");
+  REQUIRE(lines[8].text == "…");
+}
+
+TEST_CASE("an unchanged edit reports no changes") {
+  TranscriptEntry entry;
+  entry.tool = "edit";
+  entry.raw_input = R"({"file_path":"src/a.cpp","old_string":"same","new_string":"same"})";
+  const auto lines = tool_diff(entry);
+  REQUIRE(lines.size() == 2);
+  REQUIRE(lines[1].text == "  (no changes)");
+}
