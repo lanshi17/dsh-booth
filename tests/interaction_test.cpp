@@ -112,7 +112,7 @@ TEST_CASE("grouped read cards collapse to one line per file") {
   const std::string text = screen.ToString();
   REQUIRE(text.find("Read 2 files") != std::string::npos);
   REQUIRE(text.find("src/a.cpp · 2 lines") != std::string::npos);
-  REQUIRE(text.find("src/b.cpp · 1 lines") != std::string::npos);
+  REQUIRE(text.find("src/b.cpp · 1 line") != std::string::npos);
   REQUIRE(text.find("1: one") == std::string::npos);
 
   auto expanded = tool_view(entry, true);

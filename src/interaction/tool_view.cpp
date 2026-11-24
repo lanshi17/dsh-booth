@@ -158,8 +158,10 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       hidden = read.rows.size() - shown;
     } else if (has_envelope && !expanded) {
       for (const auto& read : reads) {
-        push_output(read.path + " · " + std::to_string(read.rows.size()) + " lines", kText,
-                    false);
+        const std::size_t lines = read.rows.size();
+        push_output(read.path + " · " + std::to_string(lines) +
+                        (lines == 1 ? " line" : " lines"),
+                    kText, false);
       }
       push_output("… Ctrl+O for file contents", kDim, true);
     } else if (has_envelope) {
