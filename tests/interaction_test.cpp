@@ -443,3 +443,11 @@ TEST_CASE("tool footer keeps failure status with duration") {
   REQUIRE(text.find("12ms") != std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("model picker truncates long labels by cells") {
+  std::vector<ModelChoice> choices{{"provider", "a-very-long-model-name-that-keeps-going-on", "v"}};
+  auto view = model_picker_view(choices, {0}, 0, "", "");
+  ftxui::Screen screen(60, 10);
+  ftxui::Render(screen, std::move(view));
+  REQUIRE(screen.ToString().find("…") != std::string::npos);
+}

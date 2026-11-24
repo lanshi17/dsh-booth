@@ -392,7 +392,7 @@ ftxui::Element model_picker_view(const std::vector<ModelChoice>& choices,
       const auto& choice = choices[matches[row]];
       if (choice.provider != provider) {
         provider = choice.provider;
-        if (!provider.empty()) rows.push_back(ftxui::text("   " + provider) | ftxui::dim);
+        if (!provider.empty()) rows.push_back(ftxui::text("   " + ellipsize(provider, 36)) | ftxui::dim);
       }
       const bool selected = row == index;
       const bool active = choice.name == current;
@@ -400,7 +400,7 @@ ftxui::Element model_picker_view(const std::vector<ModelChoice>& choices,
       ftxui::Element line = ftxui::hbox({
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
           ftxui::text(active ? "● " : "  ") | ftxui::color(kGreen),
-          ftxui::text((provider.empty() ? "" : "  ") + choice.name) |
+          ftxui::text((provider.empty() ? "" : "  ") + ellipsize(choice.name, 32)) |
               (selected ? ftxui::bold : ftxui::nothing),
           ftxui::filler(),
       });
