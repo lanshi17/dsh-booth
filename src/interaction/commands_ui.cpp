@@ -353,7 +353,8 @@ std::string context_text(const AppState& state) {
     const auto percent = row.context_used * 100 / row.context_size;
     return "context: " + std::to_string(row.context_used) + " / " +
            std::to_string(row.context_size) + " (" + std::to_string(percent) + "%) " +
-           context_bar(percent, 10);
+           context_bar(percent, 10) + " · " +
+           std::to_string(row.context_size - row.context_used) + " left";
   }
   return "context: not reported yet";
 }
