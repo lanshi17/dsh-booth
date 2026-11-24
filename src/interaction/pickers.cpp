@@ -310,30 +310,36 @@ ftxui::Element file_menu_view(const std::string& query,
          ftxui::borderRounded | ftxui::hcenter | ftxui::bgcolor(kPanel);
 }
 
-ftxui::Element copy_picker_view(const std::vector<CopyItem>& items, std::size_t index,
-                                MouseRouter* mouse) {
+ftxui::Element copy_picker_view(const std::vector<CopyItem>& items,
+                                const std::vector<std::size_t>& matches, std::size_t index,
+                                const std::string& query, MouseRouter* mouse) {
   ftxui::Elements rows;
   rows.push_back(ftxui::hbox({ftxui::text(" copy ") | ftxui::bold | ftxui::color(kAccent),
-                              ftxui::text("↑/↓ · Enter · Esc") | ftxui::dim}));
-  constexpr std::size_t kRows = 10;
-  std::size_t start = index >= kRows / 2 ? index - kRows / 2 : 0;
-  if (start + kRows > items.size()) start = items.size() > kRows ? items.size() - kRows : 0;
-  const std::size_t end = std::min(start + kRows, items.size());
-  if (start > 0) rows.push_back(ftxui::text("   ↑ " + std::to_string(start) + " more") | ftxui::dim);
-  for (std::size_t row = start; row < end; ++row) {
-    const bool selected = row == index;
-    const bool hovered = row_hovered(mouse, MouseSurface::Copy, row, selected);
-    ftxui::Element line = ftxui::hbox({
-        ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
-        ftxui::text(items[row].label) | (selected ? ftxui::bold : ftxui::nothing),
-        ftxui::filler(),
-    });
-    paint_row(line, selected, hovered);
-    rows.push_back(hit_row(std::move(line), MouseSurface::Copy, row, mouse));
-  }
-  if (end < items.size()) {
-    rows.push_back(ftxui::text("   ↓ " + std::to_string(items.size() - end) + " more") |
-                   ftxui::dim);
+                              ftxui::text("type to filter · ↑/↓ · Enter · Esc") | ftxui::dim}));
+  if (!query.empty()) rows.push_back(ftxui::text(" /" + query) | ftxui::color(kText));
+  if (matches.empty()) {
+    rows.push_back(ftxui::text(" no matches") | ftxui::dim);
+  } else {
+    constexpr std::size_t kRows = 10;
+    std::size_t start = index >= kRows / 2 ? index - kRows / 2 : 0;
+    if (start + kRows > matches.size()) start = matches.size() > kRows ? matches.size() - kRows : 0;
+    const std::size_t end = std::min(start + kRows, matches.size());
+    if (start > 0) rows.push_back(ftxui::text("   ↑ " + std::to_string(start) + " more") | ftxui::dim);
+    for (std::size_t row = start; row < end; ++row) {
+      const bool selected = row == index;
+      const bool hovered = row_hovered(mouse, MouseSurface::Copy, row, selected);
+      ftxui::Element line = ftxui::hbox({
+          ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
+          ftxui::text(items[matches[row]].label) | (selected ? ftxui::bold : ftxui::nothing),
+          ftxui::filler(),
+      });
+      paint_row(line, selected, hovered);
+      rows.push_back(hit_row(std::move(line), MouseSurface::Copy, row, mouse));
+    }
+    if (end < matches.size()) {
+      rows.push_back(ftxui::text("   ↓ " + std::to_string(matches.size() - end) + " more") |
+                     ftxui::dim);
+    }
   }
   return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) |
          ftxui::borderRounded | ftxui::hcenter | ftxui::bgcolor(kPanel);

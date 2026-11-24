@@ -87,3 +87,27 @@ TEST_CASE("copy picker flattens read output") {
   REQUIRE(picker.items()[0].text.find("1: one") != std::string::npos);
   REQUIRE(picker.items()[0].text.find("<content>") == std::string::npos);
 }
+
+TEST_CASE("copy picker filters by label") {
+  AppState state;
+  TranscriptEntry first;
+  first.kind = EntryKind::Assistant;
+  first.text = "first";
+  state.entries.push_back(first);
+  TranscriptEntry second;
+  second.kind = EntryKind::Assistant;
+  second.text = "second";
+  state.entries.push_back(second);
+  CopyPicker picker;
+  REQUIRE(picker.open(state));
+  REQUIRE(picker.matches().size() == 2);
+  ftxui::Event f = ftxui::Event::Character('f');
+  REQUIRE(picker.key(f, state));
+  REQUIRE(picker.query() == "f");
+  REQUIRE(picker.matches().size() == 1);
+  REQUIRE(picker.items()[picker.matches()[0]].text == "first");
+  ftxui::Event back = ftxui::Event::Backspace;
+  REQUIRE(picker.key(back, state));
+  REQUIRE(picker.query().empty());
+  REQUIRE(picker.matches().size() == 2);
+}

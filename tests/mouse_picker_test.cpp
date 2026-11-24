@@ -183,7 +183,7 @@ TEST_CASE("picker views record exact row zones") {
   REQUIRE(zone_count(router, MouseSurface::History) == 2);
 
   router.begin_frame();
-  render(copy_picker_view({{"answer", "a"}, {"code", "b"}}, 0, &router));
+  render(copy_picker_view({{"answer", "a"}, {"code", "b"}}, {0, 1}, 0, "", &router));
   REQUIRE(zone_count(router, MouseSurface::Copy) == 2);
 }
 

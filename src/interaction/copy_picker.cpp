@@ -3,6 +3,7 @@
 #include "interaction/text_util.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 #include "interaction/clipboard.hpp"
 #include "interaction/view.hpp"
@@ -36,7 +37,28 @@ void collect_code(const std::string& text, std::vector<CopyItem>& items) {
   }
 }
 
+std::string lower_copy(const std::string& text) {
+  std::string out(text);
+  for (char& ch : out) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  return out;
+}
+
 }  // namespace
+
+void CopyPicker::rebuild() {
+  matches_.clear();
+  const std::string needle = lower_copy(query_);
+  for (std::size_t index = 0; index < items_.size(); ++index) {
+    if (lower_copy(items_[index].label).find(needle) != std::string::npos) {
+      matches_.push_back(index);
+    }
+  }
+  if (matches_.empty()) {
+    index_ = 0;
+  } else {
+    index_ = std::min(index_, matches_.size() - 1);
+  }
+}
 
 bool CopyPicker::open(const AppState& state) {
   items_.clear();
@@ -57,15 +79,17 @@ bool CopyPicker::open(const AppState& state) {
   }
   visible_ = !items_.empty();
   index_ = 0;
+  query_.clear();
+  rebuild();
   return visible_;
 }
 
 void CopyPicker::close() { visible_ = false; }
 
 bool CopyPicker::click(std::size_t row, AppState& state) {
-  if (!visible_ || row >= items_.size()) return false;
+  if (!visible_ || row >= matches_.size()) return false;
   index_ = row;
-  const auto& item = items_[index_];
+  const auto& item = items_[matches_[index_]];
   if (copy_to_clipboard(item.text)) {
     state.notice = "copied " + std::to_string(item.text.size()) + " bytes";
   } else {
@@ -81,18 +105,36 @@ bool CopyPicker::key(ftxui::Event& event, AppState& state) {
     close();
     return true;
   }
+  if (event == ftxui::Event::Backspace) {
+    if (!query_.empty()) {
+      query_.pop_back();
+      rebuild();
+    }
+    return true;
+  }
+  if (event.is_character()) {
+    const std::string ch = event.character();
+    if (!ch.empty()) {
+      query_ += ch;
+      rebuild();
+    }
+    return true;
+  }
   if (event == ftxui::Event::ArrowUp ||
       (event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelUp)) {
-    index_ = (index_ + items_.size() - 1) % items_.size();
+    if (matches_.empty()) return true;
+    index_ = (index_ + matches_.size() - 1) % matches_.size();
     return true;
   }
   if (event == ftxui::Event::ArrowDown ||
       (event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelDown)) {
-    index_ = (index_ + 1) % items_.size();
+    if (matches_.empty()) return true;
+    index_ = (index_ + 1) % matches_.size();
     return true;
   }
   if (event == ftxui::Event::Return) {
-    const auto& item = items_[index_];
+    if (matches_.empty()) return true;
+    const auto& item = items_[matches_[index_]];
     if (copy_to_clipboard(item.text)) {
       state.notice = "copied " + std::to_string(item.text.size()) + " bytes";
     } else {

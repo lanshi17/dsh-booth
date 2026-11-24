@@ -119,8 +119,9 @@ ftxui::Element file_menu_view(const std::string& query,
                               MouseRouter* mouse = nullptr);
 
 /// The `/copy` picker rows.
-ftxui::Element copy_picker_view(const std::vector<CopyItem>& items, std::size_t index,
-                                MouseRouter* mouse = nullptr);
+ftxui::Element copy_picker_view(const std::vector<CopyItem>& items,
+                                const std::vector<std::size_t>& matches, std::size_t index,
+                                const std::string& query, MouseRouter* mouse = nullptr);
 
 /// The Ctrl+R prompt-history search overlay.
 ftxui::Element history_search_view(const std::string& query,

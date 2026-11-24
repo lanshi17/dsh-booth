@@ -276,7 +276,8 @@ class Root : public ComponentBase {
       view.push_back(ftxui::text("  " + std::to_string(queued_.size()) + " queued · Alt+Up edit") |
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
-    if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.index(), &mouse_));
+    if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.matches(),
+                                                copy_picker_.index(), copy_picker_.query(), &mouse_));
     if (links_.visible()) view.push_back(booth::link_picker_view(links_.items(), links_.index()));
     if (history_search_.visible()) view.push_back(booth::history_search_view(
         history_search_.query(), history_search_.matches(), history_search_.index(), &mouse_));
