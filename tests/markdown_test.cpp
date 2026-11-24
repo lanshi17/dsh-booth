@@ -641,3 +641,29 @@ TEST_CASE("inline html tags are hidden and br becomes a space") {
   REQUIRE(text.find("<b>") == std::string::npos);
   REQUIRE(text.find("<span") == std::string::npos);
 }
+
+TEST_CASE("link targets keep balanced parentheses") {
+  ftxui::Terminal::SetFallbackSize({80, 8});
+  auto view = markdown_view("See [wiki](https://x.test/a_(b)) and ![img](https://x.test/i_(j).png).\n", false);
+  ftxui::Screen screen(80, 8);
+  ftxui::Render(screen, std::move(view));
+  bool wiki = false;
+  bool image = false;
+  for (int y = 0; y < 8; ++y) {
+    for (int x = 0; x < 80; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.hyperlink == 0) continue;
+      const auto& link = screen.Hyperlink(cell.hyperlink);
+      if (link == "https://x.test/a_(b)") wiki = true;
+      if (link == "https://x.test/i_(j).png") image = true;
+    }
+  }
+  REQUIRE(wiki);
+  REQUIRE(image);
+
+  const auto cells = styled_cells({"[wiki](https://x.test/a_(b))",
+                                   "![img](https://x.test/i_(j).png)"});
+  REQUIRE(cells[0].href == "https://x.test/a_(b)");
+  REQUIRE(cells[1].href == "https://x.test/i_(j).png");
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

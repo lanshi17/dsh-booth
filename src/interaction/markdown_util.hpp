@@ -7,6 +7,24 @@
 namespace booth {
 
 
+/// Return the index of the ')' closing a link target, honoring balanced parentheses.
+inline std::size_t link_end(std::string_view text, std::size_t start) {
+  int depth = 0;
+  for (std::size_t index = start; index < text.size(); ++index) {
+    if (text[index] == '\\' && index + 1 < text.size()) {
+      ++index;
+      continue;
+    }
+    if (text[index] == '(') {
+      ++depth;
+    } else if (text[index] == ')') {
+      if (depth == 0) return index;
+      --depth;
+    }
+  }
+  return std::string_view::npos;
+}
+
 /// True when a non-quote line starts a block that must end a lazy blockquote continuation.
 inline bool lazy_quote_stop(const std::string& line) {
   const auto first = line.find_first_not_of(" \t");

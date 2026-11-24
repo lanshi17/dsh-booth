@@ -123,7 +123,7 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
       const auto label_end = text.find("](", index + 1);
       const auto url_end = label_end == std::string::npos
                                ? std::string::npos
-                               : text.find(')', label_end + 2);
+                               : link_end(text, label_end + 2);
       if (label_end != std::string::npos && url_end != std::string::npos) {
         flush();
         const std::string label = text.substr(index + 2, label_end - index - 2);
@@ -171,7 +171,7 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
       const auto label_end = text.find("](", index);
       const auto url_end = label_end == std::string::npos
                                ? std::string::npos
-                               : text.find(')', label_end + 2);
+                               : link_end(text, label_end + 2);
       if (label_end != std::string::npos && url_end != std::string::npos) {
         flush();
         const std::string label = text.substr(index + 1, label_end - index - 1);

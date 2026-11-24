@@ -95,7 +95,7 @@ std::string clean_cell(std::string text) {
     if (text[index] == '[') {
       const auto close = text.find("](", index);
       const auto end = close == std::string::npos ? std::string::npos
-                                                  : text.find(')', close + 2);
+                                                  : link_end(text, close + 2);
       if (close != std::string::npos && end != std::string::npos) {
         out += text.substr(index + 1, close - index - 1);
         index = end + 1;
@@ -154,7 +154,7 @@ TableCell styled_cell(std::string raw) {
     raw = raw.substr(2, raw.size() - 4);
   } else if (!raw.empty() && raw.front() == '[') {
     const auto close = raw.find("](");
-    const auto end = close == std::string::npos ? std::string::npos : raw.find(')', close + 2);
+    const auto end = close == std::string::npos ? std::string::npos : link_end(raw, close + 2);
     if (close != std::string::npos && end != std::string::npos) {
       std::string target = raw.substr(close + 2, end - close - 2);
       const auto title = target.find_first_of(" \t");
@@ -164,7 +164,7 @@ TableCell styled_cell(std::string raw) {
     }
   } else if (raw.rfind("![", 0) == 0) {
     const auto close = raw.find("](");
-    const auto end = close == std::string::npos ? std::string::npos : raw.find(')', close + 2);
+    const auto end = close == std::string::npos ? std::string::npos : link_end(raw, close + 2);
     if (close != std::string::npos && end != std::string::npos) {
       std::string target = raw.substr(close + 2, end - close - 2);
       const auto title = target.find_first_of(" \t");
