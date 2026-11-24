@@ -78,6 +78,17 @@ std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
 
 }  // namespace
 
+std::string read_output_text(const std::string& output) {
+  std::string out;
+  for (const auto& read : parse_read_envelopes(output)) {
+    if (!out.empty()) out += '\n';
+    if (!read.path.empty()) out += read.path + '\n';
+    for (const auto& row : read.rows) out += row + '\n';
+    if (!read.footer.empty()) out += read.footer + '\n';
+  }
+  return out;
+}
+
 ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const ftxui::Color border = theme_color("border", ftxui::Color::RGB(108, 108, 108));
   const bool read_tool = entry.tool == "read" || entry.tool == "read_file";

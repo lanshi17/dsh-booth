@@ -57,6 +57,9 @@ RowWindow row_window(std::size_t count, std::size_t cursor, std::size_t visible)
 /// A tool-call frame; `expanded` reveals full output and diffs are rendered when present.
 ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded);
 
+/// Flatten a dsh read envelope into path, numbered rows and footer text.
+std::string read_output_text(const std::string& output);
+
 /// One transcript row. `expand_tools` reveals full tool output.
 ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools = false);
 

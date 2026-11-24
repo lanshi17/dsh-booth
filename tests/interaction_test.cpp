@@ -485,3 +485,17 @@ TEST_CASE("composer band truncates long labels") {
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("…") != std::string::npos);
 }
+
+TEST_CASE("export strips read envelopes") {
+  AppState state;
+  TranscriptEntry read;
+  read.kind = EntryKind::Tool;
+  read.tool = "read";
+  read.output =
+      "<path>src/a.cpp</path>\n<type>file</type>\n<content>\n1: one\n(End of file)\n</content>";
+  state.entries.push_back(read);
+  const std::string markdown = transcript_markdown(state);
+  REQUIRE(markdown.find("src/a.cpp") != std::string::npos);
+  REQUIRE(markdown.find("1: one") != std::string::npos);
+  REQUIRE(markdown.find("<content>") == std::string::npos);
+}

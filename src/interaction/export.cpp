@@ -1,5 +1,7 @@
 #include "interaction/export.hpp"
 
+#include "interaction/view.hpp"
+
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -54,7 +56,9 @@ std::string transcript_markdown(const AppState& state) {
         const std::string took = duration(entry);
         if (!took.empty()) out += "- duration: " + took + "\n";
         if (!entry.input.empty()) out += "\nInput:\n\n```\n" + entry.input + "\n```\n";
-        if (!entry.output.empty()) out += "\nOutput:\n\n```\n" + entry.output + "\n```\n";
+        const bool read = entry.tool == "read" || entry.tool == "read_file";
+        const std::string viewed = read ? read_output_text(entry.output) : entry.output;
+        if (!viewed.empty()) out += "\nOutput:\n\n```\n" + viewed + "\n```\n";
         out += "\n";
         break;
       }
