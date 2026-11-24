@@ -289,3 +289,31 @@ TEST_CASE("read tool cards collapse long output") {
   ftxui::Render(full, std::move(expanded));
   REQUIRE(full.ToString().find("six") != std::string::npos);
 }
+
+TEST_CASE("read envelopes render clean numbered cards") {
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "read";
+  entry.text = "read";
+  entry.status = "completed";
+  entry.output =
+      "<path>src/b.cpp</path>\n<type>file</type>\n<content>\n"
+      "1: one\n2: two\n3: three\n4: four\n\n(End of file - total 4 lines)\n</content>";
+
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen compact(70, 20);
+  ftxui::Render(compact, std::move(collapsed));
+  const std::string compact_text = compact.ToString();
+  REQUIRE(compact_text.find("src/b.cpp") != std::string::npos);
+  REQUIRE(compact_text.find("1: one") != std::string::npos);
+  REQUIRE(compact_text.find("3: three") != std::string::npos);
+  REQUIRE(compact_text.find("4: four") == std::string::npos);
+  REQUIRE(compact_text.find("… +1 lines") != std::string::npos);
+  REQUIRE(compact_text.find("(End of file") != std::string::npos);
+  REQUIRE(compact_text.find("<content>") == std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(70, 20);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("4: four") != std::string::npos);
+}

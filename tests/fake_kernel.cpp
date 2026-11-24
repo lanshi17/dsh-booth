@@ -183,11 +183,11 @@ int main() {
         continue;
       }
       if (text.find("readtool") != std::string::npos) {
-        std::string lines;
+        std::string lines = "<path>src/a.cpp</path>\n<type>file</type>\n<content>\n";
         for (int index = 1; index <= 10; ++index) {
-          if (!lines.empty()) lines += '\n';
-          lines += "line " + std::to_string(index);
+          lines += std::to_string(index) + ": line " + std::to_string(index) + '\n';
         }
+        lines += "\n(End of file - total 10 lines)\n</content>";
         send({{"jsonrpc", "2.0"}, {"method", "session/update"},
               {"params", {{"sessionId", "s-1"},
                           {"update", {{"sessionUpdate", "tool_call"},
