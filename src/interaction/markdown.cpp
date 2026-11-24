@@ -521,9 +521,19 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     if (quote_depth > 0) {
       std::string prefix;
       for (std::size_t depth = 0; depth < quote_depth; ++depth) prefix += "│ ";
-      lines.push_back(ftxui::hbox({ftxui::text(prefix) | ftxui::color(kLine),
-                                   render_inline(line.substr(quote_start), true) |
-                                       ftxui::flex}));
+      const std::string content = line.substr(quote_start);
+      std::string marker;
+      std::string rest;
+      if (list_marker(content, marker, rest)) {
+        lines.push_back(ftxui::hbox({
+            ftxui::text(prefix) | ftxui::color(kLine),
+            ftxui::text(marker) | ftxui::color(kAccent),
+            render_inline(rest, true) | ftxui::flex,
+        }));
+      } else {
+        lines.push_back(ftxui::hbox({ftxui::text(prefix) | ftxui::color(kLine),
+                                     render_inline(content, true) | ftxui::flex}));
+      }
       in_quote = true, lazy_quote_depth = quote_depth;
       continue;
     }

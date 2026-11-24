@@ -27,6 +27,24 @@ inline std::string heading_title(std::string title, bool atx) {
   return title;
 }
 
+/// Split a leading bullet or ordered-list marker from item text.
+inline bool list_marker(const std::string& text, std::string& marker, std::string& rest) {
+  if (text.size() >= 2 && (text[0] == '-' || text[0] == '*' || text[0] == '+') &&
+      text[1] == ' ') {
+    marker = text.substr(0, 2);
+    rest = text.substr(2);
+    return true;
+  }
+  std::size_t index = 0;
+  while (index < text.size() && std::isdigit(static_cast<unsigned char>(text[index]))) ++index;
+  if (index > 0 && index + 1 < text.size() && text[index] == '.' && text[index + 1] == ' ') {
+    marker = text.substr(0, index + 2);
+    rest = text.substr(index + 2);
+    return true;
+  }
+  return false;
+}
+
 /// Return the setext heading level for an underline, or 0.
 inline int setext_level(const std::string& line) {
   const auto first = line.find_first_not_of(" \t");

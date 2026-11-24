@@ -706,3 +706,22 @@ TEST_CASE("list continuation lines align under the item text") {
   REQUIRE(text.find("  continuation") != std::string::npos);
   REQUIRE(text.find("   more") != std::string::npos);
 }
+
+TEST_CASE("quoted lists style their markers") {
+  ftxui::Terminal::SetFallbackSize({60, 8});
+  auto view = markdown_view("> - item\n> 1. one\n", false);
+  ftxui::Screen screen(60, 8);
+  ftxui::Render(screen, std::move(view));
+  bool bullet = false;
+  bool ordered = false;
+  for (int y = 0; y < 8; ++y) {
+    for (int x = 0; x < 60; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "-" && cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) bullet = true;
+      if (cell.character == "1" && cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) ordered = true;
+    }
+  }
+  REQUIRE(bullet);
+  REQUIRE(ordered);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
