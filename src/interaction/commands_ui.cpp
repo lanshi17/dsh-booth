@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "interaction/commands.hpp"
+#include "interaction/context_gauge.hpp"
 #include "interaction/notify.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
@@ -351,7 +352,8 @@ std::string context_text(const AppState& state) {
     if (row.context_size == 0) return "context: not reported yet";
     const auto percent = row.context_used * 100 / row.context_size;
     return "context: " + std::to_string(row.context_used) + " / " +
-           std::to_string(row.context_size) + " (" + std::to_string(percent) + "%)";
+           std::to_string(row.context_size) + " (" + std::to_string(percent) + "%) " +
+           context_bar(percent, 10);
   }
   return "context: not reported yet";
 }

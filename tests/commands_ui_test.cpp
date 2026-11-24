@@ -201,7 +201,7 @@ TEST_CASE("context and stats describe the state") {
   row.context_used = 1200;
   row.context_size = 4800;
   state.snapshot.sessions.push_back(row);
-  REQUIRE(context_text(state) == "context: 1200 / 4800 (25%)");
+  REQUIRE(context_text(state) == "context: 1200 / 4800 (25%) ███░░░░░░░");
 
   TranscriptEntry user;
   user.kind = EntryKind::User;
