@@ -11,6 +11,8 @@
 
 #include "interaction/context_gauge.hpp"
 #include "interaction/commands_ui.hpp"
+#include "interaction/thought_view.hpp"
+#include "interaction/tui_internal.hpp"
 #include "interaction/state.hpp"
 
 using namespace booth;
@@ -316,6 +318,63 @@ TEST_CASE("reopening a session keeps one row for usage") {
   REQUIRE(state.snapshot.sessions[0].model == "model-two");
   apply(state, Event{UsageChanged{SessionId{"s-1"}, 1200, 4800}});
   REQUIRE(context_text(state).find("1200 / 4800") != std::string::npos);
+}
+
+TEST_CASE("entry clicks toggle tools and finished thoughts") {
+  AppState state;
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  state.entries.push_back(tool);
+  TranscriptEntry thought;
+  thought.kind = EntryKind::Thought;
+  thought.started = std::chrono::system_clock::now();
+  thought.finished = thought.started + std::chrono::seconds(1);
+  state.entries.push_back(thought);
+  TranscriptEntry live = thought;
+  live.finished = {};
+  state.entries.push_back(live);
+
+  std::set<std::size_t> open;
+  toggle_entry(state, open, 0);
+  REQUIRE(open.count(0) == 1);
+  toggle_entry(state, open, 0);
+  REQUIRE(open.empty());
+  toggle_entry(state, open, 1);
+  REQUIRE(state.entries[1].expanded);
+  toggle_entry(state, open, 1);
+  REQUIRE_FALSE(state.entries[1].expanded);
+  toggle_entry(state, open, 2);
+  REQUIRE_FALSE(state.entries[2].expanded);
+  toggle_entry(state, open, 99);
+}
+
+TEST_CASE("finished thoughts collapse until expanded") {
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Thought;
+  entry.text = "hidden reasoning";
+  entry.started = std::chrono::system_clock::now() - std::chrono::seconds(3);
+  entry.finished = std::chrono::system_clock::now();
+
+  auto collapsed = thought_view(entry, false);
+  ftxui::Screen screen(80, 8);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Thought for") != std::string::npos);
+  REQUIRE(text.find("click to expand") != std::string::npos);
+  REQUIRE(text.find("hidden reasoning") == std::string::npos);
+
+  auto expanded = thought_view(entry, true);
+  ftxui::Screen full(80, 8);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("hidden reasoning") != std::string::npos);
+
+  entry.finished = {};
+  auto live = thought_view(entry, false);
+  ftxui::Screen running(80, 8);
+  ftxui::Render(running, std::move(live));
+  const std::string live_text = running.ToString();
+  REQUIRE(live_text.find("hidden reasoning") != std::string::npos);
+  REQUIRE(live_text.find("click to expand") == std::string::npos);
 }
 
 TEST_CASE("permission requests inherit the matching tool card") {

@@ -115,7 +115,7 @@ class Root : public ComponentBase {
           [this] { submit(); }, [this](const booth::ModelChoice& c) { apply_model(c); },
           [this](const booth::SessionRow& s) { state_.notice = "resuming…"; worker_.post([this, ctx = context(), s]() mutable { booth::resume_session(ctx, s); }); },
           [this](std::size_t line, std::size_t column) { auto rows = editor_.Lines(); if (line >= rows.size()) return; std::size_t at = std::min(column, rows[line].size()); for (std::size_t row = 0; row < line; ++row) at += rows[row].size() + 1; editor_.SetCursor(at); },
-          [this](std::size_t entry) { if (entry < state_.entries.size() && state_.entries[entry].kind == EntryKind::Tool) { if (open_tools_.erase(entry) == 0) open_tools_.insert(entry); } },
+          [this](std::size_t entry) { booth::toggle_entry(state_, open_tools_, entry); },
           [this](const char* kind) { booth::answer_permission_choice(supervisor_, state_, kind); },
           [this] { state_.help = false; }};
         booth::click_mouse(in.hit, a);

@@ -362,7 +362,7 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
     case EntryKind::Assistant:
       return ftxui::vbox({markdown_view(entry.text, false), ftxui::text(" ")});
     case EntryKind::Thought:
-      return thought_view(entry);
+      return thought_view(entry, entry.expanded);
     case EntryKind::Image: {
       std::string label = entry.text.empty() ? "image" : entry.text;
       if (!entry.tool.empty()) label += " · " + entry.tool;

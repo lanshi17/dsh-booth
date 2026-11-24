@@ -135,7 +135,14 @@ TEST_CASE("thought entries show an omp duration header") {
   ftxui::Render(screen, std::move(view));
   const std::string text = strip_ansi(screen.ToString());
   REQUIRE(text.find("Thought for 12s") != std::string::npos);
-  REQUIRE(text.find("checking the options") != std::string::npos);
+  REQUIRE(text.find("click to expand") != std::string::npos);
+  REQUIRE(text.find("checking the options") == std::string::npos);
+
+  entry.expanded = true;
+  auto expanded = entry_element(entry);
+  ftxui::Screen full(40, 6);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(strip_ansi(full.ToString()).find("checking the options") != std::string::npos);
 }
 
 TEST_CASE("markdown renders inline latex outside code") {

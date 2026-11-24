@@ -94,8 +94,9 @@ PageUp/PageDown, Home/End and the wheel, and Esc or `q` closes it.
 A prompt starting with `!` runs the rest as a local `/bin/sh -c` command in the working directory,
 shows a `bash` tool card, and keeps the command/output out of model context and prompt history.
 `Ctrl+R` searches prompt history; `Ctrl+O` expands tool output, `Ctrl+T` hides or shows thinking,
-and `Alt+O` (or `Ctrl+Shift+O` on terminals that report it) hides or shows tool cards. Clicking a
-tool row toggles tool expansion. Mouse clicks also select and activate slash, file, model,
+and `Alt+O` (or `Ctrl+Shift+O` on terminals that report it) hides or shows tool cards. A finished
+thought collapses to `Thought for Ns` and expands when clicked; clicking a tool row toggles its
+expansion. Mouse clicks also select and activate slash, file, model,
 session, history, copy and model-mention rows, place the composer caret, open OSC-8 links, answer
 permission buttons and dismiss help; moving the pointer paints a hover band. `Ctrl+V` attaches a clipboard raster to the next prompt
 (shown as an `image N` chip); `:smile:`-style shortcodes expand when the prompt is sent. Set

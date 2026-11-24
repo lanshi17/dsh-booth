@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <deque>
 #include <mutex>
+#include <set>
 
 #include <ftxui/component/screen_interactive.hpp>
 
@@ -21,5 +23,8 @@ struct Inbox {
 
 int tui_loop(ftxui::ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& inbox,
              const Config& config);
+
+/// Toggles a transcript entry's disclosure; live thoughts and non-tool entries are ignored.
+void toggle_entry(AppState& state, std::set<std::size_t>& open_tools, std::size_t index);
 
 }  // namespace booth

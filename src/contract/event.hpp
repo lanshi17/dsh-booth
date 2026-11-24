@@ -52,6 +52,7 @@ struct TranscriptEntry {
   std::string input;      // tool call arguments, one line
   std::string raw_input;  // original arguments JSON, for diff rendering
   std::string output;     // tool result text
+  bool expanded{false};   // per-entry disclosure for finished thinking
   std::chrono::system_clock::time_point started{};
   std::chrono::system_clock::time_point finished{};
 };

@@ -28,7 +28,7 @@ std::string thought_label(const TranscriptEntry& entry) {
   return (live ? "Thinking… " : "Thought for ") + elapsed;
 }
 
-ftxui::Element thought_view(const TranscriptEntry& entry) {
+ftxui::Element thought_view(const TranscriptEntry& entry, bool expanded) {
   const auto dim = theme_color("dim", ftxui::Color::RGB(118, 118, 118));
   const auto accent = theme_color("accent", ftxui::Color::RGB(0, 175, 255));
   const bool live = entry.finished == std::chrono::system_clock::time_point{};
@@ -36,8 +36,13 @@ ftxui::Element thought_view(const TranscriptEntry& entry) {
   head.push_back(ftxui::text("  ") | ftxui::color(dim));
   if (live) head.push_back(ftxui::text("✻ ") | ftxui::color(accent));
   head.push_back(ftxui::text(thought_label(entry)) | ftxui::color(dim));
-  return ftxui::vbox({ftxui::hbox(std::move(head)), markdown_view(entry.text, true),
-                      ftxui::text(" ")});
+  if (!live && !expanded) {
+    head.push_back(ftxui::text(" · click to expand") | ftxui::dim);
+  }
+  ftxui::Elements rows = {ftxui::hbox(std::move(head))};
+  if (live || expanded) rows.push_back(markdown_view(entry.text, true));
+  rows.push_back(ftxui::text(" "));
+  return ftxui::vbox(std::move(rows));
 }
 
 }  // namespace booth

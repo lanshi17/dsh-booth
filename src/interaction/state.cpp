@@ -1,7 +1,10 @@
 #include "interaction/state.hpp"
 
 #include <algorithm>
+#include <set>
 #include <string>
+
+#include "interaction/tui_internal.hpp"
 
 namespace booth {
 namespace {
@@ -28,6 +31,17 @@ std::size_t count_reads(const std::string& output) {
 }
 
 }  // namespace
+
+void toggle_entry(AppState& state, std::set<std::size_t>& open_tools, std::size_t index) {
+  if (index >= state.entries.size()) return;
+  TranscriptEntry& entry = state.entries[index];
+  if (entry.kind == EntryKind::Tool) {
+    if (open_tools.erase(index) == 0) open_tools.insert(index);
+  } else if (entry.kind == EntryKind::Thought &&
+             entry.finished != std::chrono::system_clock::time_point{}) {
+    entry.expanded = !entry.expanded;
+  }
+}
 
 std::string active_activity(const AppState& state) {
   for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
