@@ -243,6 +243,11 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("chart") != std::string::npos) {
+        stream_text("| name | value |\n|---|---|\n| a | 1 |\n| b | 2 |\n| c | 4 |\n");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("math") != std::string::npos) {
         stream_text("Energy: $E = mc^2$ and $\\frac{1}{2}$.\n$$\n\\frac{a+b}{c}\n$$\n");
         reply(id, {{"stopReason", "end_turn"}});

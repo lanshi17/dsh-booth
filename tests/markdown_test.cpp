@@ -328,3 +328,26 @@ TEST_CASE("markdown renders nested blockquotes") {
   }
   REQUIRE(bars >= 3);
 }
+
+TEST_CASE("markdown charts numeric tables") {
+  const std::string source =
+      "| name | value |\n"
+      "|---|---|\n"
+      "| a | 1 |\n"
+      "| b | 2 |\n"
+      "| c | 4 |\n";
+  const std::string text = render_markdown(source, 60, 14);
+  REQUIRE(text.find("█") != std::string::npos);
+  REQUIRE(text.find("░") != std::string::npos);
+}
+
+TEST_CASE("markdown leaves non-numeric tables uncharted") {
+  const std::string source =
+      "| name | value |\n"
+      "|---|---|\n"
+      "| a | one |\n"
+      "| b | two |\n"
+      "| c | three |\n";
+  const std::string text = render_markdown(source, 60, 14);
+  REQUIRE(text.find("█") == std::string::npos);
+}

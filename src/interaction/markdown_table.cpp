@@ -8,6 +8,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <iomanip>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -321,6 +324,68 @@ ftxui::Element table_view(const std::vector<std::vector<TableCell>>& rows,
   }
   body.push_back(border_line("└", "┴", "┘"));
   return ftxui::vbox(std::move(body));
+}
+
+bool parse_number(const std::string& raw, double& value) {
+  std::string text = trim_copy(raw);
+  if (!text.empty() && text.front() == '$') text.erase(text.begin());
+  if (!text.empty() && text.back() == '%') text.pop_back();
+  text.erase(std::remove(text.begin(), text.end(), ','), text.end());
+  if (text.empty()) return false;
+  try {
+    std::size_t used = 0;
+    const double parsed = std::stod(text, &used);
+    if (used != text.size() || !std::isfinite(parsed) || parsed < 0) return false;
+    value = parsed;
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+std::string format_number(double value) {
+  std::ostringstream out;
+  out << std::fixed << std::setprecision(std::floor(value) == value ? 0 : 1) << value;
+  return out.str();
+}
+
+std::vector<std::string> table_chart_lines(const std::vector<std::vector<TableCell>>& rows,
+                                           int max_width) {
+  if (rows.size() < 4 || rows.front().size() != 2) return {};
+  struct Entry {
+    std::string label;
+    double value;
+  };
+  std::vector<Entry> entries;
+  for (std::size_t row = 1; row < rows.size(); ++row) {
+    if (rows[row].size() < 2) return {};
+    double value = 0;
+    if (!parse_number(rows[row][1].text, value)) return {};
+    entries.push_back({rows[row][0].text.empty() ? "item" : rows[row][0].text, value});
+  }
+  if (entries.size() < 3) return {};
+  double maximum = 0;
+  std::size_t label_width = 0;
+  for (const auto& entry : entries) {
+    maximum = std::max(maximum, entry.value);
+    label_width = std::max(label_width, static_cast<std::size_t>(table_width(entry.label)));
+  }
+  if (maximum <= 0) return {};
+  const int bar_width = std::min(12, std::max(4, max_width - static_cast<int>(label_width) - 10));
+  if (bar_width < 4) return {};
+  std::vector<std::string> out;
+  for (const auto& entry : entries) {
+    const int filled = static_cast<int>(std::llround(entry.value / maximum * bar_width));
+    std::string line = entry.label;
+    line += std::string(label_width - table_width(entry.label), ' ');
+    line += "  ";
+    line += rule("█", filled);
+    line += rule("░", bar_width - filled);
+    line += ' ';
+    line += format_number(entry.value);
+    out.push_back(std::move(line));
+  }
+  return out;
 }
 
 }  // namespace booth

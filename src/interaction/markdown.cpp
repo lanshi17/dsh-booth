@@ -226,8 +226,15 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
         rows.push_back(styled_cells(table_cells(source[next])));
         ++next;
       }
-      lines.push_back(table_view(rows, aligns,
-                                 std::max(20, ftxui::Terminal::Size().dimx - 4)));
+      const int max_width = std::max(20, ftxui::Terminal::Size().dimx - 4);
+      lines.push_back(table_view(rows, aligns, max_width));
+      const auto chart = table_chart_lines(rows, max_width);
+      if (!chart.empty()) {
+        lines.push_back(ftxui::text(""));
+        for (const auto& bar : chart) {
+          lines.push_back(ftxui::text("  " + bar) | ftxui::color(kText));
+        }
+      }
       index = next - 1;
       continue;
     }

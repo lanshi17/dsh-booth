@@ -25,4 +25,8 @@ std::vector<TableCell> styled_cells(const std::vector<std::string>& cells);
 ftxui::Element table_view(const std::vector<std::vector<TableCell>>& rows,
                           const std::vector<TableAlign>& aligns, int max_width);
 
+/// Horizontal text bars for a two-column table whose values are all non-negative numbers.
+std::vector<std::string> table_chart_lines(const std::vector<std::vector<TableCell>>& rows,
+                                           int max_width);
+
 }  // namespace booth
