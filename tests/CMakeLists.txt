@@ -78,6 +78,10 @@ add_test(NAME pty_chart
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_chart.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_fetch
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_fetch.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_patch
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_patch.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

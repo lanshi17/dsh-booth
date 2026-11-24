@@ -70,6 +70,15 @@ struct WebResult {
 std::optional<WebResult> parse_web_search(const std::string& output);
 std::string web_queries(const TranscriptEntry& entry);
 
+struct WebFetchResult {
+  std::string url;
+  std::string status;
+  std::vector<std::string> body;
+  std::string footer;
+};
+
+std::optional<WebFetchResult> parse_web_fetch(const std::string& output);
+
 /// Pretty-print a complete JSON object or array; empty for primitives or invalid JSON.
 std::optional<std::string> pretty_json(const std::string& output);
 

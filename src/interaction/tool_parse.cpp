@@ -303,6 +303,9 @@ std::string tool_activity(const TranscriptEntry& entry) {
   } else if (entry.tool == "web_search") {
     const std::string query = web_queries(entry);
     if (!query.empty()) label = "web \"" + query + "\"";
+  } else if (entry.tool == "web_fetch") {
+    const std::string url = field({"url"});
+    if (!url.empty()) label = "fetch " + url;
   } else if (entry.tool == "edit" || entry.tool == "write") {
     label = field({"file_path", "path"});
   } else if (entry.tool == "todo_write") {
@@ -312,6 +315,36 @@ std::string tool_activity(const TranscriptEntry& entry) {
   }
   if (!label.empty()) return label;
   return entry.text.empty() ? entry.tool : entry.text;
+}
+
+std::optional<WebFetchResult> parse_web_fetch(const std::string& output) {
+  std::istringstream input(output);
+  std::string line;
+  if (!std::getline(input, line)) return std::nullopt;
+  if (!line.empty() && line.back() == '\r') line.pop_back();
+  const std::string prefix = "Fetched ";
+  if (line.rfind(prefix, 0) != 0) return std::nullopt;
+  const auto marker = line.rfind(" (HTTP ");
+  if (marker == std::string::npos || line.back() != ')') return std::nullopt;
+  WebFetchResult result;
+  result.url = line.substr(prefix.size(), marker - prefix.size());
+  result.status = line.substr(marker + 7, line.size() - marker - 8);
+  bool notice = false;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (!notice && line.rfind("External web content follows.", 0) == 0) {
+      notice = true;
+      continue;
+    }
+    if (line.rfind("(Content truncated.", 0) == 0) {
+      result.footer = line;
+      break;
+    }
+    result.body.push_back(line);
+  }
+  while (!result.body.empty() && result.body.front().empty()) result.body.erase(result.body.begin());
+  while (!result.body.empty() && result.body.back().empty()) result.body.pop_back();
+  return result;
 }
 
 std::optional<std::string> pretty_json(const std::string& output) {
