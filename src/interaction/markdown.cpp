@@ -253,8 +253,9 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       continue;
     }
     if (line == "---" || line == "***" || line == "___") {
+      const int width = std::min(80, std::max(20, ftxui::Terminal::Size().dimx - 4));
       std::string rule;
-      for (std::size_t cell = 0; cell < 40; ++cell) rule += "─";
+      for (int cell = 0; cell < width; ++cell) rule += "─";
       lines.push_back(ftxui::text(rule) | ftxui::color(kLine));
       continue;
     }
@@ -266,8 +267,17 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     std::size_t hashes = 0;
     while (hashes < line.size() && line[hashes] == '#') ++hashes;
     if (hashes > 0 && hashes < line.size() && line[hashes] == ' ') {
-      lines.push_back(ftxui::text(" " + line.substr(hashes + 1)) | ftxui::bold |
-                      ftxui::color(kAccent));
+      ftxui::Element heading = ftxui::text(" " + line.substr(hashes + 1)) | ftxui::bold;
+      if (hashes == 1) {
+        heading = heading | ftxui::color(kAccent) | ftxui::underlined;
+      } else if (hashes == 2) {
+        heading = heading | ftxui::color(kAccent);
+      } else if (hashes == 3) {
+        heading = heading | ftxui::color(kText);
+      } else {
+        heading = heading | ftxui::color(kDim);
+      }
+      lines.push_back(std::move(heading));
       continue;
     }
     const std::size_t leading = line.find_first_not_of(" \t");

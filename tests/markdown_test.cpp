@@ -239,3 +239,53 @@ TEST_CASE("markdown tables style bold, code and link cells") {
   REQUIRE(code);
   REQUIRE(linked);
 }
+
+TEST_CASE("markdown headings distinguish levels") {
+  ftxui::Terminal::SetFallbackSize({60, 20});
+  auto view = markdown_view("# One\n## Two\n### Three\n#### Four\n", false);
+  ftxui::Screen screen(60, 12);
+  ftxui::Render(screen, std::move(view));
+  bool h1_underlined = false;
+  bool h2_accent = false;
+  bool h3_text = false;
+  bool h4_dim = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "O" && cell.underlined) h1_underlined = true;
+      if (cell.character == "w" &&
+          cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) {
+        h2_accent = true;
+      }
+      if (cell.character == "h" &&
+          cell.foreground_color == ftxui::Color::RGB(228, 228, 228)) {
+        h3_text = true;
+      }
+      if (cell.character == "F" &&
+          cell.foreground_color == ftxui::Color::RGB(118, 118, 118)) {
+        h4_dim = true;
+      }
+    }
+  }
+  REQUIRE(h1_underlined);
+  REQUIRE(h2_accent);
+  REQUIRE(h3_text);
+  REQUIRE(h4_dim);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
+TEST_CASE("markdown rules span the available width") {
+  ftxui::Terminal::SetFallbackSize({60, 20});
+  const std::string text = render_markdown("---\n", 60, 6);
+  std::size_t count = 0;
+  for (std::size_t index = 0; index + 3 <= text.size();) {
+    if (text.compare(index, 3, "─") == 0) {
+      ++count;
+      index += 3;
+    } else {
+      ++index;
+    }
+  }
+  REQUIRE(count >= 50);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
