@@ -98,6 +98,12 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
         index = span->end;
         continue;
       }
+      if (text[index] == '\\' && index + 1 < text.size() &&
+          std::ispunct(static_cast<unsigned char>(text[index + 1]))) {
+        segment += text[index + 1];
+        index += 2;
+        continue;
+      }
     }
     if (!code && text[index] == '!' && index + 1 < text.size() && text[index + 1] == '[') {
       const auto label_end = text.find("](", index + 1);

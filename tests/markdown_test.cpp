@@ -482,3 +482,18 @@ TEST_CASE("markdown images keep their url") {
   REQUIRE(strip_ansi(screen.ToString()).find("[image: diagram]") != std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("markdown honors common backslash escapes") {
+  const std::string text = render_markdown(
+      "\\#tag \\+ plus \\{braces\\} \\\\ slash and \\*literal\\*\n", 60, 10);
+  REQUIRE(text.find("#tag") != std::string::npos);
+  REQUIRE(text.find("+ plus") != std::string::npos);
+  REQUIRE(text.find("{braces}") != std::string::npos);
+  REQUIRE(text.find("\\ slash") != std::string::npos);
+  REQUIRE(text.find("*literal*") != std::string::npos);
+}
+
+TEST_CASE("escaped math delimiters fall back to literal text") {
+  const std::string text = render_markdown("a \\( b and c \\[ d\n", 60, 10);
+  REQUIRE(text.find("a ( b and c [ d") != std::string::npos);
+}
