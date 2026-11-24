@@ -80,6 +80,66 @@ std::vector<CodeSpan> highlight_line(const std::string& line, const std::string&
     }
     return {CodeSpan{line, color, dim}};
   }
+  if (lang == "json") {
+    std::vector<CodeSpan> spans;
+    std::string plain;
+    const auto flush = [&] {
+      if (!plain.empty()) {
+        spans.push_back(CodeSpan{plain, kText, false});
+        plain.clear();
+      }
+    };
+    for (std::size_t index = 0; index < line.size();) {
+      const char ch = line[index];
+      if (ch == '"') {
+        std::size_t end = index + 1;
+        while (end < line.size() && line[end] != '"') {
+          if (line[end] == '\\' && end + 1 < line.size()) ++end;
+          ++end;
+        }
+        if (end < line.size()) ++end;
+        std::size_t next = end;
+        while (next < line.size() && (line[next] == ' ' || line[next] == '\t')) ++next;
+        flush();
+        const bool key = next < line.size() && line[next] == ':';
+        spans.push_back(CodeSpan{line.substr(index, end - index), key ? kAccent : kGreen, false});
+        index = end;
+        continue;
+      }
+      if (std::isdigit(static_cast<unsigned char>(ch)) ||
+          (ch == '-' && index + 1 < line.size() &&
+           std::isdigit(static_cast<unsigned char>(line[index + 1])))) {
+        std::size_t end = index + 1;
+        while (end < line.size() &&
+               (std::isdigit(static_cast<unsigned char>(line[end])) || line[end] == '.' ||
+                line[end] == 'e' || line[end] == 'E' || line[end] == '+' || line[end] == '-')) {
+          ++end;
+        }
+        flush();
+        spans.push_back(CodeSpan{line.substr(index, end - index), ftxui::Color::RGB(215, 175, 135),
+                                 false});
+        index = end;
+        continue;
+      }
+      if (std::isalpha(static_cast<unsigned char>(ch))) {
+        std::size_t end = index + 1;
+        while (end < line.size() && std::isalpha(static_cast<unsigned char>(line[end]))) ++end;
+        const std::string word = line.substr(index, end - index);
+        if (word == "true" || word == "false" || word == "null") {
+          flush();
+          spans.push_back(CodeSpan{word, kAccent, false});
+        } else {
+          plain += word;
+        }
+        index = end;
+        continue;
+      }
+      plain += ch;
+      ++index;
+    }
+    flush();
+    return spans;
+  }
   const bool hash_comment = lang == "python" || lang == "bash";
   const bool slash_comment = lang == "cpp" || lang == "ts";
   std::vector<CodeSpan> spans;

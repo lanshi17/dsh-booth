@@ -531,3 +531,25 @@ TEST_CASE("table cells keep escaped and code pipes") {
   REQUIRE(text.find("a | b") != std::string::npos);
   REQUIRE(text.find("value") != std::string::npos);
 }
+
+TEST_CASE("json fences color keys values and literals") {
+  ftxui::Terminal::SetFallbackSize({60, 12});
+  auto view = markdown_view("```json\n{\"key\": \"value\", \"n\": 12, \"ok\": true}\n```\n", false);
+  ftxui::Screen screen(60, 12);
+  ftxui::Render(screen, std::move(view));
+  bool key = false;
+  bool value = false;
+  bool number = false;
+  for (int y = 0; y < 12; ++y) {
+    for (int x = 0; x < 60; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "k" && cell.foreground_color == ftxui::Color::RGB(0, 175, 255)) key = true;
+      if (cell.character == "v" && cell.foreground_color == ftxui::Color::RGB(0, 255, 135)) value = true;
+      if (cell.character == "1" && cell.foreground_color == ftxui::Color::RGB(215, 175, 135)) number = true;
+    }
+  }
+  REQUIRE(key);
+  REQUIRE(value);
+  REQUIRE(number);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
