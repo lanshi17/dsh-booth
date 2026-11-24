@@ -1,3 +1,4 @@
+#include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
 
@@ -352,7 +353,7 @@ ftxui::Element history_search_view(const std::string& query,
       const bool selected = row == index;
       const bool hovered = row_hovered(mouse, MouseSurface::History, row, selected);
       std::string label = matches[row].substr(0, matches[row].find('\n'));
-      if (label.size() > 52) label = label.substr(0, 51) + "…";
+      label = ellipsize(label, 52);
       ftxui::Element line = ftxui::hbox({
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
           ftxui::text(label) | (selected ? ftxui::bold : ftxui::nothing),
@@ -440,11 +441,11 @@ ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,
       const bool selected = row == index;
       const bool hovered = row_hovered(mouse, MouseSurface::Session, row, selected);
       std::string title = session.title.empty() ? session.id.value : session.title;
-      if (title.size() > 40) title = title.substr(0, 39) + "…";
+      title = ellipsize(title, 40);
       ftxui::Element line = ftxui::hbox({
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
           ftxui::text(title) | (selected ? ftxui::bold : ftxui::nothing),
-          ftxui::text("  " + session.cwd) | ftxui::dim,
+          ftxui::text("  " + ellipsize(session.cwd, 16)) | ftxui::dim,
           ftxui::filler(),
       });
       paint_row(line, selected, hovered);

@@ -415,3 +415,14 @@ TEST_CASE("shell tool cards show a command prompt") {
   REQUIRE(text.find("echo hi") != std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("session picker truncates CJK titles by cells") {
+  SessionRow row;
+  row.id = SessionId{"s-1"};
+  row.title = "中文会话标题很长很长很长很长很长很长很长很长";
+  row.cwd = "/very/long/path/with/many/segments/project";
+  auto view = session_picker_view({row}, {0}, 0, false, "");
+  ftxui::Screen screen(70, 12);
+  ftxui::Render(screen, std::move(view));
+  REQUIRE(screen.ToString().find("…") != std::string::npos);
+}
