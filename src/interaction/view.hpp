@@ -61,6 +61,9 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded);
 /// The count and text of prompts waiting for the active turn to finish.
 ftxui::Element queued_view(const std::deque<std::string>& queued);
 
+/// A bounded checklist above the composer; nullopt when no open todos remain.
+std::optional<ftxui::Element> todo_hud(const std::vector<TodoItem>& todos);
+
 /// Flatten a dsh read envelope into path, numbered rows and footer text.
 std::string read_output_text(const std::string& output);
 

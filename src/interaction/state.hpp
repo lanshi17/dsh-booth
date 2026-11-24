@@ -27,6 +27,7 @@ struct AppState {
   ReasoningOptions reasoning;
   bool busy{false};
   std::optional<PermissionRequest> permission;
+  std::vector<TodoItem> todos;
   std::string notice;
   bool help{false};
   std::vector<Attachment> attachments;

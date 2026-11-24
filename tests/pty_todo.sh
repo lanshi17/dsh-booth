@@ -12,6 +12,7 @@ trap 'rm -rf "$state" "$output"' EXIT
     >"$output" 2>&1 || true
 
 grep -aq "Todo · 2/10" "$output"
+grep -aq "Todo 2/10 · 1 active" "$output"
 grep -aq "Task 1" "$output"
 grep -aq "… +2 todos" "$output"
 grep -aq "Task 10" "$output"

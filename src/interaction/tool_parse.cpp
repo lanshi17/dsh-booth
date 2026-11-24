@@ -50,7 +50,7 @@ ReadEnvelope parse_read_envelope(const std::string& output) {
   return envelope;
 }
 
-std::optional<std::vector<TodoRow>> parse_todos(const TranscriptEntry& entry) {
+std::optional<std::vector<TodoItem>> parse_todos(const TranscriptEntry& entry) {
   if (entry.tool != "todo_write") return std::nullopt;
   const std::string& source = entry.raw_input.empty() ? entry.input : entry.raw_input;
   if (source.empty()) return std::nullopt;
@@ -64,11 +64,11 @@ std::optional<std::vector<TodoRow>> parse_todos(const TranscriptEntry& entry) {
   } else {
     return std::nullopt;
   }
-  std::vector<TodoRow> rows;
+  std::vector<TodoItem> rows;
   rows.reserve(list->size());
   for (const auto& item : *list) {
     if (!item.is_object() || !item.contains("content") || !item["content"].is_string()) continue;
-    TodoRow row;
+    TodoItem row;
     row.content = item["content"].get<std::string>();
     row.status = item.value("status", std::string{"pending"});
     rows.push_back(std::move(row));

@@ -43,6 +43,11 @@ struct Snapshot {
 
 enum class EntryKind { User, Assistant, Thought, Tool, Notice, Image };
 
+struct TodoItem {
+  std::string content;
+  std::string status;  // pending | in_progress | completed
+};
+
 struct TranscriptEntry {
   EntryKind kind{EntryKind::Assistant};
   std::string id;    // tool call id, when the entry is a tool

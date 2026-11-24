@@ -73,7 +73,8 @@ Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
 `/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/mouse`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
-and sent when the run ends.
+and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
+`Todo done/total` HUD and disappears once every item is complete.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
 through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
 name or wire value selects it, and no argument lists the current value and choices. `/theme`

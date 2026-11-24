@@ -272,6 +272,7 @@ class Root : public ComponentBase {
                                  " entries back · PageDown to follow") |
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
+    if (auto hud = booth::todo_hud(state_.todos)) view.push_back(std::move(*hud));
     if (!queued_.empty()) view.push_back(booth::queued_view(queued_));
     if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.matches(),
                                                 copy_picker_.index(), copy_picker_.query(), &mouse_));

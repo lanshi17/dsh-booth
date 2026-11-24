@@ -590,6 +590,45 @@ TEST_CASE("tool titles truncate on terminal cells") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("the todo HUD tracks the latest list and hides when done") {
+  AppState state;
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.tool = "todo_write";
+  tool.id = "t-todo";
+  tool.status = "pending";
+  tool.raw_input =
+      R"({"todos":[{"content":"write","status":"completed"},)"
+      R"({"content":"test","status":"in_progress"},)"
+      R"({"content":"ship","status":"pending"},)"
+      R"({"content":"docs","status":"pending"}]})";
+  apply(state, Event{tool});
+  REQUIRE(state.todos.size() == 4);
+
+  auto hud = todo_hud(state.todos);
+  REQUIRE(hud.has_value());
+  ftxui::Screen screen(80, 8);
+  ftxui::Render(screen, std::move(*hud));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("Todo 1/4 · 1 active") != std::string::npos);
+  REQUIRE(text.find("test") != std::string::npos);
+  REQUIRE(text.find("ship") != std::string::npos);
+  REQUIRE(text.find("docs") != std::string::npos);
+  REQUIRE(text.find("write") == std::string::npos);
+
+  TranscriptEntry update;
+  update.kind = EntryKind::Tool;
+  update.tool = "todo_write";
+  update.id = "t-todo";
+  update.status = "completed";
+  apply(state, Event{update});
+  REQUIRE(state.todos.size() == 4);
+
+  apply(state, Event{SessionSwitched{SessionId{"s-2"}, "next"}});
+  REQUIRE(state.todos.empty());
+  REQUIRE_FALSE(todo_hud(state.todos).has_value());
+}
+
 TEST_CASE("generic JSON output renders as a pretty tree") {
   ftxui::Terminal::SetFallbackSize({80, 24});
   TranscriptEntry entry;

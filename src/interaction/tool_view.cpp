@@ -64,7 +64,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const std::vector<ReadEnvelope> reads =
       read_tool ? parse_read_envelopes(entry.output) : std::vector<ReadEnvelope>{};
   const bool has_envelope = !reads.empty();
-  const std::optional<std::vector<TodoRow>> todos = parse_todos(entry);
+  const std::optional<std::vector<TodoItem>> todos = parse_todos(entry);
   const auto diff = booth::tool_diff(entry);
   const std::optional<std::string> json_output =
       !read_tool && !shell_tool && !todos && !grep_result && !glob_result && !web_result &&
@@ -76,7 +76,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   if (todos) {
     title = "Todo";
     if (!todos->empty()) {
-      const auto done = std::count_if(todos->begin(), todos->end(), [](const TodoRow& row) {
+      const auto done = std::count_if(todos->begin(), todos->end(), [](const TodoItem& row) {
         return row.status == "completed";
       });
       title += " · " + std::to_string(done) + "/" + std::to_string(todos->size());

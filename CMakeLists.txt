@@ -97,6 +97,7 @@ add_library(booth_interaction STATIC
   src/interaction/tool_parse.cpp
   src/interaction/tool_view.cpp
   src/interaction/theme.cpp
+  src/interaction/todo_hud.cpp
   src/interaction/worker.cpp
   src/interaction/ticker.cpp
   src/interaction/keymap.cpp

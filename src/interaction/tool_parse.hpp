@@ -16,12 +16,7 @@ struct ReadEnvelope {
 
 std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output);
 
-struct TodoRow {
-  std::string content;
-  std::string status;
-};
-
-std::optional<std::vector<TodoRow>> parse_todos(const TranscriptEntry& entry);
+std::optional<std::vector<TodoItem>> parse_todos(const TranscriptEntry& entry);
 
 bool is_shell_tool(const std::string& tool);
 

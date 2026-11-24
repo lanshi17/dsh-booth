@@ -34,6 +34,16 @@ std::size_t count_reads(const std::string& output) {
 
 }  // namespace
 
+void remember_todos(AppState& state, const TranscriptEntry& entry) {
+  if (entry.kind != EntryKind::Tool || entry.tool != "todo_write") return;
+  if (auto todos = parse_todos(entry)) state.todos = std::move(*todos);
+}
+
+void replay_todos(AppState& state) {
+  state.todos.clear();
+  for (const auto& entry : state.entries) remember_todos(state, entry);
+}
+
 void toggle_entry(AppState& state, std::set<std::size_t>& open_tools, std::size_t index) {
   if (index >= state.entries.size()) return;
   TranscriptEntry& entry = state.entries[index];
@@ -113,10 +123,12 @@ void apply(AppState& state, const Event& event) {
             state.entries.erase(state.entries.begin() + static_cast<std::ptrdiff_t>(index));
           }
         }
+        if (index < state.entries.size()) remember_todos(state, state.entries[index]);
         return;
       }
     }
     state.entries.push_back(*entry);
+    remember_todos(state, state.entries.back());
     return;
   }
 
@@ -133,6 +145,7 @@ void apply(AppState& state, const Event& event) {
 
   if (const auto* switched = std::get_if<SessionSwitched>(&event.value)) {
     state.entries.clear();
+    state.todos.clear();
     state.attachments.clear();
     state.streaming.clear();
     state.busy = false;
@@ -145,6 +158,7 @@ void apply(AppState& state, const Event& event) {
 
   if (const auto* replayed = std::get_if<TranscriptReplayed>(&event.value)) {
     state.entries = replayed->entries;
+    replay_todos(state);
     state.streaming.clear();
     state.busy = false;
     return;
@@ -157,6 +171,7 @@ void apply(AppState& state, const Event& event) {
     state.reasoning = {};
     state.attachments.clear();
     state.entries.clear();
+    state.todos.clear();
     state.streaming.clear();
     state.busy = false;
     state.notice = "session closed";
@@ -165,6 +180,7 @@ void apply(AppState& state, const Event& event) {
 
   if (const auto* opened = std::get_if<SessionOpened>(&event.value)) {
     state.session = opened->id.value;
+    state.todos.clear();
     if (SessionRow* row = find_session(state.snapshot.sessions, opened->id)) {
       if (!opened->cwd.empty()) row->cwd = opened->cwd;
       if (!opened->model.empty()) row->model = opened->model;
