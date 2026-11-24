@@ -465,12 +465,14 @@ TEST_CASE("status text reports context percentage") {
   AppState state;
   state.snapshot.phase = DshPhase::Ready;
   state.session = "s-1";
+  state.title = "demo";
   SessionRow row;
   row.id = SessionId{"s-1"};
   row.context_used = 50;
   row.context_size = 100;
   state.snapshot.sessions.push_back(row);
   const std::string text = status_text(state);
+  REQUIRE(text.find("demo") != std::string::npos);
   REQUIRE(text.find("context 50%") != std::string::npos);
 }
 

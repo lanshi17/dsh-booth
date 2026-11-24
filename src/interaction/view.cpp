@@ -571,6 +571,7 @@ void print_splash() {
 std::string status_text(const AppState& state) {
   std::string out = "booth · " + phase_name(state.snapshot.phase);
   if (!state.session.empty()) out += " · session " + state.session;
+  if (!state.title.empty()) out += " · " + state.title;
   out += " · model " + state.model;
   const auto [used, size] = context_usage(state);
   if (size > 0) out += " · context " + std::to_string(used * 100 / size) + "%";
