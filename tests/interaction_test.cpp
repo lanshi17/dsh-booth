@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "interaction/context_gauge.hpp"
 #include "interaction/state.hpp"
 
 using namespace booth;
@@ -238,4 +239,13 @@ TEST_CASE("active activity follows the latest running tool") {
   tool.text.clear();
   state.entries[0] = tool;
   REQUIRE(active_activity(state) == "read");
+}
+
+TEST_CASE("context gauge fills and changes color at thresholds") {
+  REQUIRE(context_bar(0, 6) == "░░░░░░");
+  REQUIRE(context_bar(50, 6) == "███░░░");
+  REQUIRE(context_bar(100, 6) == "██████");
+  REQUIRE(context_color(69) == ftxui::Color::RGB(0, 255, 135));
+  REQUIRE(context_color(70) == ftxui::Color::RGB(255, 215, 0));
+  REQUIRE(context_color(90) == ftxui::Color::RGB(255, 95, 95));
 }

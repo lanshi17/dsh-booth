@@ -78,6 +78,10 @@ add_test(NAME pty_activity
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_activity.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_context_gauge
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_context_gauge.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_slash_fuzzy
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_slash_fuzzy.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

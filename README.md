@@ -41,7 +41,7 @@ booth                                    # the TUI, when stdin is a terminal
 The TUI follows omp's shape: it runs inline (no alternate screen), prints the splash once, and
 keeps the transcript above a two-row composer. The composer's top border is a dark chip band with
 the model, reasoning effort when dsh reports it, cwd, git branch/dirty counts, working timer and
-context usage; the bottom row merges
+a threshold-colored context gauge; the bottom row merges
 the prompt with the key hints. User turns keep omp's full-width band, assistant turns render
 markdown (lists, links, tables, inline code, LaTeX math, syntax-highlighted fences), and tool calls render as
 full-width frames with input, output and duration. `/copy` puts the last answer on the terminal

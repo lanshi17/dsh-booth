@@ -1,4 +1,5 @@
 #include "interaction/view.hpp"
+#include "interaction/context_gauge.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/thought_view.hpp"
 #include "interaction/tool_diff.hpp"
@@ -243,7 +244,9 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
       ftxui::hbox(std::move(band)),
       ftxui::text("") | ftxui::color(kChip),
       ftxui::text("─") | ftxui::color(kAccent),
-      ftxui::text(std::to_string(percent) + "%") | ftxui::color(kDim),
+      ftxui::text(context_bar(percent, 6)) | ftxui::color(context_color(percent)),
+      ftxui::text(" "),
+      ftxui::text(std::to_string(percent) + "%") | ftxui::color(context_color(percent)),
       window.hidden_above > 0
           ? (ftxui::text("↑" + std::to_string(window.hidden_above) + " ") | ftxui::color(kDim))
           : ftxui::text(""),
