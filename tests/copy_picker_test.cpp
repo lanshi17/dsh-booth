@@ -71,3 +71,19 @@ TEST_CASE("copy picker includes tool output") {
   REQUIRE(picker.items()[0].label.rfind("tool · bash", 0) == 0);
   REQUIRE(picker.items()[0].text == "echo hi\n");
 }
+
+TEST_CASE("copy picker flattens read output") {
+  AppState state;
+  TranscriptEntry read;
+  read.kind = EntryKind::Tool;
+  read.tool = "read";
+  read.output =
+      "<path>src/a.cpp</path>\n<type>file</type>\n<content>\n1: one\n(End of file)\n</content>";
+  state.entries.push_back(read);
+  CopyPicker picker;
+  REQUIRE(picker.open(state));
+  REQUIRE(picker.items().size() == 1);
+  REQUIRE(picker.items()[0].label.rfind("read ·", 0) == 0);
+  REQUIRE(picker.items()[0].text.find("1: one") != std::string::npos);
+  REQUIRE(picker.items()[0].text.find("<content>") == std::string::npos);
+}

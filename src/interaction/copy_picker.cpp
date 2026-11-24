@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "interaction/clipboard.hpp"
+#include "interaction/view.hpp"
 
 namespace booth {
 namespace {
@@ -41,9 +42,11 @@ bool CopyPicker::open(const AppState& state) {
   items_.clear();
   for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
     if (entry->kind == EntryKind::Tool) {
-      if (entry->output.empty() || entry->tool == "read" || entry->tool == "read_file") continue;
-      items_.push_back({"tool · " + entry->tool + " · " + first_line(entry->output, 32),
-                        entry->output});
+      const bool read = entry->tool == "read" || entry->tool == "read_file";
+      const std::string text = read ? read_output_text(entry->output) : entry->output;
+      if (text.empty()) continue;
+      const std::string label = read ? "read · " : "tool · " + entry->tool + " · ";
+      items_.push_back({label + first_line(text, 32), text});
       continue;
     }
     if (entry->kind != EntryKind::Assistant) continue;
