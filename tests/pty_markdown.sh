@@ -12,7 +12,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-( printf 'markdown\n'; sleep 2; printf '\x04' ) |
+( printf 'markdown\n'; sleep 2; printf 'markdowncode\n'; sleep 2; printf '\x04' ) |
   timeout 20 script -qec "stty rows 70 cols 100; BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
   >"$output" 2>&1 || true
 

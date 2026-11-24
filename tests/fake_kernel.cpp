@@ -319,8 +319,13 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("markdowncode") != std::string::npos) {
+        stream_text("```cpp\n// sum two numbers\nint add(int a, int b) { return a + b; }\n```\n\nEscaped \\#tag and \\{braces\\}.\n");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("markdown") != std::string::npos) {
-        stream_text("This is *italic* and ~~gone~~.\n\nHere is the result:\n- first `printf` item\n- second item\n- [x] shipped\n- [ ] pending\n\nSee [the docs](https://example.com).\n\n| name | value |\n|------|-------|\n| alpha | 1 |\n| beta | 2 |\n\n| 名称 | value |\n|------|-------|\n| 中文 | 1 |\n\n### Details\n1. first ordered\n2. second ordered\n> quoted line\n  - nested bullet\n\n```cpp\n// sum two numbers\nint add(int a, int b) { return a + b; }\n```\n\nEscaped \\#tag and \\{braces\\}.\n");
+        stream_text("This is *italic* and ~~gone~~.\n\nHere is the result:\n- first `printf` item\n- second item\n- [x] shipped\n- [ ] pending\n\nSee [the docs](https://example.com).\n\n| name | value |\n|------|-------|\n| alpha | 1 |\n| beta | 2 |\n\n| 名称 | value |\n|------|-------|\n| 中文 | 1 |\n\n### Details\n1. first ordered\n2. second ordered\n> quoted line\n  - nested bullet\n\n");
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
