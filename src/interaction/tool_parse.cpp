@@ -197,6 +197,83 @@ std::string glob_pattern(const TranscriptEntry& entry) {
   return {};
 }
 
+std::optional<WebResult> parse_web_search(const std::string& output) {
+  std::istringstream input(output);
+  WebResult result;
+  std::vector<std::string> answer;
+  bool in_sources = false;
+  bool recognized = false;
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line == "Sources:") {
+      in_sources = true;
+      recognized = true;
+      continue;
+    }
+    if (!in_sources) {
+      if (line.empty() || line.rfind("External web content follows.", 0) == 0) continue;
+      if (line == "No results found.") {
+        recognized = true;
+        continue;
+      }
+      answer.push_back(line);
+      recognized = true;
+      continue;
+    }
+    if (line.empty()) continue;
+    if (line.rfind("Cite the relevant URLs", 0) == 0) continue;
+    if (line.front() == '(' && line.back() == ')') {
+      result.footer = line;
+      recognized = true;
+      continue;
+    }
+    if (line.rfind("- [", 0) != 0) continue;
+    const auto open = line.find("](", 3);
+    if (open == std::string::npos) continue;
+    std::size_t close = open + 2;
+    int depth = 0;
+    for (; close < line.size(); ++close) {
+      if (line[close] == '(') ++depth;
+      else if (line[close] == ')') {
+        if (depth == 0) break;
+        --depth;
+      }
+    }
+    if (close >= line.size()) continue;
+    WebSource source;
+    source.title = line.substr(3, open - 3);
+    source.url = line.substr(open + 2, close - open - 2);
+    std::string suffix = line.substr(close + 1);
+    const std::string separator = " — ";
+    if (suffix.rfind(separator, 0) == 0) suffix.erase(0, separator.size());
+    source.excerpt = suffix;
+    result.sources.push_back(std::move(source));
+    recognized = true;
+  }
+  if (!recognized) return std::nullopt;
+  while (!answer.empty() && answer.back().empty()) answer.pop_back();
+  for (const auto& row : answer) {
+    if (!result.answer.empty() || !row.empty()) {
+      if (!result.answer.empty()) result.answer += '\n';
+      result.answer += row;
+    }
+  }
+  return result;
+}
+
+std::string web_queries(const TranscriptEntry& entry) {
+  const Json raw = Json::parse(entry.raw_input, nullptr, false);
+  if (raw.is_discarded() || !raw.is_object()) return {};
+  std::string out;
+  for (const auto& query : raw.value("queries", Json::array())) {
+    if (!query.is_string()) continue;
+    if (!out.empty()) out += ", ";
+    out += query.get<std::string>();
+  }
+  return out;
+}
+
 std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
   std::vector<ReadEnvelope> envelopes;
   std::size_t start = output.find("<path>");

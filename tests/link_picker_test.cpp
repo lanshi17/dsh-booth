@@ -21,20 +21,24 @@ TranscriptEntry entry(EntryKind kind, std::string text) {
 }
 
 TEST_CASE("link picker extracts markdown and bare URLs in first-seen order") {
+  TranscriptEntry tool = entry(EntryKind::Tool, "");
+  tool.output = "see [tool docs](https://tool.test/docs) and https://ignored.example/tool";
   const std::vector<TranscriptEntry> entries{
       entry(EntryKind::User, "read [docs](https://example.com/docs) and https://example.com/docs."),
-      entry(EntryKind::Tool, "https://ignored.example/tool"),
+      tool,
       entry(EntryKind::Assistant, "mail me at mailto:dev@example.com or https://other.test/x?q=1"),
       entry(EntryKind::Assistant, "https://example.com/docs"),
   };
   const auto links = collect_transcript_links(entries);
-  REQUIRE(links.size() == 3);
+  REQUIRE(links.size() == 5);
   REQUIRE(links[0].url == "https://example.com/docs");
   REQUIRE(links[0].host == "example.com");
-  REQUIRE(links[1].url == "mailto:dev@example.com");
-  REQUIRE(links[2].url == "https://other.test/x?q=1");
+  REQUIRE(links[1].url == "https://tool.test/docs");
+  REQUIRE(links[2].url == "https://ignored.example/tool");
+  REQUIRE(links[3].url == "mailto:dev@example.com");
+  REQUIRE(links[4].url == "https://other.test/x?q=1");
   REQUIRE(links[0].hint == "a");
-  REQUIRE(links[2].hint == "c");
+  REQUIRE(links[4].hint == "e");
 }
 
 TEST_CASE("link picker filters non-openable URLs and assigns stable hints") {

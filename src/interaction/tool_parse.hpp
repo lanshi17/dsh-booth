@@ -60,4 +60,19 @@ struct GlobResult {
 std::optional<GlobResult> parse_glob(const std::string& output);
 std::string glob_pattern(const TranscriptEntry& entry);
 
+struct WebSource {
+  std::string title;
+  std::string url;
+  std::string excerpt;
+};
+
+struct WebResult {
+  std::string answer;
+  std::vector<WebSource> sources;
+  std::string footer;
+};
+
+std::optional<WebResult> parse_web_search(const std::string& output);
+std::string web_queries(const TranscriptEntry& entry);
+
 }  // namespace booth

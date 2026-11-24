@@ -46,7 +46,8 @@ the prompt with the key hints. User turns keep omp's full-width band, assistant 
 markdown (lists, links, tables, inline code, LaTeX math, syntax-highlighted fences), and tool calls render as
 full-width frames with input, output, diff statistics and duration; shell cards show the last 10
 output lines and the exit status, grep cards group matches by file, glob cards group paths by
-directory, and a diff stops at 40 lines until `Ctrl+O`. `/copy` puts the last answer on the terminal
+directory, web search cards show the answer and clickable sources, and a diff stops at 40 lines
+until `Ctrl+O`. `/copy` puts the last answer on the terminal
 clipboard with OSC 52 (tmux passthrough included); `/export [path]` writes the full transcript as Markdown (default:
 `$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk the prompt history,
 `Ctrl+C` cancels the run, `Ctrl+D` quits and saves the unsent draft for the next start, `Ctrl+R`
@@ -87,7 +88,8 @@ effort, context, queue), and `/acp` prints the protocol, phase, connection and s
 `/attach <path>` adds an ACP `resource_link` to the next prompt (shown as a `file N` status chip);
 `/detach [name|all]` clears pending links, and `/cancel` is the explicit ACP cancel command.
 `/find <text>` searches the local transcript and cycles older matches on repeated calls.
-`/links` (or `Alt+L`) lists openable transcript URLs with `a`–`z`/`A`–`Z` hint keys; Enter or a
+`/links` (or `Alt+L`) lists openable URLs from user, assistant and tool output with `a`–`z`/`A`–`Z`
+hint keys; Enter or a
 hint opens the selection and Esc closes. `/mouse` reports capture; `/mouse on|off` persists it.
 Capture defaults off inside tmux so wheel scrollback and native/tmux selection copy work; turn it
 on for booth's wheel scrolling, clicks and hover. `/copy` still writes through tmux's OSC 52

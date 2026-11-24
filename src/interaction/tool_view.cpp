@@ -32,6 +32,9 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       entry.tool == "grep" && entry.status != "failed" ? parse_grep(entry.output) : std::nullopt;
   const std::optional<GlobResult> glob_result =
       entry.tool == "glob" && entry.status != "failed" ? parse_glob(entry.output) : std::nullopt;
+  const std::optional<WebResult> web_result =
+      entry.tool == "web_search" && entry.status != "failed" ? parse_web_search(entry.output)
+                                                             : std::nullopt;
   std::string output = entry.output;
   const ShellStatus shell_status = shell_tool ? take_shell_status(output) : ShellStatus{};
   const std::vector<ReadEnvelope> reads =
@@ -65,6 +68,15 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
     if (!glob_result->paths.empty()) {
       title += " · " + std::to_string(glob_result->paths.size()) +
                (glob_result->paths.size() == 1 ? " file" : " files");
+    }
+  }
+  if (web_result) {
+    title = "Web search";
+    const std::string query = web_queries(entry);
+    if (!query.empty()) title += " \"" + query + "\"";
+    if (!web_result->sources.empty()) {
+      title += " · " + std::to_string(web_result->sources.size()) +
+               (web_result->sources.size() == 1 ? " source" : " sources");
     }
   }
   const int columns = ftxui::Terminal::Size().dimx;
@@ -119,7 +131,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
-  } else if (!entry.input.empty() && !todos && !grep_result && !glob_result) {
+  } else if (!entry.input.empty() && !todos && !grep_result && !glob_result && !web_result) {
     const std::size_t input_width =
         shell_tool ? std::max<std::size_t>(1, content_width - 2) : content_width;
     bool first = true;
@@ -171,6 +183,95 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text("│ ") | ftxui::color(border),
           ftxui::text("… +" + std::to_string(todos->size() - shown) + " todos · Ctrl+O") |
               ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+  }
+  if (web_result) {
+    if (!web_result->answer.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("├── Answer ") | ftxui::color(border),
+          ftxui::separator() | ftxui::flex | ftxui::color(border),
+          ftxui::text("┤") | ftxui::color(border),
+      }));
+      std::vector<std::string> answer_lines;
+      std::istringstream answer(web_result->answer);
+      std::string line;
+      while (std::getline(answer, line)) answer_lines.push_back(line);
+      const std::size_t limit = expanded ? answer_lines.size() : 6;
+      for (std::size_t index = 0; index < std::min(limit, answer_lines.size()); ++index) {
+        for (const auto& wrapped : wrap_cells(answer_lines[index], content_width)) {
+          rows.push_back(ftxui::hbox({
+              ftxui::text("│ ") | ftxui::color(border),
+              ftxui::text(wrapped) | ftxui::flex | ftxui::color(kText),
+              ftxui::text(" │") | ftxui::color(border),
+          }));
+        }
+      }
+      if (!expanded && answer_lines.size() > limit) {
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│ ") | ftxui::color(border),
+            ftxui::text("… +" + std::to_string(answer_lines.size() - limit) +
+                        " answer lines · Ctrl+O") | ftxui::dim | ftxui::flex,
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+      }
+    }
+    if (!web_result->sources.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("├── Sources ") | ftxui::color(border),
+          ftxui::separator() | ftxui::flex | ftxui::color(border),
+          ftxui::text("┤") | ftxui::color(border),
+      }));
+      constexpr std::size_t kWebSources = 5;
+      const std::size_t limit = expanded ? web_result->sources.size() : kWebSources;
+      for (std::size_t index = 0; index < std::min(limit, web_result->sources.size()); ++index) {
+        const auto& source = web_result->sources[index];
+        const std::string number = std::to_string(index + 1) + ". ";
+        ftxui::Element title_element =
+            ftxui::hyperlink(source.url, ftxui::text(ellipsize(source.title, content_width - 4)));
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│ " + number) | ftxui::color(kDim),
+            std::move(title_element) | ftxui::flex | ftxui::color(kAccent),
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│   ") | ftxui::color(border),
+            ftxui::text(ellipsize(source.url, content_width - 2)) | ftxui::dim | ftxui::flex,
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+        if (!source.excerpt.empty()) {
+          const std::size_t excerpt_limit = expanded ? 1000 : 2;
+          std::size_t shown = 0;
+          for (const auto& wrapped : wrap_cells(source.excerpt, content_width - 2)) {
+            if (shown++ >= excerpt_limit) break;
+            rows.push_back(ftxui::hbox({
+                ftxui::text("│   ") | ftxui::color(border),
+                ftxui::text(wrapped) | ftxui::dim | ftxui::flex,
+                ftxui::text(" │") | ftxui::color(border),
+            }));
+          }
+        }
+      }
+      if (!expanded && web_result->sources.size() > limit) {
+        rows.push_back(ftxui::hbox({
+            ftxui::text("│ ") | ftxui::color(border),
+            ftxui::text("… +" + std::to_string(web_result->sources.size() - limit) +
+                        " sources · Ctrl+O") | ftxui::dim | ftxui::flex,
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+      }
+    } else if (web_result->answer.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("No results") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+    if (!web_result->footer.empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text(web_result->footer) | ftxui::dim | ftxui::flex,
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
@@ -282,7 +383,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
           ftxui::text(" │") | ftxui::color(border),
       }));
     }
-  } else if (!output.empty() && (!todos || entry.status == "failed")) {
+  } else if (!output.empty() && (!todos || entry.status == "failed") && !web_result) {
     rows.push_back(ftxui::hbox({
         ftxui::text("├── Output ") | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),

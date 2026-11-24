@@ -157,6 +157,11 @@ std::vector<TranscriptLink> collect_transcript_links(
   std::vector<Candidate> candidates;
   for (std::size_t index = 0; index < entries.size(); ++index) {
     const auto& entry = entries[index];
+    if (entry.kind == EntryKind::Tool) {
+      markdown_candidates(entry.output, index, candidates);
+      bare_candidates(entry.output, index, candidates);
+      continue;
+    }
     if (entry.kind != EntryKind::User && entry.kind != EntryKind::Assistant) continue;
     markdown_candidates(entry.text, index, candidates);
     bare_candidates(entry.text, index, candidates);
