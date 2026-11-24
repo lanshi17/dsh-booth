@@ -414,3 +414,25 @@ TEST_CASE("markdown autolinks email addresses") {
   }
   REQUIRE(linked);
 }
+
+TEST_CASE("markdown resolves reference links") {
+  auto view = markdown_view("[docs][d] and [d][]\n\n[d]: https://x.test \"T\"\n", false);
+  ftxui::Screen screen(70, 10);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("docs") != std::string::npos);
+  REQUIRE(text.find("[d]") == std::string::npos);
+  REQUIRE(text.find("[d]:") == std::string::npos);
+  bool linked = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      if (screen.CellAt(x, y).hyperlink != 0) linked = true;
+    }
+  }
+  REQUIRE(linked);
+}
+
+TEST_CASE("reference links stay raw in code spans") {
+  const std::string text = render_markdown("`[d][d]`\n\n[d]: https://x.test\n", 60, 10);
+  REQUIRE(text.find("[d][d]") != std::string::npos);
+}

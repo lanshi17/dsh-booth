@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <map>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -195,6 +196,74 @@ bool can_setext(const std::string& line) {
   return line.find_first_not_of("=- \t") != std::string::npos;
 }
 
+std::string normalize_ref_id(std::string value) {
+  std::string out;
+  for (const char ch : value) {
+    if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+      if (!out.empty() && out.back() != ' ') out += ' ';
+      continue;
+    }
+    out += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  while (!out.empty() && out.back() == ' ') out.pop_back();
+  return out;
+}
+
+std::optional<std::string> reference_definition(const std::string& line, std::string& id) {
+  const auto first = line.find_first_not_of(" \t");
+  if (first == std::string::npos || first > 3) return std::nullopt;
+  if (line[first] != '[') return std::nullopt;
+  const auto close = line.find("]:", first);
+  if (close == std::string::npos) return std::nullopt;
+  id = normalize_ref_id(line.substr(first + 1, close - first - 1));
+  if (id.empty()) return std::nullopt;
+  const auto start = line.find_first_not_of(" \t", close + 2);
+  if (start == std::string::npos) return std::nullopt;
+  std::string url = line.substr(start);
+  const auto space = url.find_first_of(" \t");
+  if (space != std::string::npos) url = url.substr(0, space);
+  if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
+    url = url.substr(1, url.size() - 2);
+  }
+  if (url.empty()) return std::nullopt;
+  return url;
+}
+
+std::string resolve_reference_links(const std::string& text,
+                                    const std::map<std::string, std::string>& refs) {
+  std::string out;
+  bool code = false;
+  for (std::size_t index = 0; index < text.size();) {
+    if (text[index] == '`') {
+      code = !code;
+      out += text[index++];
+      continue;
+    }
+    const std::size_t open = text[index] == '!' && index + 1 < text.size() && text[index + 1] == '['
+                                 ? index + 1
+                                 : index;
+    if (!code && text[open] == '[') {
+      const auto close = text.find(']', open + 1);
+      if (close != std::string::npos && close + 1 < text.size() && text[close + 1] == '[') {
+        const auto id_end = text.find(']', close + 2);
+        if (id_end != std::string::npos) {
+          std::string id = text.substr(close + 2, id_end - close - 2);
+          if (id.empty()) id = text.substr(open + 1, close - open - 1);
+          const auto found = refs.find(normalize_ref_id(id));
+          if (found != refs.end()) {
+            if (index != open) out += '!';
+            out += "[" + text.substr(open + 1, close - open - 1) + "](" + found->second + ")";
+            index = id_end + 1;
+            continue;
+          }
+        }
+      }
+    }
+    out += text[index++];
+  }
+  return out;
+}
+
 ftxui::Element render_markdown(const std::string& text, bool dim) {
   ftxui::Elements lines;
   bool code = false;
@@ -208,6 +277,24 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     std::string line;
     while (std::getline(input, line)) source.push_back(line);
   }
+  std::map<std::string, std::string> refs;
+  std::vector<bool> definition(source.size(), false);
+  bool ref_code = false;
+  for (std::size_t index = 0; index < source.size(); ++index) {
+    if (source[index].rfind("```", 0) == 0) {
+      ref_code = !ref_code;
+      continue;
+    }
+    if (ref_code) continue;
+    std::string id;
+    if (const auto url = reference_definition(source[index], id)) {
+      refs[id] = *url;
+      definition[index] = true;
+    }
+  }
+  const auto render_inline = [&](const std::string& value, bool is_dim) {
+    return inline_words_view(resolve_reference_links(value, refs), is_dim);
+  };
   const auto append_math = [&](std::string_view part) {
     if (!math_source.empty() && !part.empty()) math_source += '\n';
     math_source += part;
@@ -228,6 +315,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
   };
   for (std::size_t index = 0; index < source.size(); ++index) {
     const std::string& line = source[index];
+    if (definition[index]) continue;
     if (math_block) {
       const auto close = line.find(math_close);
       if (close == std::string::npos) {
@@ -260,11 +348,15 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     }
     if (!code && is_table_start(source, index)) {
       std::vector<std::vector<TableCell>> rows;
-      rows.push_back(styled_cells(table_cells(line)));
+      auto header_cells = table_cells(line);
+      for (auto& cell : header_cells) cell = resolve_reference_links(cell, refs);
+      rows.push_back(styled_cells(header_cells));
       const auto aligns = table_alignments(source[index + 1]);
       std::size_t next = index + 2;
       while (next < source.size() && source[next].find('|') != std::string::npos) {
-        rows.push_back(styled_cells(table_cells(source[next])));
+        auto cells = table_cells(source[next]);
+        for (auto& cell : cells) cell = resolve_reference_links(cell, refs);
+        rows.push_back(styled_cells(cells));
         ++next;
       }
       const int max_width = std::max(20, ftxui::Terminal::Size().dimx - 4);
@@ -326,7 +418,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       std::string prefix;
       for (std::size_t depth = 0; depth < quote_depth; ++depth) prefix += "│ ";
       lines.push_back(ftxui::hbox({ftxui::text(prefix) | ftxui::color(kLine),
-                                   inline_words_view(line.substr(quote_start), true) |
+                                   render_inline(line.substr(quote_start), true) |
                                        ftxui::flex}));
       continue;
     }
@@ -345,7 +437,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
             ftxui::text(std::string(indent, ' ') + " "),
             ftxui::text(line.substr(leading, dot - leading + 1) + " ") |
                 ftxui::color(kAccent),
-            inline_words_view(line.substr(dot + 2), dim) | ftxui::flex,
+            render_inline(line.substr(dot + 2), dim) | ftxui::flex,
         }));
         continue;
       }
@@ -356,12 +448,12 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       lines.push_back(ftxui::hbox({
           ftxui::text(std::string(indent, ' ') + " "),
           ftxui::text("- ") | ftxui::color(kAccent),
-          inline_words_view(line.substr(leading + 2), dim) | ftxui::flex,
+          render_inline(line.substr(leading + 2), dim) | ftxui::flex,
       }));
       continue;
     }
     lines.push_back(ftxui::hbox({ftxui::text(" "),
-                                 inline_words_view(line, dim) | ftxui::flex}));
+                                 render_inline(line, dim) | ftxui::flex}));
   }
   if (math_block) flush_math();
   return ftxui::vbox(std::move(lines));
