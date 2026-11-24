@@ -265,7 +265,9 @@ class Root : public ComponentBase {
     Elements view;
     view.push_back(ftxui::vbox(std::move(lines)) | ftxui::flex);
     if (!state_.notice.empty()) {
-      view.push_back(ftxui::paragraph(state_.notice) | ftxui::color(ftxui::Color::RGB(255, 95, 95)));
+      const ftxui::Color color = state_.notice.error ? ftxui::Color::RGB(255, 95, 95)
+                                                     : ftxui::Color::RGB(150, 150, 150);
+      view.push_back(ftxui::paragraph(state_.notice.text) | ftxui::color(color));
     }
     if (window.scroll > 0) {
       view.push_back(ftxui::text("  ↑ " + std::to_string(window.scroll) +

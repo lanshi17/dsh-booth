@@ -158,6 +158,21 @@ TEST_CASE("grouped read cards collapse to one line per file") {
   REQUIRE(all.find("1: only") != std::string::npos);
 }
 
+TEST_CASE("notice assignment clears the error style") {
+  AppState state;
+  state.notice = "info";
+  REQUIRE_FALSE(state.notice.error);
+  state.notice.error = true;
+  state.notice = "recovered";
+  REQUIRE_FALSE(state.notice.error);
+  REQUIRE(state.notice == "recovered");
+  state.notice = "failed";
+  state.notice.error = true;
+  state.notice.clear();
+  REQUIRE(state.notice.empty());
+  REQUIRE_FALSE(state.notice.error);
+}
+
 TEST_CASE("permission requests open a modal and a problem is a notice") {
   AppState state;
   PermissionRequest request;
@@ -171,6 +186,7 @@ TEST_CASE("permission requests open a modal and a problem is a notice") {
 
   apply(state, Event{Problem{Layer::Kernel, "connection closed"}});
   REQUIRE(state.notice == "connection closed");
+  REQUIRE(state.notice.error);
 }
 
 TEST_CASE("sessions keep their model and usage") {

@@ -274,6 +274,7 @@ void apply(AppState& state, const Event& event) {
   if (const auto* problem = std::get_if<Problem>(&event.value)) {
     finish_thought();
     state.notice = problem->detail;
+    state.notice.error = true;
   }
 }
 

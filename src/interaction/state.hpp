@@ -14,6 +14,31 @@ struct Attachment {
   std::string uri;
 };
 
+/// A transient status line; assignment clears any previous error styling.
+struct Notice {
+  std::string text;
+  bool error{false};
+
+  Notice() = default;
+  Notice(std::string value) : text(std::move(value)) {}
+
+  Notice& operator=(std::string value) {
+    text = std::move(value);
+    error = false;
+    return *this;
+  }
+
+  operator const std::string&() const { return text; }
+  operator std::string&() { return text; }
+  [[nodiscard]] bool empty() const { return text.empty(); }
+  void clear() {
+    text.clear();
+    error = false;
+  }
+  [[nodiscard]] std::size_t find(std::string_view needle) const { return text.find(needle); }
+  [[nodiscard]] bool operator==(std::string_view value) const { return text == value; }
+};
+
 struct AppState {
   Snapshot snapshot;
   std::vector<TranscriptEntry> entries;
@@ -28,7 +53,7 @@ struct AppState {
   bool busy{false};
   std::optional<PermissionRequest> permission;
   std::vector<TodoItem> todos;
-  std::string notice;
+  Notice notice;
   bool help{false};
   std::vector<Attachment> attachments;
 };
