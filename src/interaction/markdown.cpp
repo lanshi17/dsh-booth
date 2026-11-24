@@ -20,72 +20,6 @@ const ftxui::Color kDim = ftxui::Color::RGB(118, 118, 118);
 const ftxui::Color kLine = ftxui::Color::RGB(72, 72, 72);
 const ftxui::Color kGreen = ftxui::Color::RGB(0, 255, 135);
 
-ftxui::Element inline_words(const std::string& text, bool dim) {
-  ftxui::Elements parts;
-  bool code = false;
-  bool bold = false;
-  std::string segment;
-  const auto flush = [&] {
-    std::istringstream words(segment);
-    std::string word;
-    while (words >> word) {
-      ftxui::Element part = ftxui::text(word + " ");
-      if (code) {
-        part = part | ftxui::color(kGreen);
-      } else if (dim) {
-        part = part | ftxui::dim;
-      }
-      if (bold) part = part | ftxui::bold;
-      parts.push_back(std::move(part));
-    }
-    segment.clear();
-  };
-  for (std::size_t index = 0; index < text.size();) {
-    if (!code) {
-      if (text[index] == '\\' && index + 1 < text.size() && text[index + 1] == '$') {
-        segment += '$';
-        index += 2;
-        continue;
-      }
-      if (const auto span = math_span_at(text, index)) {
-        segment += span->text;
-        index = span->end;
-        continue;
-      }
-    }
-    if (!code && text[index] == '[') {
-      const auto label_end = text.find("](", index);
-      const auto url_end = label_end == std::string::npos
-                               ? std::string::npos
-                               : text.find(')', label_end + 2);
-      if (label_end != std::string::npos && url_end != std::string::npos) {
-        flush();
-        const std::string label = text.substr(index + 1, label_end - index - 1);
-        const std::string url = text.substr(label_end + 2, url_end - label_end - 2);
-        parts.push_back(ftxui::hyperlink(
-            url, ftxui::text(label) | ftxui::color(kAccent) | ftxui::underlined));
-        index = url_end + 1;
-        continue;
-      }
-    }
-    if (text.compare(index, 2, "**") == 0) {
-      flush();
-      bold = !bold;
-      index += 2;
-      continue;
-    }
-    if (text[index] == '`') {
-      flush();
-      code = !code;
-      ++index;
-      continue;
-    }
-    segment += text[index++];
-  }
-  flush();
-  return ftxui::hflow(std::move(parts));
-}
-
 std::string normalize_lang(std::string lang) {
   for (char& ch : lang) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
   if (lang == "c++" || lang == "cxx") return "cpp";
@@ -521,7 +455,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     }
     if (line.rfind("> ", 0) == 0) {
       lines.push_back(ftxui::hbox({ftxui::text(" │ ") | ftxui::color(kLine),
-                                   inline_words(line.substr(2), true) | ftxui::flex}));
+                                   inline_words_view(line.substr(2), true) | ftxui::flex}));
       continue;
     }
     std::size_t hashes = 0;
@@ -540,7 +474,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
             ftxui::text(std::string(indent, ' ') + " "),
             ftxui::text(line.substr(leading, dot - leading + 1) + " ") |
                 ftxui::color(kAccent),
-            inline_words(line.substr(dot + 2), dim) | ftxui::flex,
+            inline_words_view(line.substr(dot + 2), dim) | ftxui::flex,
         }));
         continue;
       }
@@ -551,12 +485,12 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       lines.push_back(ftxui::hbox({
           ftxui::text(std::string(indent, ' ') + " "),
           ftxui::text("- ") | ftxui::color(kAccent),
-          inline_words(line.substr(leading + 2), dim) | ftxui::flex,
+          inline_words_view(line.substr(leading + 2), dim) | ftxui::flex,
       }));
       continue;
     }
     lines.push_back(ftxui::hbox({ftxui::text(" "),
-                                 inline_words(line, dim) | ftxui::flex}));
+                                 inline_words_view(line, dim) | ftxui::flex}));
   }
   if (math_block) flush_math();
   return ftxui::vbox(std::move(lines));
@@ -567,10 +501,6 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
 
 ftxui::Element markdown_view(const std::string& text, bool dim) {
   return render_markdown(text, dim);
-}
-
-ftxui::Element inline_words_view(const std::string& text, bool dim) {
-  return inline_words(text, dim);
 }
 
 }  // namespace booth

@@ -145,3 +145,33 @@ TEST_CASE("markdown renders display latex blocks") {
   REQUIRE(aligned.find("a = b") != std::string::npos);
   REQUIRE(aligned.find("c = d") != std::string::npos);
 }
+
+TEST_CASE("markdown renders emphasis and strikethrough") {
+  const std::string text = render_markdown("This is *italic* and **bold** and ~~gone~~.\n", 60, 10);
+  REQUIRE(text.find("*italic*") == std::string::npos);
+  REQUIRE(text.find("italic") != std::string::npos);
+  REQUIRE(text.find("**bold**") == std::string::npos);
+  REQUIRE(text.find("bold") != std::string::npos);
+  REQUIRE(text.find("~~gone~~") == std::string::npos);
+  REQUIRE(text.find("gone") != std::string::npos);
+
+  const std::string underscore = render_markdown("snake_case stays literal\n", 60, 10);
+  REQUIRE(underscore.find("snake_case") != std::string::npos);
+}
+
+TEST_CASE("markdown applies italic and strikethrough styles") {
+  auto view = markdown_view("This is *italic* and ~~gone~~.\n", false);
+  ftxui::Screen screen(60, 10);
+  ftxui::Render(screen, std::move(view));
+  bool italic = false;
+  bool strike = false;
+  for (int y = 0; y < screen.dimy(); ++y) {
+    for (int x = 0; x < screen.dimx(); ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.italic) italic = true;
+      if (cell.strikethrough) strike = true;
+    }
+  }
+  REQUIRE(italic);
+  REQUIRE(strike);
+}

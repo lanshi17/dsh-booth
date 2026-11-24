@@ -237,7 +237,7 @@ int main() {
         continue;
       }
       if (text.find("markdown") != std::string::npos) {
-        stream_text("Here is the result:\n- first `printf` item\n- second item\n\nSee [the docs](https://example.com).\n\n| name | value |\n|------|-------|\n| alpha | 1 |\n| beta | 2 |\n\n| 名称 | value |\n|------|-------|\n| 中文 | 1 |\n\n### Details\n1. first ordered\n2. second ordered\n> quoted line\n  - nested bullet\n\n```cpp\n// sum two numbers\nint add(int a, int b) { return a + b; }\n```\n");
+        stream_text("This is *italic* and ~~gone~~.\n\nHere is the result:\n- first `printf` item\n- second item\n\nSee [the docs](https://example.com).\n\n| name | value |\n|------|-------|\n| alpha | 1 |\n| beta | 2 |\n\n| 名称 | value |\n|------|-------|\n| 中文 | 1 |\n\n### Details\n1. first ordered\n2. second ordered\n> quoted line\n  - nested bullet\n\n```cpp\n// sum two numbers\nint add(int a, int b) { return a + b; }\n```\n");
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
