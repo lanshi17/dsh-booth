@@ -12,6 +12,7 @@
 #include <vector>
 
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/string.hpp>
 #include <ftxui/screen/terminal.hpp>
 
 namespace booth {
@@ -269,29 +270,6 @@ ftxui::Element heading_element(std::size_t level, ftxui::Element content) {
   return heading;
 }
 
-int setext_level(const std::string& line) {
-  const auto first = line.find_first_not_of(" \t");
-  if (first == std::string::npos) return 0;
-  const auto last = line.find_last_not_of(" \t");
-  const std::string body = line.substr(first, last - first + 1);
-  if (body.empty()) return 0;
-  if (body.find_first_not_of('=') == std::string::npos) return 1;
-  if (body.find_first_not_of('-') == std::string::npos) return 2;
-  return 0;
-}
-
-bool can_setext(const std::string& line) {
-  const auto first = line.find_first_not_of(" \t");
-  if (first == std::string::npos) return false;
-  const char ch = line[first];
-  if (ch == '-' || ch == '*' || ch == '+' || ch == '>' || ch == '#' || ch == '|' || ch == '`') {
-    return false;
-  }
-  if (std::isdigit(static_cast<unsigned char>(ch)) && line.find(". ", first) != std::string::npos) {
-    return false;
-  }
-  return line.find_first_not_of("=- \t") != std::string::npos;
-}
 
 std::string normalize_ref_id(std::string value) {
   std::string out;
@@ -370,6 +348,8 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
   std::string lang;
   bool in_quote = false;
   std::size_t lazy_quote_depth = 0;
+  bool in_list = false;
+  std::size_t list_indent = 0;
   std::vector<std::string> source;
   {
     std::istringstream input(text);
@@ -423,6 +403,18 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
         for (std::size_t depth = 0; depth < lazy_quote_depth; ++depth) prefix += "│ ";
         lines.push_back(ftxui::hbox({ftxui::text(prefix) | ftxui::color(kLine),
                                      render_inline(line, dim) | ftxui::flex}));
+        continue;
+      }
+    }
+    if (!code && !math_block && in_list && !line.empty()) {
+      const auto first = line.find_first_not_of(" \t");
+      if (first != std::string::npos && lazy_quote_stop(line)) {
+        in_list = false;
+      } else if (first != std::string::npos) {
+        lines.push_back(ftxui::hbox({
+            ftxui::text(std::string(list_indent, ' ')),
+            render_inline(line.substr(first), dim) | ftxui::flex,
+        }));
         continue;
       }
     }
@@ -500,6 +492,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
     }
     if (line.empty()) {
       in_quote = false;
+      in_list = false;
       lines.push_back(ftxui::text(""));
       continue;
     }
@@ -558,6 +551,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
             ftxui::text(marker) | ftxui::color(kAccent),
             render_inline(content, dim) | ftxui::flex,
         }));
+        in_list = true, list_indent = indent + ftxui::string_width(marker);
         continue;
       }
     }
@@ -577,6 +571,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
           ftxui::text(marker) | ftxui::color(kAccent),
           render_inline(content, dim) | ftxui::flex,
       }));
+      in_list = true, list_indent = indent + ftxui::string_width(marker);
       continue;
     }
     lines.push_back(ftxui::hbox({ftxui::text(" "),

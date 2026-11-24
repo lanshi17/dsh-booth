@@ -27,6 +27,32 @@ inline std::string heading_title(std::string title, bool atx) {
   return title;
 }
 
+/// Return the setext heading level for an underline, or 0.
+inline int setext_level(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t");
+  if (first == std::string::npos) return 0;
+  const auto last = line.find_last_not_of(" \t");
+  const std::string body = line.substr(first, last - first + 1);
+  if (body.empty()) return 0;
+  if (body.find_first_not_of('=') == std::string::npos) return 1;
+  if (body.find_first_not_of('-') == std::string::npos) return 2;
+  return 0;
+}
+
+/// True when a line can be the title of a setext heading.
+inline bool can_setext(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t");
+  if (first == std::string::npos) return false;
+  const char ch = line[first];
+  if (ch == '-' || ch == '*' || ch == '+' || ch == '>' || ch == '#' || ch == '|' || ch == '`') {
+    return false;
+  }
+  if (std::isdigit(static_cast<unsigned char>(ch)) && line.find(". ", first) != std::string::npos) {
+    return false;
+  }
+  return line.find_first_not_of("=- \t") != std::string::npos;
+}
+
 /// Return the index of the ')' closing a link target, honoring balanced parentheses.
 inline std::size_t link_end(std::string_view text, std::size_t start) {
   int depth = 0;

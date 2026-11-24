@@ -699,3 +699,10 @@ TEST_CASE("go fences highlight keywords and raw strings") {
   REQUIRE(raw);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("list continuation lines align under the item text") {
+  const std::string text = render_markdown(
+      "- first\n  continuation\n\n1. one\n   more\n", 60, 12);
+  REQUIRE(text.find("  continuation") != std::string::npos);
+  REQUIRE(text.find("   more") != std::string::npos);
+}
