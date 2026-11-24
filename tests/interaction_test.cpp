@@ -453,6 +453,38 @@ TEST_CASE("tool titles truncate on terminal cells") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("large diffs page until expanded") {
+  ftxui::Terminal::SetFallbackSize({100, 60});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "write";
+  entry.status = "completed";
+  nlohmann::json raw;
+  raw["file_path"] = "big.txt";
+  std::string content;
+  for (int index = 1; index <= 60; ++index) {
+    if (!content.empty()) content += "\n";
+    content += "line " + std::to_string(index);
+  }
+  raw["content"] = content;
+  entry.raw_input = raw.dump();
+
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(100, 60);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Diff +60 −0") != std::string::npos);
+  REQUIRE(text.find("line 1") != std::string::npos);
+  REQUIRE(text.find("line 60") == std::string::npos);
+  REQUIRE(text.find("… +21 lines · Ctrl+O") != std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(100, 80);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("line 60") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("shell tool cards show a command prompt") {
   ftxui::Terminal::SetFallbackSize({60, 8});
   TranscriptEntry entry;

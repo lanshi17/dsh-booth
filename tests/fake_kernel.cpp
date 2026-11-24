@@ -238,6 +238,30 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("bigdiff") != std::string::npos) {
+        std::string content;
+        for (int index = 1; index <= 60; ++index) {
+          if (!content.empty()) content += "\n";
+          content += "line " + std::to_string(index);
+        }
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-big-diff"},
+                                      {"title", "big.txt"},
+                                      {"name", "write"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"file_path", "big.txt"},
+                                                    {"content", content}}}}}}}});
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call_update"},
+                                      {"toolCallId", "t-big-diff"},
+                                      {"status", "completed"}}}}}});
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("readtool") != std::string::npos) {
         std::string lines = "<path>src/a.cpp</path>\n<type>file</type>\n<content>\n";
         for (int index = 1; index <= 10; ++index) {

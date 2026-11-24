@@ -78,6 +78,10 @@ add_test(NAME pty_chart
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_chart.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_big_diff
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_big_diff.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_todo
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_todo.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

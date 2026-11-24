@@ -160,12 +160,26 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   }));
   const auto diff = booth::tool_diff(entry);
   if (!diff.empty()) {
+    std::size_t added = 0;
+    std::size_t removed = 0;
+    for (const auto& line : diff) {
+      if (line.change > 0) ++added;
+      else if (line.change < 0) ++removed;
+    }
+    std::string diff_head = "├── Diff";
+    if (added > 0 || removed > 0) {
+      diff_head += " +" + std::to_string(added) + " −" + std::to_string(removed);
+    }
+    diff_head += " ";
     rows.push_back(ftxui::hbox({
-        ftxui::text("├── Diff ") | ftxui::color(border),
+        ftxui::text(diff_head) | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),
         ftxui::text("┤") | ftxui::color(border),
     }));
-    for (const auto& line : diff) {
+    constexpr std::size_t kDiffLines = 40;
+    const std::size_t shown_limit = expanded ? diff.size() : std::min(diff.size(), kDiffLines);
+    for (std::size_t index = 0; index < shown_limit; ++index) {
+      const auto& line = diff[index];
       const ftxui::Color color = line.change < 0 ? kRed : line.change > 0 ? kGreen : kDim;
       for (const auto& wrapped : wrap_cells(line.text, content_width)) {
         rows.push_back(ftxui::hbox({
@@ -174,6 +188,14 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
             ftxui::text(" │") | ftxui::color(border),
         }));
       }
+    }
+    if (shown_limit < diff.size()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("… +" + std::to_string(diff.size() - shown_limit) +
+                      " lines · Ctrl+O") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
     }
   } else if (!entry.input.empty() && !todos) {
     const bool shell = entry.tool == "bash" || entry.tool == "sh" || entry.tool == "shell";
