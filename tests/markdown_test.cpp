@@ -121,3 +121,16 @@ TEST_CASE("thought entries show an omp duration header") {
   REQUIRE(text.find("Thought for 12s") != std::string::npos);
   REQUIRE(text.find("checking the options") != std::string::npos);
 }
+
+TEST_CASE("markdown renders inline latex outside code") {
+  const std::string math = render_markdown("Energy: $E = mc^2$.\n", 60, 10);
+  REQUIRE(math.find("E = mc²") != std::string::npos);
+  REQUIRE(math.find("$E") == std::string::npos);
+
+  const std::string currency = render_markdown("costs $5 and $10\n", 60, 10);
+  REQUIRE(currency.find("$5") != std::string::npos);
+  REQUIRE(currency.find("$10") != std::string::npos);
+
+  const std::string code = render_markdown("`$x^2$`\n```\n$x^2$\n```\n", 60, 12);
+  REQUIRE(code.find("$x^2$") != std::string::npos);
+}

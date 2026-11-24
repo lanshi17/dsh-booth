@@ -1,3 +1,4 @@
+#include "interaction/math.hpp"
 #include "interaction/view.hpp"
 
 #include <algorithm>
@@ -39,6 +40,18 @@ ftxui::Element inline_words(const std::string& text, bool dim) {
     segment.clear();
   };
   for (std::size_t index = 0; index < text.size();) {
+    if (!code) {
+      if (text[index] == '\\' && index + 1 < text.size() && text[index + 1] == '$') {
+        segment += '$';
+        index += 2;
+        continue;
+      }
+      if (const auto span = math_span_at(text, index)) {
+        segment += span->text;
+        index = span->end;
+        continue;
+      }
+    }
     if (!code && text[index] == '[') {
       const auto label_end = text.find("](", index);
       const auto url_end = label_end == std::string::npos

@@ -1,0 +1,22 @@
+#pragma once
+
+#include <cstddef>
+#include <optional>
+#include <string>
+#include <string_view>
+
+namespace booth {
+
+struct MathSpan {
+  std::size_t end{0};
+  std::string text;
+};
+
+/// Converts a bare LaTeX math fragment to Unicode text.
+std::string latex_to_unicode(std::string_view source);
+
+/// Recognizes `$…$`, `$$…$$`, `\(…\)` and `\[…\]` at `at`.
+/// Currency-like `$…$` spans are rejected; the caller handles escaped `\$`.
+std::optional<MathSpan> math_span_at(const std::string& text, std::size_t at);
+
+}  // namespace booth
