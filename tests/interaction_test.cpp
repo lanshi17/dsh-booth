@@ -416,6 +416,59 @@ TEST_CASE("shell tool cards show a command prompt") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("todo tool renders a checklist") {
+  ftxui::Terminal::SetFallbackSize({60, 16});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "todo_write";
+  entry.text = "todo_write";
+  entry.status = "completed";
+  entry.raw_input =
+      R"({"todos":[{"content":"Write code","status":"completed"},)"
+      R"({"content":"Run tests","status":"in_progress"},)"
+      R"({"content":"Ship it","status":"pending"}]})";
+  entry.output = "Updated todo list: 1 pending, 1 in progress, 1 completed.";
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(60, 16);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Todo · 1/3") != std::string::npos);
+  REQUIRE(text.find("☑") != std::string::npos);
+  REQUIRE(text.find("Write code") != std::string::npos);
+  REQUIRE(text.find("Run tests") != std::string::npos);
+  REQUIRE(text.find("Ship it") != std::string::npos);
+  REQUIRE(text.find("Updated todo list") == std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
+TEST_CASE("todo tool pages a long checklist until expanded") {
+  ftxui::Terminal::SetFallbackSize({60, 20});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "todo_write";
+  entry.status = "running";
+  nlohmann::json args;
+  args["todos"] = nlohmann::json::array();
+  for (int index = 1; index <= 10; ++index) {
+    args["todos"].push_back(
+        {{"content", "Task " + std::to_string(index)}, {"status", "pending"}});
+  }
+  entry.raw_input = args.dump();
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(60, 20);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Task 8") != std::string::npos);
+  REQUIRE(text.find("Task 9") == std::string::npos);
+  REQUIRE(text.find("… +2 todos") != std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(60, 24);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("Task 10") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("session picker truncates CJK titles by cells") {
   SessionRow row;
   row.id = SessionId{"s-1"};

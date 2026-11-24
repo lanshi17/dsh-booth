@@ -3,6 +3,10 @@
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/terminal.hpp>
 
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -13,8 +17,11 @@
 namespace booth {
 namespace {
 
+using Json = nlohmann::json;
+
 #define kText (theme_color("text", ftxui::Color::RGB(228, 228, 228)))
 #define kDim (theme_color("dim", ftxui::Color::RGB(118, 118, 118)))
+#define kAccent (theme_color("accent", ftxui::Color::RGB(0, 175, 255)))
 #define kGreen (theme_color("green", ftxui::Color::RGB(0, 255, 135)))
 #define kRed (theme_color("red", ftxui::Color::RGB(255, 95, 95)))
 
@@ -60,6 +67,37 @@ ReadEnvelope parse_read_envelope(const std::string& output) {
   return envelope;
 }
 
+struct TodoRow {
+  std::string content;
+  std::string status;
+};
+
+std::optional<std::vector<TodoRow>> parse_todos(const TranscriptEntry& entry) {
+  if (entry.tool != "todo_write") return std::nullopt;
+  const std::string& source = entry.raw_input.empty() ? entry.input : entry.raw_input;
+  if (source.empty()) return std::nullopt;
+  const Json parsed = Json::parse(source, nullptr, false);
+  if (parsed.is_discarded()) return std::nullopt;
+  const Json* list = nullptr;
+  if (parsed.is_object() && parsed.contains("todos") && parsed["todos"].is_array()) {
+    list = &parsed["todos"];
+  } else if (parsed.is_array()) {
+    list = &parsed;
+  } else {
+    return std::nullopt;
+  }
+  std::vector<TodoRow> rows;
+  rows.reserve(list->size());
+  for (const auto& item : *list) {
+    if (!item.is_object() || !item.contains("content") || !item["content"].is_string()) continue;
+    TodoRow row;
+    row.content = item["content"].get<std::string>();
+    row.status = item.value("status", std::string{"pending"});
+    rows.push_back(std::move(row));
+  }
+  return rows;
+}
+
 std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
   std::vector<ReadEnvelope> envelopes;
   std::size_t start = output.find("<path>");
@@ -95,8 +133,18 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const std::vector<ReadEnvelope> reads =
       read_tool ? parse_read_envelopes(entry.output) : std::vector<ReadEnvelope>{};
   const bool has_envelope = !reads.empty();
+  const std::optional<std::vector<TodoRow>> todos = parse_todos(entry);
   std::string title = entry.text.empty() ? entry.tool : entry.text;
   if (reads.size() == 1 && !reads[0].path.empty()) title = reads[0].path;
+  if (todos) {
+    title = "Todo";
+    if (!todos->empty()) {
+      const auto done = std::count_if(todos->begin(), todos->end(), [](const TodoRow& row) {
+        return row.status == "completed";
+      });
+      title += " · " + std::to_string(done) + "/" + std::to_string(todos->size());
+    }
+  }
   const int columns = ftxui::Terminal::Size().dimx;
   const std::size_t content_width =
       columns > 12 ? static_cast<std::size_t>(columns - 8) : 20;
@@ -127,7 +175,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
         }));
       }
     }
-  } else if (!entry.input.empty()) {
+  } else if (!entry.input.empty() && !todos) {
     const bool shell = entry.tool == "bash" || entry.tool == "sh" || entry.tool == "shell";
     const std::size_t input_width = shell ? std::max<std::size_t>(1, content_width - 2) : content_width;
     bool first = true;
@@ -141,7 +189,49 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   }
-  if (!entry.output.empty()) {
+  if (todos) {
+    const std::size_t limit = expanded ? todos->size() : 8;
+    std::size_t shown = 0;
+    for (const auto& todo : *todos) {
+      if (shown >= limit) break;
+      const bool done = todo.status == "completed";
+      const bool active = todo.status == "in_progress";
+      const std::string box = done ? "☑ " : "☐ ";
+      const ftxui::Color color = done ? kGreen : active ? kAccent : kDim;
+      bool first = true;
+      const std::size_t width = std::max<std::size_t>(1, content_width - 2);
+      std::vector<std::string> lines = wrap_cells(todo.content, width);
+      if (lines.empty()) lines.emplace_back();
+      for (const auto& line : lines) {
+        const std::string prefix = first ? "│ " + box : "│   ";
+        first = false;
+        ftxui::Element label = ftxui::text(line) | ftxui::flex | ftxui::color(color);
+        if (done) label = label | ftxui::strikethrough;
+        else if (active) label = label | ftxui::bold;
+        rows.push_back(ftxui::hbox({
+            ftxui::text(prefix) | ftxui::color(border),
+            std::move(label),
+            ftxui::text(" │") | ftxui::color(border),
+        }));
+      }
+      ++shown;
+    }
+    if (todos->empty()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("No todos") | ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    } else if (shown < todos->size()) {
+      rows.push_back(ftxui::hbox({
+          ftxui::text("│ ") | ftxui::color(border),
+          ftxui::text("… +" + std::to_string(todos->size() - shown) + " todos · Ctrl+O") |
+              ftxui::dim | ftxui::flex,
+          ftxui::text(" │") | ftxui::color(border),
+      }));
+    }
+  }
+  if (!entry.output.empty() && (!todos || entry.status == "failed")) {
     rows.push_back(ftxui::hbox({
         ftxui::text("├── Output ") | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),

@@ -182,6 +182,33 @@ int main() {
         reply(id, {{"stopReason", "end_turn"}});
         continue;
       }
+      if (text.find("todotool") != std::string::npos) {
+        json todos = json::array();
+        for (int index = 1; index <= 10; ++index) {
+          todos.push_back({{"content", "Task " + std::to_string(index)},
+                           {"status", index <= 2 ? "completed"
+                                                  : index == 3 ? "in_progress" : "pending"}});
+        }
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-todo"},
+                                      {"title", "todo_write"},
+                                      {"name", "todo_write"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"todos", todos}}}}}}}});
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call_update"},
+                                      {"toolCallId", "t-todo"},
+                                      {"status", "completed"},
+                                      {"content", json::array({json{{"type", "content"},
+                                                                    {"content", {{"type", "text"},
+                                                                                 {"text", "Updated todo list: 7 pending, 1 in progress, 2 completed."}}}}})}}}}}});
+        stream_text("Done.");
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("readtool") != std::string::npos) {
         std::string lines = "<path>src/a.cpp</path>\n<type>file</type>\n<content>\n";
         for (int index = 1; index <= 10; ++index) {
