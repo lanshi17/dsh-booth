@@ -101,10 +101,18 @@ std::vector<std::string> radical_lines(const std::string& body, const std::strin
 }
 
 std::vector<std::string> fraction_lines(const std::string& numerator, const std::string& denominator) {
-  const std::string top = latex_to_unicode(numerator);
-  const std::string bottom = latex_to_unicode(denominator);
-  const int width = std::max({3, display_width(top), display_width(bottom)});
-  return {centered(top, width), repeat("─", width), centered(bottom, width)};
+  std::vector<std::string> top = math_block_lines(numerator);
+  std::vector<std::string> bottom = math_block_lines(denominator);
+  if (top.empty()) top.push_back(latex_to_unicode(numerator));
+  if (bottom.empty()) bottom.push_back(latex_to_unicode(denominator));
+  int width = 3;
+  for (const auto& line : top) width = std::max(width, display_width(line));
+  for (const auto& line : bottom) width = std::max(width, display_width(line));
+  std::vector<std::string> out;
+  for (const auto& line : top) out.push_back(centered(line, width));
+  out.push_back(repeat("─", width));
+  for (const auto& line : bottom) out.push_back(centered(line, width));
+  return out;
 }
 
 struct Delimiters {

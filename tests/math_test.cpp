@@ -81,3 +81,13 @@ TEST_CASE("display radicals draw a top bar") {
   REQUIRE(cube.size() == 2);
   REQUIRE(cube[1].find("∛ x") != std::string::npos);
 }
+
+TEST_CASE("nested fractions stack vertically") {
+  const auto lines = math_block_lines("\\frac{\\frac{a}{b}}{c}");
+  REQUIRE(lines.size() == 5);
+  REQUIRE(lines[0].find("a") != std::string::npos);
+  REQUIRE(lines[1].find("─") != std::string::npos);
+  REQUIRE(lines[2].find("b") != std::string::npos);
+  REQUIRE(lines[3].find("─") != std::string::npos);
+  REQUIRE(lines[4].find("c") != std::string::npos);
+}
