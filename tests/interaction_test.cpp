@@ -842,6 +842,20 @@ TEST_CASE("shell cards tail output and report the exit status") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("edit diffs show a line-number gutter") {
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "edit";
+  entry.raw_input = R"({"file_path":"src/a.cpp","old_string":"old\nline","new_string":"new"})";
+  auto view = tool_view(entry, false);
+  ftxui::Screen screen(80, 12);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = strip_ansi(screen.ToString());
+  REQUIRE(text.find("1 - old") != std::string::npos);
+  REQUIRE(text.find("2 - line") != std::string::npos);
+  REQUIRE(text.find("1 + new") != std::string::npos);
+}
+
 TEST_CASE("large diffs page until expanded") {
   ftxui::Terminal::SetFallbackSize({100, 60});
   TranscriptEntry entry;

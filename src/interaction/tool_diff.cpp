@@ -12,14 +12,14 @@ namespace {
 using Json = nlohmann::json;
 
 void append_lines(std::vector<DiffLine>& out, std::string_view text, int change,
-                  std::string_view prefix) {
+                  std::string_view prefix, int line_number) {
   std::size_t start = 0;
   while (start <= text.size()) {
     const auto end = text.find('\n', start);
     const std::string line(text.substr(start, end == std::string_view::npos
                                                   ? std::string_view::npos
                                                   : end - start));
-    out.push_back({std::string(prefix) + line, change});
+    out.push_back({std::string(prefix) + line, change, 0, line_number++});
     if (end == std::string_view::npos) break;
     start = end + 1;
   }
@@ -69,8 +69,10 @@ std::vector<DiffLine> line_diff(const std::string& before, const std::string& af
   const auto new_lines = split_lines(after);
   if (old_lines.size() > 400 || new_lines.size() > 400) {
     std::vector<DiffLine> fallback;
-    for (const auto& line : old_lines) fallback.push_back({"- " + line, -1});
-    for (const auto& line : new_lines) fallback.push_back({"+ " + line, 1});
+    int old_line = 1;
+    int new_line = 1;
+    for (const auto& line : old_lines) fallback.push_back({"- " + line, -1, old_line++, 0});
+    for (const auto& line : new_lines) fallback.push_back({"+ " + line, 1, 0, new_line++});
     return compact_context(fallback);
   }
 
@@ -88,21 +90,23 @@ std::vector<DiffLine> line_diff(const std::string& before, const std::string& af
   std::vector<DiffLine> raw;
   std::size_t i = 0;
   std::size_t j = 0;
+  int old_line = 1;
+  int new_line = 1;
   while (i < n && j < m) {
     if (old_lines[i] == new_lines[j]) {
-      raw.push_back({"  " + old_lines[i], 0});
+      raw.push_back({"  " + old_lines[i], 0, old_line++, new_line++});
       ++i;
       ++j;
     } else if (lcs[i + 1][j] >= lcs[i][j + 1]) {
-      raw.push_back({"- " + old_lines[i], -1});
+      raw.push_back({"- " + old_lines[i], -1, old_line++, 0});
       ++i;
     } else {
-      raw.push_back({"+ " + new_lines[j], 1});
+      raw.push_back({"+ " + new_lines[j], 1, 0, new_line++});
       ++j;
     }
   }
-  while (i < n) raw.push_back({"- " + old_lines[i++], -1});
-  while (j < m) raw.push_back({"+ " + new_lines[j++], 1});
+  while (i < n) raw.push_back({"- " + old_lines[i++], -1, old_line++, 0});
+  while (j < m) raw.push_back({"+ " + new_lines[j++], 1, 0, new_line++});
   return compact_context(raw);
 }
 
@@ -147,7 +151,7 @@ std::vector<DiffLine> tool_diff(const TranscriptEntry& entry) {
   if (raw.contains("content") && raw.contains("file_path")) {
     std::vector<DiffLine> lines;
     lines.push_back({raw.value("file_path", std::string{}), 0});
-    append_lines(lines, raw.value("content", std::string{}), 1, "+ ");
+    append_lines(lines, raw.value("content", std::string{}), 1, "+ ", 1);
     return lines;
   }
   if (raw.contains("input") && raw["input"].is_string()) {

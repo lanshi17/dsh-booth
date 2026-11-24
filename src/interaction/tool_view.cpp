@@ -141,13 +141,24 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
         ftxui::text("┤") | ftxui::color(border),
     }));
     constexpr std::size_t kDiffLines = 40;
+    std::size_t number_width = 1;
+    for (const auto& line : diff) {
+      const int number = line.change < 0 ? line.old_line : line.new_line;
+      if (number > 0) number_width = std::max(number_width, std::to_string(number).size());
+    }
     const std::size_t shown_limit = expanded ? diff.size() : std::min(diff.size(), kDiffLines);
     for (std::size_t index = 0; index < shown_limit; ++index) {
       const auto& line = diff[index];
       const ftxui::Color color = line.change < 0 ? kRed : line.change > 0 ? kGreen : kDim;
-      for (const auto& wrapped : wrap_cells(line.text, content_width)) {
+      const int number = line.change < 0 ? line.old_line : line.new_line;
+      std::string gutter(number_width + 1, ' ');
+      if (number > 0) {
+        const std::string digits = std::to_string(number);
+        gutter = std::string(number_width - digits.size(), ' ') + digits + " ";
+      }
+      for (const auto& wrapped : wrap_cells(line.text, content_width - number_width - 1)) {
         rows.push_back(ftxui::hbox({
-            ftxui::text("│ ") | ftxui::color(border),
+            ftxui::text("│ " + gutter) | ftxui::dim | ftxui::color(border),
             ftxui::text(wrapped) | ftxui::flex | ftxui::color(color),
             ftxui::text(" │") | ftxui::color(border),
         }));

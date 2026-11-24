@@ -11,6 +11,8 @@ namespace booth {
 struct DiffLine {
   std::string text;
   int change{0};  // -1 removed, +1 added, 0 header/context
+  int old_line{0};
+  int new_line{0};
 };
 
 /// Extracts a reviewable diff from a tool call's raw arguments; empty when not an edit.

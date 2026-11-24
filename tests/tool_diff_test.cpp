@@ -26,7 +26,9 @@ TEST_CASE("write and patch arguments become diffs") {
   const auto added = tool_diff(write);
   REQUIRE(added.size() == 3);
   REQUIRE(added[1].text == "+ alpha");
+  REQUIRE(added[1].new_line == 1);
   REQUIRE(added[2].text == "+ beta");
+  REQUIRE(added[2].new_line == 2);
 
   TranscriptEntry patch;
   patch.tool = "apply_patch";
