@@ -553,3 +553,22 @@ TEST_CASE("json fences color keys values and literals") {
   REQUIRE(number);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("triple emphasis toggles bold and italic together") {
+  ftxui::Terminal::SetFallbackSize({40, 8});
+  auto view = markdown_view("***both*** and ___also___\n", false);
+  ftxui::Screen screen(40, 8);
+  ftxui::Render(screen, std::move(view));
+  bool both = false;
+  bool also = false;
+  for (int y = 0; y < 8; ++y) {
+    for (int x = 0; x < 40; ++x) {
+      const auto& cell = screen.CellAt(x, y);
+      if (cell.character == "b" && cell.bold && cell.italic) both = true;
+      if (cell.character == "a" && cell.bold && cell.italic) also = true;
+    }
+  }
+  REQUIRE(both);
+  REQUIRE(also);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}

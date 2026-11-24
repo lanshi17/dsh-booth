@@ -170,6 +170,14 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
         continue;
       }
     }
+    if (!code &&
+        (text.compare(index, 3, "***") == 0 || text.compare(index, 3, "___") == 0)) {
+      flush();
+      bold = !bold;
+      italic = !italic;
+      index += 3;
+      continue;
+    }
     if (!code && (text.compare(index, 2, "**") == 0 || text.compare(index, 2, "__") == 0)) {
       flush();
       bold = !bold;
