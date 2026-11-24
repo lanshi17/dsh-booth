@@ -10,6 +10,7 @@
 #include <ftxui/screen/screen.hpp>
 
 #include "interaction/context_gauge.hpp"
+#include "interaction/commands_ui.hpp"
 #include "interaction/state.hpp"
 
 using namespace booth;
@@ -304,6 +305,47 @@ TEST_CASE("context gauge fills and changes color at thresholds") {
   REQUIRE(context_color(69) == ftxui::Color::RGB(0, 255, 135));
   REQUIRE(context_color(70) == ftxui::Color::RGB(255, 215, 0));
   REQUIRE(context_color(90) == ftxui::Color::RGB(255, 95, 95));
+}
+
+TEST_CASE("permission requests inherit the matching tool card") {
+  AppState state;
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.id = "t-1";
+  tool.tool = "edit";
+  tool.text = "src/a.cpp";
+  tool.input = "src/a.cpp";
+  tool.raw_input = R"({"file_path":"src/a.cpp","old_string":"old","new_string":"new"})";
+  state.entries.push_back(tool);
+
+  PermissionRequest request;
+  request.session = SessionId{"s-1"};
+  request.tool_call_id = "t-1";
+  request.tool = "tool";
+  apply(state, Event{request});
+  REQUIRE(state.permission.has_value());
+  REQUIRE(state.permission->tool == "edit");
+  REQUIRE(state.permission->title == "src/a.cpp");
+  REQUIRE(state.permission->raw_input == tool.raw_input);
+  REQUIRE(permission_kind(ftxui::Event::Character('y'), *state.permission) == nullptr);
+}
+
+TEST_CASE("permission card lists only the advertised choices") {
+  PermissionRequest request;
+  request.tool = "bash";
+  request.raw_input = R"({"command":"ls"})";
+  request.options = {PermissionOption{"allow", "Allow once", "allow_once"},
+                     PermissionOption{"deny", "Reject", "reject_once"}};
+  auto view = permission_view(request);
+  ftxui::Screen screen(70, 12);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("Allow once") != std::string::npos);
+  REQUIRE(text.find("Reject") != std::string::npos);
+  REQUIRE(text.find("Allow always") == std::string::npos);
+  REQUIRE(text.find("Deny always") == std::string::npos);
+  REQUIRE(permission_kind(ftxui::Event::Character('a'), request) == nullptr);
+  REQUIRE(permission_kind(ftxui::Event::Character('y'), request) != nullptr);
 }
 
 TEST_CASE("permission card previews an edit diff") {

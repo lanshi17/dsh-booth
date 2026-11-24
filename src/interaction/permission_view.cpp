@@ -29,11 +29,14 @@ std::string hrule(std::size_t count) {
 
 ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse) {
   ftxui::Elements body;
-  body.push_back(ftxui::text("permission: " + request.tool) | ftxui::bold | ftxui::color(kAccent));
-  if (!request.detail.empty()) {
+  std::string heading = "permission: " + request.tool;
+  if (!request.title.empty() && request.title != request.tool) heading += " · " + request.title;
+  body.push_back(ftxui::text(heading) | ftxui::bold | ftxui::color(kAccent));
+  const std::string& detail = request.raw_input.empty() ? request.detail : request.raw_input;
+  if (!detail.empty()) {
     TranscriptEntry entry;
     entry.tool = request.tool;
-    entry.raw_input = request.detail;
+    entry.raw_input = detail;
     const auto diff = tool_diff(entry);
     if (!diff.empty()) {
       std::size_t shown = 0;
@@ -51,12 +54,12 @@ ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mo
         body.push_back(ftxui::text("… +" + std::to_string(hidden) + " lines") | ftxui::dim);
       }
     } else {
-      const auto parsed = nlohmann::json::parse(request.detail, nullptr, false);
+      const auto parsed = nlohmann::json::parse(detail, nullptr, false);
       if (!parsed.is_discarded() && parsed.contains("command") && parsed["command"].is_string()) {
         const std::string command = parsed["command"].get<std::string>();
         body.push_back(ftxui::paragraph(request.tool == "bash" ? "$ " + command : command));
       } else {
-        body.push_back(ftxui::paragraph(request.detail));
+        body.push_back(ftxui::paragraph(detail));
       }
     }
   }
@@ -66,13 +69,32 @@ ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mo
     return mouse == nullptr ? element
                             : mouse->zone(std::move(element), MouseSurface::Permission, index);
   };
-  body.push_back(ftxui::hbox({button("[y] Allow once", kGreen, 0),
-                              ftxui::text("    "),
-                              button("[a] Allow always", kGreen, 1)}));
-  body.push_back(ftxui::hbox({button("[n] Deny", kRed, 2),
-                              ftxui::text("          "),
-                              button("[d] Deny always", kRed, 3),
-                              ftxui::text("    (Esc)") | ftxui::dim}));
+  const auto key_hint = [](const std::string& kind) -> std::string {
+    if (kind == "allow_once") return "y";
+    if (kind == "allow_always") return "a";
+    if (kind == "reject_once") return "n";
+    if (kind == "reject_always") return "d";
+    return "?";
+  };
+  ftxui::Elements row;
+  for (std::size_t index = 0; index < request.options.size(); ++index) {
+    const auto& option = request.options[index];
+    const bool allow = option.kind.rfind("allow", 0) == 0;
+    std::string label = "[" + key_hint(option.kind) + "] " +
+                        (option.name.empty() ? option.kind : option.name);
+    if (!row.empty()) row.push_back(ftxui::text("    "));
+    row.push_back(button(std::move(label), allow ? kGreen : kRed, index));
+    if (row.size() == 3) {
+      body.push_back(ftxui::hbox(std::move(row)));
+      row.clear();
+    }
+  }
+  if (!row.empty()) body.push_back(ftxui::hbox(std::move(row)));
+  if (request.options.empty()) {
+    body.push_back(ftxui::text("no options · Esc cancels") | ftxui::dim);
+  } else {
+    body.push_back(ftxui::text("(Esc)") | ftxui::dim);
+  }
   return ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
          ftxui::bgcolor(kPanel);
 }

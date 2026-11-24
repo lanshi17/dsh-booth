@@ -50,10 +50,11 @@ bool click_mouse(const MouseHit& hit, MouseActions& a) {
       if (a.cursor_to) a.cursor_to(hit.index, hit.column);
       return true;
     case MouseSurface::Permission: {
-      static constexpr const char* kKinds[] = {"allow_once", "allow_always", "reject_once",
-                                               "reject_always"};
-      if (hit.index >= 4 || !a.permission) return false;
-      a.permission(kKinds[hit.index]);
+      if (!a.permission || !a.state.permission ||
+          hit.index >= a.state.permission->options.size()) {
+        return false;
+      }
+      a.permission(a.state.permission->options[hit.index].kind.c_str());
       return true;
     }
     case MouseSurface::Help:

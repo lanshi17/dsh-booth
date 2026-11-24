@@ -57,6 +57,12 @@ TEST_CASE("mouse action dispatch answers permission buttons by index") {
   CopyPicker copy;
   MentionMenu mention;
   auto actions = make_actions(state, editor, slash, files, model, sessions, history, copy, mention);
+  PermissionRequest request;
+  request.options = {PermissionOption{"allow", "Allow once", "allow_once"},
+                     PermissionOption{"allow-always", "Allow always", "allow_always"},
+                     PermissionOption{"deny", "Deny", "reject_once"},
+                     PermissionOption{"deny-always", "Deny always", "reject_always"}};
+  state.permission = request;
   std::string chosen;
   actions.permission = [&](const char* kind) { chosen = kind; };
   REQUIRE(click_mouse(MouseHit{MouseSurface::Permission, 1, 0, ""}, actions));

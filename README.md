@@ -55,8 +55,9 @@ effort. The editor supports `Ctrl+Z` undo, `Alt+Z` redo, `Ctrl`/`Alt`+`←`/`→
 `!command` runs a local shell command during any turn and `$python` runs Python locally (an
 expression prints its value); neither is sent to the model or saved as prompt history.
 `Ctrl+W`/`Ctrl+U`/`Ctrl+K` kill and `Ctrl+Y` yank, and `Alt+Up` takes a queued prompt back into
-the editor. Drafts taller than eight rows scroll internally with a `↑N` marker; a permission card accepts
-`y` (once), `a` (always), `n` (deny once), `d` (deny always).
+the editor. Drafts taller than eight rows scroll internally with a `↑N` marker; a permission card
+reuses the matching tool card's title and input, and shows only the choices dsh advertised
+(`y` once, `a` always, `n` deny, `d` deny always when offered).
 Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
 `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and

@@ -192,6 +192,7 @@ TEST_CASE("the client correlates responses, notifications and permissions") {
   REQUIRE(std::holds_alternative<StreamDelta>(events[0].value));
   REQUIRE(std::holds_alternative<PermissionRequest>(events[1].value));
   const auto& permission = std::get<PermissionRequest>(events[1].value);
+  REQUIRE(permission.tool_call_id == "t-1");
   REQUIRE(permission.options.front().id == "allow");
 
   REQUIRE(client.answer_permission(permission.id.value, std::string{"allow"}).has_value());

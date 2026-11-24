@@ -358,16 +358,22 @@ int main() {
       }
       if (text.find("diffperm") != std::string::npos) {
         waiting_for_permission = id;
+        send({{"jsonrpc", "2.0"}, {"method", "session/update"},
+              {"params", {{"sessionId", "s-1"},
+                          {"update", {{"sessionUpdate", "tool_call"},
+                                      {"toolCallId", "t-edit-perm"},
+                                      {"title", "edit"},
+                                      {"name", "edit"},
+                                      {"status", "pending"},
+                                      {"rawInput", {{"file_path", "src/a.cpp"},
+                                                    {"old_string", "old"},
+                                                    {"new_string", "new"}}}}}}}});
         send({{"jsonrpc", "2.0"},
               {"id", "perm-1"},
               {"method", "session/request_permission"},
               {"params",
                {{"sessionId", "s-1"},
-                {"toolCall", {{"toolCallId", "t-edit-perm"},
-                              {"title", "Edit file"},
-                              {"rawInput", {{"file_path", "src/a.cpp"},
-                                            {"old_string", "old"},
-                                            {"new_string", "new"}}}}},
+                {"toolCall", {{"toolCallId", "t-edit-perm"}}},
                 {"options", json::array({json{{"optionId", "allow"}, {"name", "Allow once"},
                                               {"kind", "allow_once"}},
                                          json{{"optionId", "deny"}, {"name", "Deny"},

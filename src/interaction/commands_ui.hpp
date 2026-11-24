@@ -23,7 +23,7 @@ class Kernel;
 bool local_command(const std::string& line);
 
 /// The permission choice for a key press, or nullptr when the key does nothing.
-const char* permission_kind(const ftxui::Event& event);
+const char* permission_kind(const ftxui::Event& event, const PermissionRequest& request);
 
 /// Ctrl+O/Ctrl+T/Alt+O display toggles. Returns true when the event was consumed.
 bool view_toggle(const ftxui::Event& event, const KeyBindings& keys, bool& expand_tools,

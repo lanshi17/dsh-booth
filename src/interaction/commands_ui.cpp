@@ -53,11 +53,23 @@ std::string first_word(const std::string& line) {
 
 }  // namespace
 
-const char* permission_kind(const ftxui::Event& event) {
-  if (event == ftxui::Event::Character('y') || event == ftxui::Event::Return) return "allow_once";
-  if (event == ftxui::Event::Character('a')) return "allow_always";
-  if (event == ftxui::Event::Character('n') || event == ftxui::Event::Escape) return "reject_once";
-  if (event == ftxui::Event::Character('d')) return "reject_always";
+const char* permission_kind(const ftxui::Event& event, const PermissionRequest& request) {
+  const auto offered = [&](std::string_view kind) -> const char* {
+    for (const auto& option : request.options) {
+      if (option.kind == kind) return option.kind.c_str();
+    }
+    return nullptr;
+  };
+  if (event == ftxui::Event::Return) {
+    if (const char* kind = offered("allow_once")) return kind;
+    return offered("allow_always");
+  }
+  if (event == ftxui::Event::Character('y')) return offered("allow_once");
+  if (event == ftxui::Event::Character('a')) return offered("allow_always");
+  if (event == ftxui::Event::Character('n') || event == ftxui::Event::Escape) {
+    return offered("reject_once");
+  }
+  if (event == ftxui::Event::Character('d')) return offered("reject_always");
   return nullptr;
 }
 

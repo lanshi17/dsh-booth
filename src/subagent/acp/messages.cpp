@@ -117,12 +117,16 @@ std::optional<PermissionRequest> permission_request(const Json& params,
   request.id = RequestId{std::string(request_id)};
   request.session = SessionId{params.value("sessionId", std::string{})};
   const auto tool_call = params.value("toolCall", Json::object());
+  request.tool_call_id = tool_call.value("toolCallId", std::string{});
   request.tool = tool_call.value("name", std::string{});
-  if (request.tool.empty()) request.tool = tool_call.value("title", std::string{"tool"});
+  request.title = tool_call.value("title", std::string{});
+  if (request.tool.empty()) request.tool = request.title;
+  if (request.tool.empty()) request.tool = "tool";
   if (tool_call.contains("rawInput")) {
-    request.detail = clip(tool_call["rawInput"].dump(), 512);
+    request.raw_input = tool_call["rawInput"].dump();
+    request.detail = clip(request.raw_input, 512);
   } else {
-    request.detail = tool_call.value("title", std::string{});
+    request.detail = request.title;
   }
   const auto options = params.value("options", Json::array());
   for (const auto& option : options) {

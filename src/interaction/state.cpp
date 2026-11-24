@@ -174,7 +174,18 @@ void apply(AppState& state, const Event& event) {
 
   if (const auto* request = std::get_if<PermissionRequest>(&event.value)) {
     finish_thought();
-    state.permission = *request;
+    PermissionRequest pending = *request;
+    if (!pending.tool_call_id.empty()) {
+      for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
+        if (entry->kind != EntryKind::Tool || entry->id != pending.tool_call_id) continue;
+        if (!entry->tool.empty()) pending.tool = entry->tool;
+        if (pending.title.empty()) pending.title = entry->text;
+        if (pending.raw_input.empty()) pending.raw_input = entry->raw_input;
+        if (pending.detail.empty()) pending.detail = entry->input;
+        break;
+      }
+    }
+    state.permission = std::move(pending);
     return;
   }
 

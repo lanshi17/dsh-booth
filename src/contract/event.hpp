@@ -69,8 +69,11 @@ struct PermissionOption {
 struct PermissionRequest {
   RequestId id;
   SessionId session;
+  std::string tool_call_id;
   std::string tool;
+  std::string title;
   std::string detail;
+  std::string raw_input;
   std::vector<PermissionOption> options;
 };
 

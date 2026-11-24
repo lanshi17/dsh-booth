@@ -127,7 +127,7 @@ class Root : public ComponentBase {
       if (event == ftxui::Event::Escape || event == ftxui::Event::Return || event == ftxui::Event::Character('q')) state_.help = false;
       return true;
     }
-    if (state_.permission) { if (const char* kind = booth::permission_kind(event)) booth::answer_permission_choice(supervisor_, state_, kind); return true; }
+    if (state_.permission) { if (const char* kind = booth::permission_kind(event, *state_.permission)) booth::answer_permission_choice(supervisor_, state_, kind); return true; }
     if (matches_chord(keys_.reasoning, event)) {
       const auto choice = booth::next_reasoning(state_.reasoning);
       if (!choice) {
