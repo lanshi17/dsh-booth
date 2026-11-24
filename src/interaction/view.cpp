@@ -452,34 +452,6 @@ ftxui::Element help_view(int offset, MouseRouter* mouse) {
   return card;
 }
 
-ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse) {
-  ftxui::Elements body;
-  body.push_back(ftxui::text("permission: " + request.tool) | ftxui::bold | ftxui::color(kAccent));
-  if (!request.detail.empty()) {
-    const auto parsed = nlohmann::json::parse(request.detail, nullptr, false);
-    if (!parsed.is_discarded() && parsed.contains("command") && parsed["command"].is_string()) {
-      body.push_back(ftxui::paragraph(parsed["command"].get<std::string>()));
-    } else {
-      body.push_back(ftxui::paragraph(request.detail));
-    }
-  }
-  body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
-  auto button = [&](std::string label, ftxui::Color color, std::size_t index) {
-    auto element = ftxui::text(std::move(label)) | ftxui::color(color);
-    return mouse == nullptr ? element
-                            : mouse->zone(std::move(element), MouseSurface::Permission, index);
-  };
-  body.push_back(ftxui::hbox({button("[y] Allow once", kGreen, 0),
-                              ftxui::text("    "),
-                              button("[a] Allow always", kGreen, 1)}));
-  body.push_back(ftxui::hbox({button("[n] Deny", kRed, 2),
-                              ftxui::text("          "),
-                              button("[d] Deny always", kRed, 3),
-                              ftxui::text("    (Esc)") | ftxui::dim}));
-  return ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
-         ftxui::bgcolor(kPanel);
-}
-
 void collect_model_options(const nlohmann::json& option, std::vector<ModelChoice>& out,
                            const std::string& provider) {
   if (!option.is_object()) return;

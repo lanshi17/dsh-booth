@@ -6,6 +6,9 @@
 
 #include <string>
 
+#include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/screen.hpp>
+
 #include "interaction/context_gauge.hpp"
 #include "interaction/state.hpp"
 
@@ -248,4 +251,18 @@ TEST_CASE("context gauge fills and changes color at thresholds") {
   REQUIRE(context_color(69) == ftxui::Color::RGB(0, 255, 135));
   REQUIRE(context_color(70) == ftxui::Color::RGB(255, 215, 0));
   REQUIRE(context_color(90) == ftxui::Color::RGB(255, 95, 95));
+}
+
+TEST_CASE("permission card previews an edit diff") {
+  PermissionRequest request;
+  request.tool = "edit";
+  request.detail =
+      R"({"file_path":"src/a.cpp","old_string":"old","new_string":"new"})";
+  auto view = permission_view(request);
+  ftxui::Screen screen(70, 20);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("src/a.cpp") != std::string::npos);
+  REQUIRE(text.find("- old") != std::string::npos);
+  REQUIRE(text.find("+ new") != std::string::npos);
 }
