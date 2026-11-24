@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <vector>
 
@@ -126,16 +127,46 @@ std::vector<DiffLine> from_edit(const Json& raw) {
   return lines;
 }
 
+bool hunk_header(const std::string& line, int& old_start, int& new_start) {
+  if (line.rfind("@@ -", 0) != 0) return false;
+  std::size_t pos = 4;
+  const auto read_number = [&](int& value) -> bool {
+    const std::size_t begin = pos;
+    while (pos < line.size() && std::isdigit(static_cast<unsigned char>(line[pos]))) ++pos;
+    if (pos == begin) return false;
+    value = std::stoi(line.substr(begin, pos - begin));
+    return true;
+  };
+  if (!read_number(old_start)) return false;
+  const auto plus = line.find('+', pos);
+  if (plus == std::string::npos) return false;
+  pos = plus + 1;
+  return read_number(new_start);
+}
+
 std::vector<DiffLine> from_patch(const std::string& patch) {
   std::vector<DiffLine> lines;
   std::size_t start = 0;
+  int old_line = 0;
+  int new_line = 0;
   while (start <= patch.size()) {
     const auto end = patch.find('\n', start);
     const std::string line = patch.substr(start, end == std::string::npos ? std::string::npos
                                                                             : end - start);
     if (!line.empty()) {
-      const int change = line[0] == '+' ? 1 : line[0] == '-' ? -1 : 0;
-      lines.push_back({line, change});
+      int old_start = 0;
+      int new_start = 0;
+      if (hunk_header(line, old_start, new_start)) {
+        old_line = old_start;
+        new_line = new_start;
+        lines.push_back({line, 0});
+      } else {
+        const int change = line[0] == '+' ? 1 : line[0] == '-' ? -1 : 0;
+        lines.push_back({line, change, change <= 0 ? old_line : 0,
+                         change >= 0 ? new_line : 0});
+        if (change <= 0) ++old_line;
+        if (change >= 0) ++new_line;
+      }
     }
     if (end == std::string::npos) break;
     start = end + 1;

@@ -39,6 +39,20 @@ TEST_CASE("write and patch arguments become diffs") {
   REQUIRE(lines[2].change == 1);
 }
 
+TEST_CASE("unified patch hunks carry old and new line numbers") {
+  TranscriptEntry entry;
+  entry.tool = "apply_patch";
+  entry.raw_input = R"({"input":"@@ -5,2 +5,2 @@\n-old\n+new\n same"})";
+  const auto lines = tool_diff(entry);
+  REQUIRE(lines.size() == 4);
+  REQUIRE(lines[1].old_line == 5);
+  REQUIRE(lines[1].new_line == 0);
+  REQUIRE(lines[2].old_line == 0);
+  REQUIRE(lines[2].new_line == 5);
+  REQUIRE(lines[3].old_line == 6);
+  REQUIRE(lines[3].new_line == 6);
+}
+
 TEST_CASE("non-edit tools produce no diff") {
   TranscriptEntry entry;
   entry.raw_input = R"({"command":"ls"})";
