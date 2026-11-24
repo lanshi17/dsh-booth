@@ -221,3 +221,21 @@ TEST_CASE("a request that never answers times out") {
   ::close(fds[1]);
   ::close(fds[0]);
 }
+
+TEST_CASE("task raw input uses its description") {
+  const Json params{
+      {"sessionId", "s-1"},
+      {"update",
+       Json{{"sessionUpdate", "tool_call"},
+            {"toolCallId", "t-task"},
+            {"name", "task"},
+            {"title", "task"},
+            {"rawInput", Json{{"description", "Explore the repo"},
+                              {"prompt", "long prompt"}}}}}};
+  const auto events = session_updates(params);
+  REQUIRE(events.size() == 1);
+  const auto* entry = std::get_if<TranscriptEntry>(&events.front().value);
+  REQUIRE(entry != nullptr);
+  REQUIRE(entry->tool == "task");
+  REQUIRE(entry->input == "Explore the repo");
+}

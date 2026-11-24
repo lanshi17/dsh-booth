@@ -31,7 +31,7 @@ std::string tool_input_of(const Json& update) {
   const auto& raw = update["rawInput"];
   if (raw.is_string()) return raw.get<std::string>();
   if (raw.is_object()) {
-    for (const char* key : {"command", "cmd", "path", "file_path", "pattern", "query", "url"}) {
+    for (const char* key : {"command", "cmd", "description", "path", "file_path", "pattern", "query", "url"}) {
       if (raw.contains(key) && raw[key].is_string()) return raw[key].get<std::string>();
     }
   }
