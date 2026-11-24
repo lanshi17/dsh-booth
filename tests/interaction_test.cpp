@@ -512,6 +512,50 @@ TEST_CASE("tool titles truncate on terminal cells") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+TEST_CASE("shell cards tail output and report the exit status") {
+  ftxui::Terminal::SetFallbackSize({60, 24});
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Tool;
+  entry.tool = "bash";
+  entry.status = "completed";
+  for (int index = 1; index <= 20; ++index) {
+    const std::string number = (index < 10 ? "0" : "") + std::to_string(index);
+    entry.output += "out " + number + "\n";
+  }
+  entry.output += "[exit code: 3]";
+
+  auto collapsed = tool_view(entry, false);
+  ftxui::Screen screen(60, 24);
+  ftxui::Render(screen, std::move(collapsed));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("… 10 earlier lines · Ctrl+O") != std::string::npos);
+  REQUIRE(text.find("out 11") != std::string::npos);
+  REQUIRE(text.find("out 20") != std::string::npos);
+  REQUIRE(text.find("out 01") == std::string::npos);
+  REQUIRE(text.find("exit 3") != std::string::npos);
+  REQUIRE(text.find("[exit code: 3]") == std::string::npos);
+
+  auto expanded = tool_view(entry, true);
+  ftxui::Screen full(60, 30);
+  ftxui::Render(full, std::move(expanded));
+  REQUIRE(full.ToString().find("out 01") != std::string::npos);
+
+  entry.output = "gone\n[killed by signal: SIGKILL]";
+  auto killed = tool_view(entry, false);
+  ftxui::Screen killed_screen(60, 12);
+  ftxui::Render(killed_screen, std::move(killed));
+  const std::string killed_text = killed_screen.ToString();
+  REQUIRE(killed_text.find("signal SIGKILL") != std::string::npos);
+  REQUIRE(killed_text.find("[killed by signal") == std::string::npos);
+
+  entry.output = "ok";
+  auto clean = tool_view(entry, false);
+  ftxui::Screen clean_screen(60, 12);
+  ftxui::Render(clean_screen, std::move(clean));
+  REQUIRE(clean_screen.ToString().find("exit 0") != std::string::npos);
+  ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
 TEST_CASE("large diffs page until expanded") {
   ftxui::Terminal::SetFallbackSize({100, 60});
   TranscriptEntry entry;

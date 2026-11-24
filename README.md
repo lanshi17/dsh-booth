@@ -44,8 +44,9 @@ the model, reasoning effort when dsh reports it, cwd, git branch/dirty counts, w
 a threshold-colored context gauge; the bottom row merges
 the prompt with the key hints. User turns keep omp's full-width band, assistant turns render
 markdown (lists, links, tables, inline code, LaTeX math, syntax-highlighted fences), and tool calls render as
-full-width frames with input, output, diff statistics and duration; a diff stops at 40 lines
-until `Ctrl+O`. `/copy` puts the last answer on the terminal
+full-width frames with input, output, diff statistics and duration; shell cards show the last 10
+output lines and the exit status, and a diff stops at 40 lines until `Ctrl+O`. `/copy` puts the last
+answer on the terminal
 clipboard with OSC 52 (tmux passthrough included); `/export [path]` writes the full transcript as Markdown (default:
 `$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk the prompt history,
 `Ctrl+C` cancels the run, `Ctrl+D` quits and saves the unsent draft for the next start, `Ctrl+R`

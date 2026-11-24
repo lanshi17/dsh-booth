@@ -98,6 +98,55 @@ std::optional<std::vector<TodoRow>> parse_todos(const TranscriptEntry& entry) {
   return rows;
 }
 
+bool is_shell_tool(const std::string& tool) {
+  return tool == "bash" || tool == "sh" || tool == "shell" || tool == "pwsh" ||
+         tool == "powershell";
+}
+
+struct ShellStatus {
+  std::string note;
+  bool failed{false};
+};
+
+ShellStatus take_shell_status(std::string& text) {
+  const auto end = text.find_last_not_of("\r\n");
+  if (end == std::string::npos) return {};
+  const auto newline = text.find_last_of('\n', end);
+  const std::size_t start = newline == std::string::npos ? 0 : newline + 1;
+  const std::string line = text.substr(start, end - start + 1);
+  const auto between = [&](std::string_view prefix) -> std::string {
+    if (line.rfind(prefix, 0) != 0 || line.back() != ']') return {};
+    return line.substr(prefix.size(), line.size() - prefix.size() - 1);
+  };
+  ShellStatus status;
+  if (const std::string exit_value = between("[exit code: "); !exit_value.empty()) {
+    if (exit_value == "null") {
+      status.note = "exit ?";
+      status.failed = true;
+    } else {
+      status.note = "exit " + exit_value;
+      status.failed = exit_value != "0";
+    }
+  } else if (const std::string signal_value = between("[killed by signal: ");
+             !signal_value.empty()) {
+    status.note = "signal " + signal_value;
+    status.failed = true;
+  } else if (const std::string command_value = between("[Command finished with exit code ");
+             !command_value.empty()) {
+    status.note = "exit " + command_value;
+    status.failed = command_value != "0";
+  } else if (const std::string shell_signal = between("[shell killed by signal: ");
+             !shell_signal.empty()) {
+    status.note = "signal " + shell_signal;
+    status.failed = true;
+  } else {
+    return {};
+  }
+  text.erase(start);
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) text.pop_back();
+  return status;
+}
+
 std::vector<ReadEnvelope> parse_read_envelopes(const std::string& output) {
   std::vector<ReadEnvelope> envelopes;
   std::size_t start = output.find("<path>");
@@ -130,6 +179,9 @@ std::string read_output_text(const std::string& output) {
 ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
   const ftxui::Color border = theme_color("border", ftxui::Color::RGB(108, 108, 108));
   const bool read_tool = entry.tool == "read" || entry.tool == "read_file";
+  const bool shell_tool = is_shell_tool(entry.tool);
+  std::string output = entry.output;
+  const ShellStatus shell_status = shell_tool ? take_shell_status(output) : ShellStatus{};
   const std::vector<ReadEnvelope> reads =
       read_tool ? parse_read_envelopes(entry.output) : std::vector<ReadEnvelope>{};
   const bool has_envelope = !reads.empty();
@@ -198,11 +250,11 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   } else if (!entry.input.empty() && !todos) {
-    const bool shell = entry.tool == "bash" || entry.tool == "sh" || entry.tool == "shell";
-    const std::size_t input_width = shell ? std::max<std::size_t>(1, content_width - 2) : content_width;
+    const std::size_t input_width =
+        shell_tool ? std::max<std::size_t>(1, content_width - 2) : content_width;
     bool first = true;
     for (const auto& line : wrap_cells(entry.input, input_width)) {
-      std::string prefix = shell ? (first ? "$ " : "  ") : "  ";
+      std::string prefix = shell_tool ? (first ? "$ " : "  ") : "  ";
       first = false;
       rows.push_back(ftxui::hbox({
           ftxui::text("│ " + prefix) | ftxui::color(border),
@@ -253,7 +305,7 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
       }));
     }
   }
-  if (!entry.output.empty() && (!todos || entry.status == "failed")) {
+  if (!output.empty() && (!todos || entry.status == "failed")) {
     rows.push_back(ftxui::hbox({
         ftxui::text("├── Output ") | ftxui::color(border),
         ftxui::separator() | ftxui::flex | ftxui::color(border),
@@ -293,11 +345,24 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
         for (const auto& row : read.rows) push_output(row, kText, false);
         if (!read.footer.empty()) push_output(read.footer, kDim, true);
       }
+    } else if (shell_tool) {
+      std::vector<std::string> lines;
+      std::istringstream input(output);
+      std::string line;
+      while (std::getline(input, line)) lines.push_back(line);
+      const std::size_t limit = expanded ? lines.size() : 10;
+      const std::size_t start = lines.size() > limit ? lines.size() - limit : 0;
+      if (start > 0) {
+        push_output("… " + std::to_string(start) + " earlier lines · Ctrl+O", kDim, true);
+      }
+      for (std::size_t index = start; index < lines.size(); ++index) {
+        push_output(lines[index], kText, false);
+      }
     } else {
-      std::istringstream output(entry.output);
+      std::istringstream input(output);
       std::string line;
       const std::size_t limit = !expanded && read_tool ? 3 : 12;
-      while (std::getline(output, line)) {
+      while (std::getline(input, line)) {
         if (!expanded && shown >= limit) {
           ++hidden;
           continue;
@@ -333,8 +398,12 @@ ftxui::Element tool_view(const TranscriptEntry& entry, bool expanded) {
         std::chrono::duration_cast<std::chrono::milliseconds>(entry.finished - entry.started);
     footer += " · " + std::to_string(ms.count()) + "ms";
   }
+  std::string exit_note = shell_status.note;
+  if (exit_note.empty() && shell_tool && entry.status == "completed") exit_note = "exit 0";
+  if (!exit_note.empty()) footer += " · " + exit_note;
+  const bool footer_failed = entry.status == "failed" || shell_status.failed;
   ftxui::Element status = ftxui::text(footer) | ftxui::dim;
-  if (entry.status == "failed") status = ftxui::text(footer) | ftxui::color(kRed);
+  if (footer_failed) status = ftxui::text(footer) | ftxui::color(kRed);
   rows.push_back(ftxui::hbox({
       ftxui::text("╰─── ") | ftxui::color(border),
       std::move(status),
