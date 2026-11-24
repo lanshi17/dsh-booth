@@ -1,9 +1,28 @@
 #pragma once
 
+#include <cctype>
 #include <string>
 #include <string_view>
 
 namespace booth {
+
+
+/// True when a non-quote line starts a block that must end a lazy blockquote continuation.
+inline bool lazy_quote_stop(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t");
+  if (first == std::string::npos) return true;
+  const char ch = line[first];
+  if (ch == '>' || ch == '#' || ch == '`' || ch == '|') return true;
+  if ((ch == '-' || ch == '*' || ch == '+') && first + 1 < line.size() && line[first + 1] == ' ') {
+    return true;
+  }
+  if (std::isdigit(static_cast<unsigned char>(ch)) &&
+      line.find(". ", first) != std::string::npos) {
+    return true;
+  }
+  if (line.compare(first, 2, "$$") == 0 || line.compare(first, 7, "\\begin{") == 0) return true;
+  return false;
+}
 
 /// Decodes the named HTML entities CommonMark recognises in prose.
 inline std::string decode_html_entities(std::string_view text) {

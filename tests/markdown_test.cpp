@@ -625,3 +625,11 @@ TEST_CASE("table cells keep strike and image links") {
   REQUIRE(linked);
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
+
+TEST_CASE("blockquotes keep lazy continuation lines") {
+  const std::string text = render_markdown(
+      "> first line\ncontinued line\n\noutside line\n", 60, 10);
+  REQUIRE(text.find("│ first line") != std::string::npos);
+  REQUIRE(text.find("│ continued line") != std::string::npos);
+  REQUIRE(text.find("│ outside line") == std::string::npos);
+}

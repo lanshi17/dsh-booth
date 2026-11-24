@@ -1,4 +1,5 @@
 #include "interaction/markdown_table.hpp"
+#include "interaction/markdown_util.hpp"
 #include "interaction/math.hpp"
 #include "interaction/view.hpp"
 
@@ -372,6 +373,8 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
   std::string math_close;
   std::string math_source;
   std::string lang;
+  bool in_quote = false;
+  std::size_t lazy_quote_depth = 0;
   std::vector<std::string> source;
   {
     std::istringstream input(text);
@@ -417,6 +420,17 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
   for (std::size_t index = 0; index < source.size(); ++index) {
     const std::string& line = source[index];
     if (definition[index]) continue;
+    if (!code && !math_block && in_quote && !line.empty() && line[0] != '>') {
+      if (lazy_quote_stop(line)) {
+        in_quote = false;
+      } else {
+        std::string prefix;
+        for (std::size_t depth = 0; depth < lazy_quote_depth; ++depth) prefix += "│ ";
+        lines.push_back(ftxui::hbox({ftxui::text(prefix) | ftxui::color(kLine),
+                                     render_inline(line, dim) | ftxui::flex}));
+        continue;
+      }
+    }
     if (math_block) {
       const auto close = line.find(math_close);
       if (close == std::string::npos) {
@@ -490,6 +504,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       continue;
     }
     if (line.empty()) {
+      in_quote = false;
       lines.push_back(ftxui::text(""));
       continue;
     }
@@ -521,6 +536,7 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
       lines.push_back(ftxui::hbox({ftxui::text(prefix) | ftxui::color(kLine),
                                    render_inline(line.substr(quote_start), true) |
                                        ftxui::flex}));
+      in_quote = true, lazy_quote_depth = quote_depth;
       continue;
     }
     std::size_t hashes = 0;
@@ -574,7 +590,6 @@ ftxui::Element render_markdown(const std::string& text, bool dim) {
   if (math_block) flush_math();
   return ftxui::vbox(std::move(lines));
 }
-
 
 }  // namespace
 
