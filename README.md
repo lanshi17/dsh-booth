@@ -2,7 +2,8 @@
 
 A terminal console for one dsh profile. `booth` starts `dsh --profile booth` and drives it over
 ACP, showing the conversation and streaming the agent's work. There is no second agent layer and
-no router: dsh is the agent, booth is its front end.
+no router: dsh is the agent, booth is its front end. [OMP_PARITY.md](OMP_PARITY.md) records the
+client-side parity matrix and the surfaces blocked by dsh's ACP contract.
 
 ## Build
 
