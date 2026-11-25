@@ -190,7 +190,8 @@ composer.
   `booth.history`, `booth.tools`, `booth.thinking`, `booth.hide_tools`, `booth.paste_image`,
   `booth.reasoning`, `booth.page_up`, `booth.page_down`, `booth.dequeue`, `booth.help`,
   `booth.model`, `booth.sessions`, `booth.copy`, `booth.links`, `booth.model_next` and `booth.retry` to `Ctrl`/`Alt`/`Shift` letter chords, `Esc`,
-  `Enter`, `Shift+Tab`, arrows or `PageUp`/`PageDown`.
+  `Enter`, `Shift+Tab`, arrows or `PageUp`/`PageDown`. A value may be a comma-separated array
+such as `[Alt+H, Ctrl+H]`; `[]` disables that action.
 - Mouse hit-testing uses each row's final FTXUI box, so resizing and scrolling keep clicks exact.
 - `Ctrl+G` seeds its scratch file through the open descriptor in the first writable of `$TMPDIR`,
   `$XDG_RUNTIME_DIR`, `/tmp` or `/var/tmp`, so a path swap cannot redirect the write.

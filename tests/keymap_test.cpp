@@ -96,6 +96,28 @@ TEST_CASE("the file overrides known actions and ignores unknown ones") {
   std::filesystem::remove(path);
 }
 
+TEST_CASE("bindings accept alternatives and an empty list disables an action") {
+  const auto path = temp_file("arrays");
+  {
+    std::ofstream out(path);
+    out << "booth.help: [Alt+H, Ctrl+H]\n"
+        << "booth.cancel: []\n";
+  }
+  auto bindings = load_keybindings(path);
+  REQUIRE(bindings.has_value());
+  REQUIRE(bindings->help.kind == Chord::Kind::Alt);
+  REQUIRE(bindings->help.key == 'H');
+  REQUIRE(bindings->help.extra.size() == 1);
+  REQUIRE(bindings->help.extra[0].kind == Chord::Kind::Ctrl);
+  REQUIRE(matches_chord(bindings->help, ftxui::Event::Special("\x1bH")));
+  REQUIRE(matches_chord(bindings->help, ftxui::Event::Special("\x08")));
+  REQUIRE(chord_label(bindings->help) == "Alt+H / Ctrl+H");
+  REQUIRE(bindings->cancel.kind == Chord::Kind::None);
+  REQUIRE_FALSE(matches_chord(bindings->cancel, ftxui::Event::Special("\x03")));
+  REQUIRE(chord_label(bindings->cancel) == "unbound");
+  std::filesystem::remove(path);
+}
+
 TEST_CASE("a malformed line is a config error") {
   const auto path = temp_file("bad");
   {

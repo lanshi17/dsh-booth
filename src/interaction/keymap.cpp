@@ -1,5 +1,6 @@
 #include "interaction/keymap.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <string>
@@ -41,6 +42,12 @@ std::string special_sequence(Chord::Special special, int modifier) {
 
 }  // namespace
 
+bool matches_chord(const KeyBinding& binding, const ftxui::Event& event) {
+  if (binding.kind != Chord::Kind::None && matches_chord(static_cast<const Chord&>(binding), event)) return true;
+  return std::any_of(binding.extra.begin(), binding.extra.end(),
+                     [&](const Chord& chord) { return matches_chord(chord, event); });
+}
+
 bool matches_chord(const Chord& chord, const ftxui::Event& event) {
   const std::string& input = event.input();
   switch (chord.kind) {
@@ -66,6 +73,16 @@ bool matches_chord(const Chord& chord, const ftxui::Event& event) {
       return input.size() == 1 && input[0] == chord.key;
   }
   return false;
+}
+
+std::string chord_label(const KeyBinding& binding) {
+  std::string label;
+  if (binding.kind != Chord::Kind::None) label = chord_label(static_cast<const Chord&>(binding));
+  for (const auto& chord : binding.extra) {
+    const std::string part = chord_label(chord);
+    if (!part.empty()) label += (label.empty() ? "" : " / ") + part;
+  }
+  return label.empty() ? "unbound" : label;
 }
 
 std::string chord_label(const Chord& chord) {
@@ -133,6 +150,30 @@ std::optional<Chord> parse_chord(std::string_view text) {
   return Chord{kind, letter};
 }
 
+std::optional<KeyBinding> parse_binding(std::string_view text) {
+  const std::string value = trim(text);
+  if (value.size() < 2 || value.front() != '[' || value.back() != ']') {
+    const auto chord = parse_chord(value);
+    return chord ? std::optional<KeyBinding>(KeyBinding{*chord}) : std::nullopt;
+  }
+  const std::string inner = trim(std::string_view(value).substr(1, value.size() - 2));
+  KeyBinding binding;
+  if (inner.empty()) return binding;
+  std::size_t start = 0;
+  bool first = true;
+  while (start <= inner.size()) {
+    const auto comma = inner.find(',', start);
+    const std::string piece = trim(std::string_view(inner).substr(start, comma == std::string::npos ? std::string::npos : comma - start));
+    const auto chord = parse_chord(piece);
+    if (!chord) return std::nullopt;
+    if (first) { binding = KeyBinding{*chord}; first = false; }
+    else binding.extra.push_back(*chord);
+    if (comma == std::string::npos) break;
+    start = comma + 1;
+  }
+  return binding;
+}
+
 Result<KeyBindings> load_keybindings(const std::filesystem::path& path) {
   KeyBindings bindings;
   std::ifstream input(path);
@@ -167,7 +208,7 @@ Result<KeyBindings> load_keybindings(const std::filesystem::path& path) {
       continue;
     }
 
-    const auto chord = parse_chord(chord_text);
+    const auto chord = parse_binding(chord_text);
     if (!chord) {
       return std::unexpected(Error{Layer::Config,
                                    "keybindings line " + std::to_string(number) +
