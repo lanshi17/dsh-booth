@@ -128,6 +128,7 @@ add_library(booth_interaction STATIC
   src/interaction/export.cpp
   src/interaction/error_view.cpp
   src/interaction/fetch_view.cpp
+  src/interaction/file_command.cpp
   src/interaction/help_view.cpp
   src/interaction/json_view.cpp
   src/interaction/skill_view.cpp

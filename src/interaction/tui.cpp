@@ -90,7 +90,7 @@ class Root : public ComponentBase {
     state_.composer = booth::load_draft(draft_file_); editor_.SetContent(state_.composer);
     mouse_enabled_ = booth::load_mouse_enabled(draft_file_.parent_path());
     if (const char* vim = ::getenv("BOOTH_VIM"); vim != nullptr && *vim != '\0' && *vim != '0') editor_.EnableVim(true);
-    history_ = booth::load_history(history_file_);
+    history_ = booth::load_history(history_file_); booth::load_file_commands(cwd_, draft_file_.parent_path());
     git_ = booth::read_git(cwd_);
     ticker_ = booth::start_ticker(screen_, animate_, alive_);
     worker_.post([this, ctx = context()]() mutable { booth::ensure_session(ctx); });
@@ -394,8 +394,7 @@ class Root : public ComponentBase {
       else state_.notice = "busy: local commands and /queue still work";
       return;
     }
-    state_.composer.clear(); editor_.Reset();
-    booth::save_draft(draft_file_, {});
+    state_.composer.clear(); editor_.Reset(); booth::save_draft(draft_file_, {});
     if (command) {
       handle_command(text);
       return;
@@ -438,6 +437,7 @@ class Root : public ComponentBase {
   }
   void handle_command(std::string line) {
     line = booth::normalize_command(std::move(line));
+    if (auto prompt = booth::file_command_prompt(line)) { send_prompt(std::move(*prompt)); return; }
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
                                     draft_file_.parent_path(), line, show_thoughts_, tools_hidden_)) {
       if (line == "/help") help_scroll_.reset();

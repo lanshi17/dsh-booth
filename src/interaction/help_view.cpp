@@ -58,6 +58,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/sessions resume · /new fresh · /close stop"},
       {"/session /acp /cancel · /find · /attach <path> · /detach"},
       {"/help this card · /quit leave"},
+      {".booth/commands/*.md become /name prompt templates"},
       {"Aliases: /resume /models /reasoning /hotkeys /keys /exit /q", true},
   };
 }

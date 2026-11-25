@@ -2,7 +2,7 @@ add_executable(fake_kernel fake_kernel.cpp)
 target_link_libraries(fake_kernel PRIVATE nlohmann_json::nlohmann_json)
 booth_warnings(fake_kernel)
 
-add_executable(booth_tests contract_test.cpp click_row_test.cpp mouse_zone_test.cpp mouse_picker_test.cpp mouse_actions_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp commands_ui_test.cpp command_args_test.cpp copy_picker_test.cpp picker_filter_test.cpp draft_test.cpp recall_test.cpp file_menu_test.cpp tool_diff_test.cpp theme_test.cpp emoji_test.cpp mention_test.cpp mention_menu_test.cpp history_search_test.cpp keymap_test.cpp editor_test.cpp vim_test.cpp replay_test.cpp clipboard_test.cpp notify_test.cpp word_completion_test.cpp link_picker_test.cpp mouse_mode_test.cpp python_command_test.cpp shell_command_test.cpp markdown_test.cpp math_test.cpp text_util_test.cpp)
+add_executable(booth_tests contract_test.cpp click_row_test.cpp mouse_zone_test.cpp mouse_picker_test.cpp mouse_actions_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp commands_ui_test.cpp command_args_test.cpp copy_picker_test.cpp picker_filter_test.cpp draft_test.cpp recall_test.cpp file_menu_test.cpp file_command_test.cpp tool_diff_test.cpp theme_test.cpp emoji_test.cpp mention_test.cpp mention_menu_test.cpp history_search_test.cpp keymap_test.cpp editor_test.cpp vim_test.cpp replay_test.cpp clipboard_test.cpp notify_test.cpp word_completion_test.cpp link_picker_test.cpp mouse_mode_test.cpp python_command_test.cpp shell_command_test.cpp markdown_test.cpp math_test.cpp text_util_test.cpp)
 target_link_libraries(booth_tests PRIVATE booth_interaction Catch2::Catch2WithMain)
 target_compile_definitions(booth_tests PRIVATE FAKE_KERNEL_PATH="$<TARGET_FILE:fake_kernel>")
 add_dependencies(booth_tests fake_kernel)
@@ -213,6 +213,10 @@ add_test(NAME pty_composer_scroll
 
 add_test(NAME pty_dequeue
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_dequeue.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_file_command
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_file_command.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
 add_test(NAME pty_recall

@@ -130,7 +130,10 @@ model autocomplete; known mentions become stable `mN` tags carrying their route.
 `subagent` tool lists those aliases in the system prompt and accepts `agent: "m1"`, resolving the
 route in the kernel; aliases persist in the conversation tags and rebuild on resume. `/sessions`
 lists saved sessions with the first prompt and relative age: Enter resumes, `r` refreshes, `c`
-closes the active session, and `Alt+K` pins or unpins the selection; pinned sessions stay first. Type `/` for the fuzzy command menu below the input: names, aliases and descriptions all
+closes the active session, and `Alt+K` pins or unpins the selection; pinned sessions stay first. Markdown files in `.booth/commands/` (project) and `$BOOTH_STATE_DIR/commands/` (user) become
+slash commands. Frontmatter `description` labels the menu row; `$ARGUMENTS`/`$@` expand to the
+whole argument string and `$1`–`$9` to words, and unused arguments are appended. Project commands
+win on name collisions. Type `/` for the fuzzy command menu below the input: names, aliases and descriptions all
 match. ↑/↓ or the wheel moves, PgUp/PgDn/Home/End jump, Tab completes the selected command, Enter runs the selection
 and Esc dismisses the menu without clearing the draft. For `/notify`, `/mouse`, `/effort` and
 `/model`, typing a space keeps the menu open over argument values; Tab completes one and Enter submits it. The wheel also moves the model and session

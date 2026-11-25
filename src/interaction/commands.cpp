@@ -2,12 +2,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
+#include <fstream>
 #include <iterator>
+#include <map>
 #include <utility>
+
+#include "interaction/file_command.hpp"
 
 namespace booth {
 
-constexpr CommandHint kCommandHints[] = {
+const CommandHint kCommandHints[] = {
     {"/help", "keys and commands", "shortcuts keys help", "hotkeys keys"},
     {"/model", "switch the session model", "provider choose config", "models"},
     {"/status", "phase, session and model", "info state session", ""},
@@ -35,7 +40,56 @@ constexpr CommandHint kCommandHints[] = {
     {"/quit", "leave booth", "exit quit", "exit q"},
 };
 
-std::span<const CommandHint> command_hints() { return kCommandHints; }
+namespace {
+
+std::string lower_ascii(std::string_view text);
+
+std::map<std::string, FileCommand> gFileCommands;
+
+std::vector<CommandHint> build_hints() {
+  std::vector<CommandHint> hints(std::begin(kCommandHints), std::end(kCommandHints));
+  for (const auto& [name, command] : gFileCommands) {
+    hints.push_back(CommandHint{"/" + name, command.description, "project command template", ""});
+  }
+  return hints;
+}
+
+std::vector<CommandHint> gHints = build_hints();
+
+}  // namespace
+
+std::span<const CommandHint> command_hints() { return gHints; }
+
+void load_file_commands(const std::filesystem::path& project, const std::filesystem::path& state) {
+  gFileCommands.clear();
+  const auto load = [](const std::filesystem::path& dir) {
+    std::error_code error;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, error)) {
+      if (!entry.is_regular_file() || entry.path().extension() != ".md") continue;
+      auto command = read_file_command(entry.path());
+      if (!command) continue;
+      std::string name = lower_ascii(command->name);
+      if (name.empty()) continue;
+      if (std::any_of(std::begin(kCommandHints), std::end(kCommandHints),
+                      [&](const CommandHint& hint) { return hint.name == "/" + name; })) continue;
+      if (!gFileCommands.contains(name)) gFileCommands.emplace(std::move(name), std::move(*command));
+    }
+  };
+  load(project / ".booth" / "commands");
+  load(state / "commands");
+  gHints = build_hints();
+}
+
+std::optional<std::string> file_command_prompt(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos || line[first] != '/') return std::nullopt;
+  const auto end = line.find_first_of(" \t\r\n", first);
+  const std::string name = lower_ascii(line.substr(first + 1, end == std::string::npos ? std::string::npos : end - first - 1));
+  const auto found = gFileCommands.find(name);
+  if (found == gFileCommands.end()) return std::nullopt;
+  const std::string arguments = end == std::string::npos ? std::string{} : line.substr(end);
+  return expand_file_command(found->second, arguments);
+}
 
 namespace {
 
@@ -69,7 +123,7 @@ int text_score(std::string_view query, std::string_view target) {
 }
 
 template <class Fn>
-void for_each_alias(const char* aliases, Fn&& fn) {
+void for_each_alias(std::string_view aliases, Fn&& fn) {
   std::string_view rest(aliases);
   while (!rest.empty()) {
     const auto space = rest.find(' ');
@@ -121,7 +175,7 @@ std::string normalize_command(std::string line) {
   const auto end = line.find_first_of(" \t\r\n", first);
   const std::string token = line.substr(first, end == std::string::npos ? std::string::npos : end - first);
   const std::string name = token.substr(1);
-  for (const auto& hint : kCommandHints) {
+  for (const auto& hint : command_hints()) {
     if (std::string_view(hint.name).substr(1) == name) return line;
     bool alias = false;
     for_each_alias(hint.aliases, [&](std::string_view candidate) {
@@ -144,9 +198,9 @@ std::vector<const CommandHint*> matching_commands(const std::string& composer) {
     const CommandHint* hint;
   };
   std::vector<Ranked> ranked;
-  ranked.reserve(std::size(kCommandHints));
+  ranked.reserve(command_hints().size());
   std::size_t order = 0;
-  for (const auto& hint : kCommandHints) {
+  for (const auto& hint : command_hints()) {
     const int score = hint_score(hint, *query);
     if (score > 0) {
       ranked.push_back({score, std::string_view(hint.name).size(), order++, &hint});

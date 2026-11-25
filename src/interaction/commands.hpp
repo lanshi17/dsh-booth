@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -9,14 +10,20 @@
 namespace booth {
 
 struct CommandHint {
-  const char* name;
-  const char* description;
-  const char* keywords;
-  const char* aliases;  // space-separated, without the leading slash
+  std::string name;
+  std::string description;
+  std::string keywords;
+  std::string aliases;  // space-separated, without the leading slash
 };
 
 /// Every command the slash menu and the help card must document.
 std::span<const CommandHint> command_hints();
+
+/// Loads `.booth/commands/*.md` and `<state>/commands/*.md`; project wins on name collisions.
+void load_file_commands(const std::filesystem::path& project, const std::filesystem::path& state);
+
+/// Expands a registered `/name args` prompt template, or nullopt for other input.
+std::optional<std::string> file_command_prompt(const std::string& line);
 
 /// Rewrites a command alias to its canonical name, preserving any arguments.
 std::string normalize_command(std::string line);
