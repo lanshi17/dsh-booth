@@ -187,7 +187,7 @@ class SlashMenu {
   void sync(const std::string& composer);
 
   /// Whether the dropdown should be drawn for this composer text.
-  [[nodiscard]] bool visible(const std::string& composer) const;
+  [[nodiscard]] bool visible(const std::string& composer, const AppState& state) const;
 
   /// Handles navigation, Tab/Enter completion and Esc dismissal.
   SlashAction key(ftxui::Event& event, AppState& state);
@@ -205,7 +205,7 @@ class SlashMenu {
 };
 
 /// The slash-command menu rows.
-ftxui::Element command_menu_view(const std::string& composer, std::size_t index,
-                                 MouseRouter* mouse = nullptr);
+ftxui::Element command_menu_view(const AppState& state, const std::string& composer,
+                                 std::size_t index, MouseRouter* mouse = nullptr);
 
 }  // namespace booth

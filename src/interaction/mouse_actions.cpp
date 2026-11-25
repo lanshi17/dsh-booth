@@ -7,7 +7,7 @@ namespace booth {
 bool click_mouse(const MouseHit& hit, MouseActions& a) {
   switch (hit.surface) {
     case MouseSurface::Slash: {
-      if (!a.slash.visible(a.state.composer)) return false;
+      if (!a.slash.visible(a.state.composer, a.state)) return false;
       const auto action = a.slash.click(hit.index, a.state);
       if (action == SlashAction::None) return false;
       a.editor.SetContent(a.state.composer);

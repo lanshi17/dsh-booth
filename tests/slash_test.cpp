@@ -60,7 +60,7 @@ TEST_CASE("slash menu navigation wraps and pages") {
   AppState state;
   state.composer = "/";
   menu.sync(state.composer);
-  REQUIRE(menu.visible(state.composer));
+  REQUIRE(menu.visible(state.composer, state));
   REQUIRE(menu.index() == 0);
 
   REQUIRE(press(menu, state, ftxui::Event::ArrowUp) == SlashAction::Handled);
@@ -94,11 +94,11 @@ TEST_CASE("Tab completes, Enter submits and Escape dismisses") {
   state.composer = "/co";
   menu.sync(state.composer);
   REQUIRE(press(menu, state, ftxui::Event::Escape) == SlashAction::Handled);
-  REQUIRE_FALSE(menu.visible(state.composer));
+  REQUIRE_FALSE(menu.visible(state.composer, state));
 
   state.composer = "/cop";
   menu.sync(state.composer);
-  REQUIRE(menu.visible(state.composer));
+  REQUIRE(menu.visible(state.composer, state));
 }
 
 TEST_CASE("Enter runs a description-only hit only after the selection moves") {
@@ -106,7 +106,7 @@ TEST_CASE("Enter runs a description-only hit only after the selection moves") {
   AppState state;
   state.composer = "/clipboard";
   menu.sync(state.composer);
-  REQUIRE(menu.visible(state.composer));
+  REQUIRE(menu.visible(state.composer, state));
   REQUIRE(press(menu, state, ftxui::Event::Return) == SlashAction::None);
   REQUIRE(state.composer == "/clipboard");
 
@@ -125,11 +125,35 @@ TEST_CASE("Enter submits an exact command name immediately") {
   REQUIRE(state.composer == "/copy");
 }
 
+TEST_CASE("slash menu completes and submits command arguments") {
+  SlashMenu menu;
+  AppState state;
+  state.composer = "/notify on";
+  menu.sync(state.composer);
+  REQUIRE(menu.visible(state.composer, state));
+  REQUIRE(press(menu, state, ftxui::Event::Tab) == SlashAction::Handled);
+  REQUIRE(state.composer == "/notify on ");
+
+  state.reasoning.choices = {{"", "Low", "low"}, {"", "High", "high"}};
+  state.composer = "/effort ";
+  menu.sync(state.composer);
+  REQUIRE(menu.visible(state.composer, state));
+  REQUIRE(press(menu, state, ftxui::Event::ArrowDown) == SlashAction::Handled);
+  REQUIRE(press(menu, state, ftxui::Event::Tab) == SlashAction::Handled);
+  REQUIRE(state.composer == "/effort Low ");
+
+  state.models = {{"p", "one", "v1"}, {"p", "two", "v2"}};
+  state.composer = "/model t";
+  menu.sync(state.composer);
+  REQUIRE(press(menu, state, ftxui::Event::Return) == SlashAction::Submit);
+  REQUIRE(state.composer == "/model two");
+}
+
 TEST_CASE("slash menu ignores text that is not a command token") {
   SlashMenu menu;
   AppState state;
   state.composer = "hello";
   menu.sync(state.composer);
-  REQUIRE_FALSE(menu.visible(state.composer));
+  REQUIRE_FALSE(menu.visible(state.composer, state));
   REQUIRE(press(menu, state, ftxui::Event::Return) == SlashAction::None);
 }

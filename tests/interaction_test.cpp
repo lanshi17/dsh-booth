@@ -1250,11 +1250,23 @@ TEST_CASE("model picker truncates long labels by cells") {
 
 TEST_CASE("command menu truncates long descriptions") {
   ftxui::Terminal::SetFallbackSize({40, 10});
-  auto view = command_menu_view("/queue", 0, nullptr);
+  AppState state;
+  auto view = command_menu_view(state, "/queue", 0, nullptr);
   ftxui::Screen screen(40, 10);
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("…") != std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
+TEST_CASE("command menu renders argument suggestions") {
+  AppState state;
+  auto view = command_menu_view(state, "/notify ", 0, nullptr);
+  ftxui::Screen screen(60, 10);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("on") != std::string::npos);
+  REQUIRE(text.find("off") != std::string::npos);
+  REQUIRE(text.find("alerts") != std::string::npos);
 }
 
 TEST_CASE("status text reports context percentage") {

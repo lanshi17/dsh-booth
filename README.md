@@ -132,7 +132,8 @@ route in the kernel; aliases persist in the conversation tags and rebuild on res
 lists saved sessions with the first prompt and relative age: Enter resumes, `r` refreshes, `c`
 closes the active session, and `Alt+K` pins or unpins the selection; pinned sessions stay first. Type `/` for the fuzzy command menu below the input: names, aliases and descriptions all
 match. ↑/↓ or the wheel moves, PgUp/PgDn/Home/End jump, Tab completes the selected command, Enter runs the selection
-and Esc dismisses the menu without clearing the draft. The wheel also moves the model and session
+and Esc dismisses the menu without clearing the draft. For `/notify`, `/mouse`, `/effort` and
+`/model`, typing a space keeps the menu open over argument values; Tab completes one and Enter submits it. The wheel also moves the model and session
 pickers.
 
 ## Environment

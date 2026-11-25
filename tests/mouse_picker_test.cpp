@@ -155,7 +155,7 @@ TEST_CASE("picker views record exact row zones") {
   AppState state;
   state.composer = "/";
   router.begin_frame();
-  render(ftxui::vbox({command_menu_view(state.composer, 0, &router)}));
+  render(ftxui::vbox({command_menu_view(state, state.composer, 0, &router)}));
   REQUIRE(zone_count(router, MouseSurface::Slash) == 10);
   REQUIRE(router.zones().front().index == 0);
   REQUIRE(router.zones().back().index == 9);

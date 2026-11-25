@@ -1,3 +1,4 @@
+#include "interaction/command_args.hpp"
 #include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
@@ -62,14 +63,20 @@ void SlashMenu::sync(const std::string& composer) {
   index_ = 0;
 }
 
-bool SlashMenu::visible(const std::string& composer) const {
-  return !hidden_ && !matching_commands(composer).empty();
+bool SlashMenu::visible(const std::string& composer, const AppState& state) const {
+  if (hidden_) return false;
+  if (!matching_commands(composer).empty()) return true;
+  const auto query = argument_query(composer);
+  return query && !matching_arguments(*query, state).empty();
 }
 
 SlashAction SlashMenu::key(ftxui::Event& event, AppState& state) {
   const auto matches = matching_commands(state.composer);
-  if (matches.empty()) return SlashAction::None;
-  if (index_ >= matches.size()) index_ = 0;
+  const auto query = argument_query(state.composer);
+  const auto arguments = query ? matching_arguments(*query, state) : std::vector<ArgumentHint>{};
+  const std::size_t count = matches.empty() ? arguments.size() : matches.size();
+  if (count == 0) return SlashAction::None;
+  if (index_ >= count) index_ = 0;
   constexpr std::size_t kPage = 10;
 
   if (event == ftxui::Event::Escape) {
@@ -78,12 +85,12 @@ SlashAction SlashMenu::key(ftxui::Event& event, AppState& state) {
     return SlashAction::Handled;
   }
   if (event == ftxui::Event::ArrowUp) {
-    index_ = (index_ + matches.size() - 1) % matches.size();
+    index_ = (index_ + count - 1) % count;
     moved_ = true;
     return SlashAction::Handled;
   }
   if (event == ftxui::Event::ArrowDown) {
-    index_ = (index_ + 1) % matches.size();
+    index_ = (index_ + 1) % count;
     moved_ = true;
     return SlashAction::Handled;
   }
@@ -93,7 +100,7 @@ SlashAction SlashMenu::key(ftxui::Event& event, AppState& state) {
     return SlashAction::Handled;
   }
   if (event == ftxui::Event::PageDown) {
-    index_ = std::min(index_ + kPage, matches.size() - 1);
+    index_ = std::min(index_ + kPage, count - 1);
     moved_ = true;
     return SlashAction::Handled;
   }
@@ -103,33 +110,39 @@ SlashAction SlashMenu::key(ftxui::Event& event, AppState& state) {
     return SlashAction::Handled;
   }
   if (event == ftxui::Event::End) {
-    index_ = matches.size() - 1;
+    index_ = count - 1;
     moved_ = true;
     return SlashAction::Handled;
   }
   if (event.is_mouse()) {
     const auto button = event.mouse().button;
     if (button == ftxui::Mouse::WheelUp) {
-      index_ = (index_ + matches.size() - 1) % matches.size();
+      index_ = (index_ + count - 1) % count;
       moved_ = true;
       return SlashAction::Handled;
     }
     if (button == ftxui::Mouse::WheelDown) {
-      index_ = (index_ + 1) % matches.size();
+      index_ = (index_ + 1) % count;
       moved_ = true;
       return SlashAction::Handled;
     }
   }
   if (event == ftxui::Event::Tab) {
-    state.composer = std::string(matches[index_]->name) + " ";
+    state.composer = matches.empty()
+                         ? query->command + " " + arguments[index_].value + " "
+                         : std::string(matches[index_]->name) + " ";
     return SlashAction::Handled;
   }
   if (event == ftxui::Event::Return) {
-    if (!moved_) {
-      const auto query = slash_query(state.composer).value_or("");
-      if (!command_name_matches(*matches[index_], query)) return SlashAction::None;
+    if (!matches.empty()) {
+      if (!moved_) {
+        const auto name_query = slash_query(state.composer).value_or("");
+        if (!command_name_matches(*matches[index_], name_query)) return SlashAction::None;
+      }
+      state.composer = matches[index_]->name;
+    } else {
+      state.composer = query->command + " " + arguments[index_].value;
     }
-    state.composer = matches[index_]->name;
     return SlashAction::Submit;
   }
   return SlashAction::None;
@@ -137,18 +150,52 @@ SlashAction SlashMenu::key(ftxui::Event& event, AppState& state) {
 
 SlashAction SlashMenu::click(std::size_t row, AppState& state) {
   const auto matches = matching_commands(state.composer);
-  if (row >= matches.size()) return SlashAction::None;
+  if (matches.empty()) {
+    const auto query = argument_query(state.composer);
+    if (!query || row >= matching_arguments(*query, state).size()) return SlashAction::None;
+  } else if (row >= matches.size()) {
+    return SlashAction::None;
+  }
   index_ = row;
   moved_ = true;
   ftxui::Event enter = ftxui::Event::Return;
   return key(enter, state);
 }
 
-ftxui::Element command_menu_view(const std::string& composer, std::size_t index,
-                                 MouseRouter* mouse) {
+ftxui::Element command_menu_view(const AppState& state, const std::string& composer,
+                                 std::size_t index, MouseRouter* mouse) {
   ftxui::Elements rows;
   const auto matches = matching_commands(composer);
-  if (matches.empty()) return ftxui::text("");
+  const auto arg_query = argument_query(composer);
+  const auto arguments = arg_query ? matching_arguments(*arg_query, state) : std::vector<ArgumentHint>{};
+  if (matches.empty() && arguments.empty()) return ftxui::text("");
+  if (matches.empty()) {
+    constexpr std::size_t kArgRows = 10;
+    std::size_t start = index >= kArgRows / 2 ? index - kArgRows / 2 : 0;
+    if (start + kArgRows > arguments.size()) start = arguments.size() > kArgRows ? arguments.size() - kArgRows : 0;
+    const std::size_t end = std::min(start + kArgRows, arguments.size());
+    const std::size_t selected = std::min(index, arguments.size() - 1);
+    if (start > 0) rows.push_back(ftxui::text("   ↑ " + std::to_string(start) + " more") | ftxui::dim);
+    std::size_t value_width = 0;
+    for (const auto& argument : arguments) value_width = std::max(value_width, argument.value.size());
+    for (std::size_t row = start; row < end; ++row) {
+      const bool active = row == selected;
+      const bool hovered = row_hovered(mouse, MouseSurface::Slash, row, active);
+      ftxui::Element line = ftxui::hbox({
+          ftxui::text(active ? " › " : "   ") | ftxui::color(kAccent),
+          ftxui::text(arguments[row].value) | (active ? ftxui::bold : ftxui::nothing),
+          ftxui::text(std::string(value_width - arguments[row].value.size() + 2, ' ')),
+          ftxui::text(ellipsize(arguments[row].description, 48)) | ftxui::dim,
+          ftxui::filler(),
+      });
+      paint_row(line, active, hovered);
+      rows.push_back(hit_row(std::move(line), MouseSurface::Slash, row, mouse));
+    }
+    if (end < arguments.size()) {
+      rows.push_back(ftxui::text("   ↓ " + std::to_string(arguments.size() - end) + " more") | ftxui::dim);
+    }
+    return ftxui::vbox(std::move(rows));
+  }
   const std::string query = slash_query(composer).value_or("");
   std::size_t name_width = 0;
   for (const auto* match : matches) name_width = std::max(name_width, std::string(match->name).size());

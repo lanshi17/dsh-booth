@@ -78,6 +78,7 @@ booth_warnings(booth_supervisor)
 
 add_library(booth_interaction STATIC
   src/interaction/state.cpp
+  src/interaction/command_args.cpp
   src/interaction/commands.cpp
   src/interaction/commands_ui.cpp
   src/interaction/context_gauge.cpp

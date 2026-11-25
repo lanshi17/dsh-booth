@@ -176,7 +176,7 @@ class Root : public ComponentBase {
       return true;
     }
     slash_.sync(state_.composer);
-    if (slash_.visible(state_.composer)) {
+    if (slash_.visible(state_.composer, state_)) {
       const auto action = slash_.key(event, state_);
       if (action != booth::SlashAction::None) {
         editor_.SetContent(state_.composer);
@@ -197,7 +197,7 @@ class Root : public ComponentBase {
     if (links_.visible()) { links_.key(event, state_); return true; }
     mention_menu_.update(editor_.Lines(), editor_.CursorLine(), editor_.CursorColumn(), state_.models, efforts());
     if (!editor_.VimNormal() && mention_menu_.visible()) { if (auto result = mention_menu_.key(event, state_.composer)) { state_.composer = result->content; editor_.SetContent(state_.composer); editor_.SetCursor(result->cursor); return true; } }
-    if (event == ftxui::Event::Tab && !slash_.visible(state_.composer) && !files_.visible() && !mention_menu_.visible() && !editor_.VimNormal()) {
+    if (event == ftxui::Event::Tab && !slash_.visible(state_.composer, state_) && !files_.visible() && !mention_menu_.visible() && !editor_.VimNormal()) {
       std::vector<std::string> transcript; for (const auto& entry : state_.entries) if (entry.kind == EntryKind::User || entry.kind == EntryKind::Assistant) transcript.push_back(entry.text);
       if (const auto suffix = booth::word_completion_suffix(state_.composer, editor_.CursorOffset(), booth::build_word_vocabulary(history_, transcript))) return editor_.HandleEvent(ftxui::Event::Character(*suffix));
     }
@@ -308,8 +308,8 @@ class Root : public ComponentBase {
                                         queued_.size(), editor_.ModeLabel(), images_.size(), &mouse_, editor_.VimSelection(), editor_.VimMode() != booth::vim::Mode::Insert));
     slash_.sync(state_.composer);
     if (!editor_.VimNormal() && mention_menu_.visible()) view.push_back(mention_menu_.view(&mouse_));
-    if (slash_.visible(state_.composer)) {
-      view.push_back(booth::command_menu_view(state_.composer, slash_.index(), &mouse_));
+    if (slash_.visible(state_.composer, state_)) {
+      view.push_back(booth::command_menu_view(state_, state_.composer, slash_.index(), &mouse_));
     }
     files_.sync(state_.composer, cwd_);
     if (files_.visible()) view.push_back(booth::file_menu_view(files_.query(), files_.matches(), files_.index(), &mouse_));
