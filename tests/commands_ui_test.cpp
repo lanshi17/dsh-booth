@@ -289,6 +289,12 @@ TEST_CASE("todo, tools, usage and git report local state") {
   REQUIRE(state.notice.find("entries 3") != std::string::npos);
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/git", false, false));
   REQUIRE(state.notice == "not a git repository");
+  state.session = "s-9";
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/pin", false, false));
+  REQUIRE(state.notice == "session pinned");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/unpin", false, false));
+  REQUIRE(state.notice == "session unpinned");
+  std::filesystem::remove(cwd / "session-pins");
 }
 
 TEST_CASE("dequeue moves the newest prompt back into the composer") {

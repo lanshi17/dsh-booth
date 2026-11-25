@@ -44,6 +44,8 @@ const CommandHint kCommandHints[] = {
     {"/tools", "show tool activity counts", "tool calls counters", ""},
     {"/usage", "context and transcript usage", "tokens context stats", ""},
     {"/git", "working tree branch and changes", "status branch dirty", ""},
+    {"/pin", "pin the active session", "sticky top resume", ""},
+    {"/unpin", "unpin the active session", "remove pin resume", ""},
     {"/quit", "leave booth", "exit quit", "exit q"},
 };
 

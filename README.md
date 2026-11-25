@@ -76,7 +76,7 @@ input, and shows only the choices dsh advertised
 second press after half a second; `Ctrl+O` expands the full diff.
 Commands: `/status`, `/model`, `/providers` (`/setup`), `/skills`, `/settings`, `/sessions`, `/new`, `/close`,
 `/copy`, `/clear`, `/retry`, `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`,
-`/context`, `/usage`, `/stats`, `/todo`, `/tools`, `/git`, `/queue`, `/session`, `/acp`, `/cancel`,
+`/context`, `/usage`, `/stats`, `/todo`, `/tools`, `/git`, `/pin`, `/unpin`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and
 `/notify off` persist terminal notifications in `$BOOTH_STATE_DIR/notify`. Kernel and protocol
 failures pin a red `error · /retry` banner above the composer until the next prompt. Notifications default to
@@ -85,7 +85,7 @@ is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
 `/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/mouse`, `/find`, `/attach`, `/detach`,
-`/skills`, `/providers`, `/settings`, `/todo`, `/tools`, `/usage`, `/git`, `/help` and `/quit` stay available
+`/skills`, `/providers`, `/settings`, `/todo`, `/tools`, `/usage`, `/git`, `/pin`, `/unpin`, `/help` and `/quit` stay available
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
@@ -140,7 +140,8 @@ model autocomplete; known mentions become stable `mN` tags carrying their route.
 `subagent` tool lists those aliases in the system prompt and accepts `agent: "m1"`, resolving the
 route in the kernel; aliases persist in the conversation tags and rebuild on resume. `/sessions`
 lists saved sessions with the first prompt and relative age: Enter resumes, `r` refreshes, `c`
-closes the active session, and `Alt+K` pins or unpins the selection; pinned sessions stay first. Markdown files in `.booth/commands/` (project) and `$BOOTH_STATE_DIR/commands/` (user) become
+closes the active session, and `Alt+K` pins or unpins the selection; pinned sessions stay first.
+`/pin [id]` and `/unpin [id]` toggle the active session (or an explicit id) from the composer. Markdown files in `.booth/commands/` (project) and `$BOOTH_STATE_DIR/commands/` (user) become
 slash commands. Frontmatter `description` labels the menu row; `$ARGUMENTS`/`$@` expand to the
 whole argument string and `$1`–`$9` to words, and unused arguments are appended. Project commands
 win on name collisions. Type `/` for the fuzzy command menu below the input: names, aliases and descriptions all

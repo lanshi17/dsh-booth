@@ -1,11 +1,11 @@
 #include "interaction/command_args.hpp"
+#include "interaction/session_pins.hpp"
 #include "interaction/text_util.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
 
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 #include <set>
 #include <cctype>
 #include <string>
@@ -261,24 +261,12 @@ ftxui::Element command_menu_view(const AppState& state, const std::string& compo
 
 void SessionPicker::open(const std::filesystem::path& pins_file) {
   pins_file_ = pins_file;
-  pins_.clear();
-  std::ifstream input(pins_file_);
-  std::string line;
-  while (std::getline(input, line)) {
-    if (!line.empty()) pins_.insert(line);
-  }
+  pins_ = load_session_pins(pins_file_);
   visible_ = true;
   loading_ = true;
   index_ = 0;
   query_.clear();
   matches_.clear();
-}
-
-void save_pins(const std::filesystem::path& path, const std::set<std::string>& pins) {
-  std::error_code error;
-  std::filesystem::create_directories(path.parent_path(), error);
-  std::ofstream output(path, std::ios::trunc);
-  for (const auto& id : pins) output << id << '\n';
 }
 
 void SessionPicker::close() { visible_ = false; }
@@ -342,7 +330,7 @@ SessionPicker::Action SessionPicker::key(ftxui::Event& event,
     session.pinned = !session.pinned;
     if (session.pinned) pins_.insert(id);
     else pins_.erase(id);
-    save_pins(pins_file_, pins_);
+    set_session_pin(pins_file_, id, session.pinned);
     filter(sessions);
     for (std::size_t row = 0; row < matches_.size(); ++row) {
       if (sessions[matches_[row]].id.value == id) { index_ = row; break; }

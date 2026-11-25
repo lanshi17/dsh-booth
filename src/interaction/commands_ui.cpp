@@ -12,6 +12,7 @@
 #include "interaction/commands.hpp"
 #include "interaction/context_gauge.hpp"
 #include "interaction/notify.hpp"
+#include "interaction/session_pins.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
 #include "subagent/acp/messages.hpp"
@@ -193,7 +194,8 @@ bool local_command(const std::string& line) {
          token == "/effort" || token == "/queue" || token == "/session" || token == "/acp" ||
          token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find" ||
          token == "/links" || token == "/mouse" || token == "/skills" || token == "/providers" || token == "/settings" ||
-         token == "/todo" || token == "/tools" || token == "/usage" || token == "/git";
+         token == "/todo" || token == "/tools" || token == "/usage" || token == "/git" ||
+         token == "/pin" || token == "/unpin";
 }
 
 std::string session_text(const AppState& state, std::size_t queued) {
@@ -334,6 +336,22 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
       out += " · " + ranked[index].second + " " + std::to_string(ranked[index].first);
     }
     state.notice = std::move(out);
+    return true;
+  }
+  if (line == "/pin" || line == "/unpin" || line.rfind("/pin ", 0) == 0 || line.rfind("/unpin ", 0) == 0) {
+    std::string id = line.rfind("/pin", 0) == 0 ? argument_after(line, "/pin") : argument_after(line, "/unpin");
+    if (id.empty()) id = state.session;
+    if (id.empty()) {
+      state.notice = "no active session";
+      return true;
+    }
+    const auto path = state_dir / "session-pins";
+    const auto pins = load_session_pins(path);
+    const bool unpin = line.rfind("/unpin", 0) == 0;
+    const bool pinned = !unpin && pins.count(id) == 0;
+    state.notice = set_session_pin(path, id, pinned)
+                       ? (pinned ? "session pinned" : "session unpinned")
+                       : "could not write session pins";
     return true;
   }
   if (line == "/git") {

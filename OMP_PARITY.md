@@ -18,7 +18,7 @@ tools, providers, LSP/DAP, memory, and model routing stay with dsh.
 | Providers | `/providers` (`/setup`) groups the live model catalog, marks the current provider and drills into a provider-filtered model picker. |
 | Settings | `/settings` toggles thinking, tool cards, tool output, notifications, mouse capture and Vim mode. |
 | Introspection | `/todo`, `/tools`, `/usage` and `/git` report local task, tool, context and working-tree state. |
-| Sessions | List, resume, close, refresh, filter, relative age/preview, persistent pin/unpin. |
+| Sessions | List, resume, close, refresh, filter, relative age/preview, persistent picker and `/pin`/`/unpin`. |
 | Display | Theme overrides, live reload, notifications, mouse capture modes, effective-keybinding help. |
 | Keys | One or more chords per action; `[]` disables an action; help renders the live bindings. |
 | Clipboard | OSC 52 copy picker over prompts, answers, code, quotes, tools and shell commands, including tmux passthrough. |
@@ -53,4 +53,4 @@ dsh. booth renders their tool events and model/config options; it does not reimp
 ./tools/gate.sh
 ```
 
-The gate builds, runs 450 unit/integration/PTY tests, and enforces the 600-line source limit.
+The gate builds, runs 451 unit/integration/PTY tests, and enforces the 600-line source limit.

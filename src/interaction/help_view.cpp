@@ -60,6 +60,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/settings toggle thinking, tools, notifications, mouse and Vim"},
       {"/todo [copy|export] · /tools counts · /usage context and stats"},
       {"/git branch and working-tree counts"},
+      {"/pin /unpin the active session in the resume list"},
       {"/session /acp /cancel · /find · /attach <path> · /detach"},
       {"/help this card · /quit leave"},
       {".booth/commands/*.md become /name prompt templates"},
