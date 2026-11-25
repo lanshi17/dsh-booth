@@ -74,8 +74,9 @@ stays above the composer with the transcript visible, reuses the matching tool c
 input, and shows only the choices dsh advertised
 (`y` once, `a` always, `n` deny, `d` deny always when offered). `Enter` arms an allow and requires a
 second press after half a second; `Ctrl+O` expands the full diff.
-Commands: `/status`, `/model`, `/providers`, `/skills`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
-`/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
+Commands: `/status`, `/model`, `/providers` (`/setup`), `/skills`, `/sessions`, `/new`, `/close`,
+`/copy`, `/clear`, `/retry`, `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`,
+`/context`, `/usage`, `/stats`, `/todo`, `/tools`, `/git`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and
 `/notify off` persist terminal notifications in `$BOOTH_STATE_DIR/notify`. Kernel and protocol
 failures pin a red `error · /retry` banner above the composer until the next prompt. Notifications default to
@@ -84,7 +85,7 @@ is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
 `/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/mouse`, `/find`, `/attach`, `/detach`,
-`/skills`, `/providers`, `/help` and `/quit` stay available
+`/skills`, `/providers`, `/todo`, `/tools`, `/usage`, `/git`, `/help` and `/quit` stay available
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
@@ -99,8 +100,9 @@ reloads `$BOOTH_STATE_DIR/theme.conf` into the running TUI; `/theme key=#rrggbb`
 persists, and applies one color override immediately. Supported keys are `accent`, `text`, `dim`,
 `line`, `panel`, `border`, `green`, `yellow`, `red`, `git`, `gray`, `token`, and `hover`. Invalid
 keys or colors leave the file unchanged and show a notice.
-`/context` reports dsh's context window usage; `/stats` counts local transcript entries, tools and
-queued prompts. `/new` closes the current session and leaves a clean transcript, while `/clear`
+`/context` reports dsh's context window usage; `/usage` adds transcript counters, `/stats` counts
+local transcript entries, tools and queued prompts, `/todo` reports the todo HUD, `/tools` ranks
+tool calls by name, and `/git` reports branch/staged/modified/untracked counts. `/new` closes the current session and leaves a clean transcript, while `/clear`
 only clears the local transcript (dsh has no ACP call that clears a live session's context).
 `/queue <text>` enqueues a prompt for when the active turn ends; `Alt+Up` brings the newest
 queued prompt back into the editor. `/session` prints the live ACP session (id, title, model,

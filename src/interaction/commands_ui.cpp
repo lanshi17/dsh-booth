@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <map>
 #include <string_view>
 #include <utility>
 
@@ -178,7 +179,8 @@ bool local_command(const std::string& line) {
          token == "/notify" || token == "/export" || token == "/quit" || token == "/context" || token == "/stats" ||
          token == "/effort" || token == "/queue" || token == "/session" || token == "/acp" ||
          token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find" ||
-         token == "/links" || token == "/mouse" || token == "/skills" || token == "/providers";
+         token == "/links" || token == "/mouse" || token == "/skills" || token == "/providers" ||
+         token == "/todo" || token == "/tools" || token == "/usage" || token == "/git";
 }
 
 std::string session_text(const AppState& state, std::size_t queued) {
@@ -258,6 +260,55 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
   }
   if (line == "/stats") {
     state.notice = stats_text(state, queued);
+    return true;
+  }
+  if (line == "/usage") {
+    state.notice = context_text(state) + " · " + stats_text(state, queued);
+    return true;
+  }
+  if (line == "/todo") {
+    std::size_t done = 0;
+    std::string next;
+    for (const auto& item : state.todos) {
+      if (item.status == "completed") ++done;
+      else if (next.empty()) next = item.content;
+    }
+    state.notice = state.todos.empty()
+                       ? "no todo list"
+                       : "todo " + std::to_string(done) + "/" + std::to_string(state.todos.size()) +
+                             (next.empty() ? "" : " · next " + next);
+    return true;
+  }
+  if (line == "/tools") {
+    std::map<std::string, std::size_t> counts;
+    for (const auto& entry : state.entries) {
+      if (entry.kind == EntryKind::Tool) ++counts[entry.tool.empty() ? "tool" : entry.tool];
+    }
+    if (counts.empty()) {
+      state.notice = "no tool calls yet";
+      return true;
+    }
+    std::vector<std::pair<std::size_t, std::string>> ranked;
+    for (const auto& [name, count] : counts) ranked.push_back({count, name});
+    std::sort(ranked.begin(), ranked.end(), [](const auto& left, const auto& right) {
+      return left.first != right.first ? left.first > right.first : left.second < right.second;
+    });
+    std::string out = "tools " + std::to_string(counts.size());
+    for (std::size_t index = 0; index < ranked.size() && index < 5; ++index) {
+      out += " · " + ranked[index].second + " " + std::to_string(ranked[index].first);
+    }
+    state.notice = std::move(out);
+    return true;
+  }
+  if (line == "/git") {
+    const auto git = read_git(cwd);
+    if (!git.valid) {
+      state.notice = "not a git repository";
+    } else {
+      state.notice = "git " + git.branch + " · modified " + std::to_string(git.modified) +
+                     " · staged " + std::to_string(git.staged) + " · untracked " +
+                     std::to_string(git.untracked);
+    }
     return true;
   }
   if (line == "/session") {

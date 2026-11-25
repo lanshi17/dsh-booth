@@ -28,7 +28,7 @@ const CommandHint kCommandHints[] = {
     {"/export", "write the transcript as markdown", "save file markdown", ""},
     {"/sessions", "resume a saved session", "list history resume", "resume"},
     {"/skills", "list and invoke dsh skills", "skill invoke catalog", "skill"},
-    {"/providers", "choose a provider and model", "provider models auth", "provider"},
+    {"/providers", "choose a provider and model", "provider models auth", "provider setup"},
     {"/new", "start a fresh session", "fresh reset close", ""},
     {"/effort", "set the reasoning effort", "reasoning thinking level", "reasoning"},
     {"/queue", "queue a prompt while a run is active", "later after busy", ""},
@@ -39,6 +39,10 @@ const CommandHint kCommandHints[] = {
     {"/attach", "attach a file as an ACP resource link", "file resource prompt", ""},
     {"/detach", "clear attached resource links", "remove file resource", ""},
     {"/close", "close the active session", "end session", ""},
+    {"/todo", "show the agent todo list", "tasks checklist progress", ""},
+    {"/tools", "show tool activity counts", "tool calls counters", ""},
+    {"/usage", "context and transcript usage", "tokens context stats", ""},
+    {"/git", "working tree branch and changes", "status branch dirty", ""},
     {"/quit", "leave booth", "exit quit", "exit q"},
 };
 

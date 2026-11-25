@@ -25,6 +25,7 @@ TEST_CASE("command aliases normalize to canonical names") {
   REQUIRE(normalize_command("/resume") == "/sessions");
   REQUIRE(normalize_command("/reasoning high") == "/effort high");
   REQUIRE(normalize_command("/exit") == "/quit");
+  REQUIRE(normalize_command("/setup") == "/providers");
   REQUIRE(normalize_command("/q") == "/quit");
   REQUIRE(normalize_command("/unknown") == "/unknown");
 }
@@ -255,6 +256,32 @@ TEST_CASE("context and stats describe the state") {
   state.entries.push_back(tool);
   REQUIRE(stats_text(state, 2) ==
           "entries 3 · you 1 · assistant 1 · tools 1 · thoughts 0 · queued 2");
+}
+
+TEST_CASE("todo, tools, usage and git report local state") {
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  const auto cwd = std::filesystem::temp_directory_path();
+  state.todos = {{"first", "completed"}, {"second", "in_progress"}};
+  TranscriptEntry bash;
+  bash.kind = EntryKind::Tool;
+  bash.tool = "bash";
+  state.entries.push_back(bash);
+  TranscriptEntry read;
+  read.kind = EntryKind::Tool;
+  read.tool = "read";
+  state.entries.push_back(read);
+  state.entries.push_back(bash);
+
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/todo", false, false));
+  REQUIRE(state.notice == "todo 1/2 · next second");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/tools", false, false));
+  REQUIRE(state.notice == "tools 2 · bash 2 · read 1");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/usage", false, false));
+  REQUIRE(state.notice.find("entries 3") != std::string::npos);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/git", false, false));
+  REQUIRE(state.notice == "not a git repository");
 }
 
 TEST_CASE("dequeue moves the newest prompt back into the composer") {

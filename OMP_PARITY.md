@@ -15,7 +15,8 @@ tools, providers, LSP/DAP, memory, and model routing stay with dsh.
 | Transcript | Markdown, tables, math, syntax fences, tool cards, diffs, todo HUD, errors, queue HUD, search, scrolling, mouse clicks/hover. |
 | Commands | Fuzzy slash menu, aliases, argument completion, Markdown prompt templates from `.booth/commands` and the state directory. |
 | Skills | `/skills` scans dsh project/user roots, lists user-invocable skills and inserts `/name`. |
-| Providers | `/providers` groups the live model catalog, marks the current provider and drills into a provider-filtered model picker. |
+| Providers | `/providers` (`/setup`) groups the live model catalog, marks the current provider and drills into a provider-filtered model picker. |
+| Introspection | `/todo`, `/tools`, `/usage` and `/git` report local task, tool, context and working-tree state. |
 | Sessions | List, resume, close, refresh, filter, relative age/preview, persistent pin/unpin. |
 | Display | Theme overrides, live reload, notifications, mouse capture modes, effective-keybinding help. |
 | Keys | One or more chords per action; `[]` disables an action; help renders the live bindings. |
