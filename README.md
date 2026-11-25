@@ -58,8 +58,8 @@ numbers, stopping at 40 lines until `Ctrl+O`; edit/write cards title the path wi
 filterable picker over prompts, answers, fenced code, blockquotes, tool
 output and shell commands, copying with OSC 52 (tmux passthrough included); `/export [path]` writes
 the full transcript as Markdown (default:
-`$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk the prompt history,
-`Ctrl+C` cancels the run, `Ctrl+D` quits and saves the unsent draft for the next start, `Alt+R`
+`$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk cleared drafts and prompt history,
+`Ctrl+C` cancels the run or clears an idle draft (Up recalls it), `Ctrl+D` quits and saves the unsent draft for the next start, `Alt+R`
 retries the last prompt while idle, `Ctrl+R` searches prompt history, `Ctrl+G`
 opens `$VISUAL`/`$EDITOR` on the prompt (`booth.editor` in `keybindings.yml` moves that key),
 `PageUp`/`PageDown` or the wheel browse the transcript, `Shift+Tab` cycles dsh's reasoning

@@ -52,6 +52,7 @@
 #include "interaction/error_view.hpp"
 #include "interaction/copy_picker.hpp"
 #include "interaction/draft.hpp"
+#include "interaction/recall.hpp"
 #include "interaction/state.hpp"
 #include "interaction/ticker.hpp"
 #include "interaction/worker.hpp"
@@ -104,7 +105,13 @@ class Root : public ComponentBase {
   bool OnEvent(ftxui::Event event) override {
     if (event == ftxui::Event::Custom) { drain(); return true; }
     if (paste_.feed(event, editor_)) return true;
-    if (matches_chord(keys_.cancel, event)) { cancel(); return true; }
+    if (matches_chord(keys_.cancel, event)) {
+      if (!state_.busy && !state_.permission && !state_.composer.empty()) {
+        recall_.clear(state_.composer); state_.composer.clear(); editor_.Reset(); booth::save_draft(draft_file_, {});
+        state_.notice = "draft cleared · Up recalls it";
+      } else cancel();
+      return true;
+    }
     if (event.is_mouse() && !mouse_enabled_) return true;
     if (state_.help && event.is_mouse() && help_scroll_.wheel(event)) return true;
     if (event.is_mouse()) {
@@ -224,20 +231,15 @@ class Root : public ComponentBase {
       editor_.SetContent(state_.composer);
       return true;
     }
-    if (event == ftxui::Event::ArrowUp && state_.composer.empty() && !history_.empty() && !editor_.VimNormal()) {
-      if (history_pos_ < history_.size()) ++history_pos_;
-      state_.composer = history_[history_.size() - history_pos_]; editor_.SetContent(state_.composer);
+    if (event == ftxui::Event::ArrowUp && state_.composer.empty() && !editor_.VimNormal()) {
+      if (const auto text = recall_.up(history_)) { state_.composer = *text; editor_.SetContent(*text); }
       return true;
     }
-    if (event == ftxui::Event::ArrowDown && history_pos_ > 0) {
-      --history_pos_;
-      state_.composer = history_pos_ == 0 ? std::string{} : history_[history_.size() - history_pos_]; editor_.SetContent(state_.composer);
+    if (event == ftxui::Event::ArrowDown) {
+      if (const auto text = recall_.down(history_)) { state_.composer = *text; editor_.SetContent(*text); }
       return true;
     }
-    if (event == ftxui::Event::Return) {
-      submit();
-      return true;
-    }
+    if (event == ftxui::Event::Return) { submit(); return true; }
     if (editor_.HandleEvent(event)) return true;
     return false;
   }
@@ -256,8 +258,7 @@ class Root : public ComponentBase {
     }
     if (state_.busy && window.scroll == 0) {
       const auto elapsed = std::chrono::steady_clock::now() - busy_since_;
-      const auto seconds =
-          std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+      const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
       const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
       const std::string activity = booth::active_activity(state_);
       lines.push_back(ftxui::text(std::string("  ") + kSpinner[(ms / 120) % 8] + " " +
@@ -279,8 +280,7 @@ class Root : public ComponentBase {
     if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.matches(),
                                                 copy_picker_.index(), copy_picker_.query(), &mouse_));
     if (links_.visible()) view.push_back(booth::link_picker_view(links_.items(), links_.index()));
-    if (history_search_.visible()) view.push_back(booth::history_search_view(
-        history_search_.query(), history_search_.matches(), history_search_.index(), &mouse_));
+    if (history_search_.visible()) view.push_back(booth::history_search_view(history_search_.query(), history_search_.matches(), history_search_.index(), &mouse_));
     if (sessions_.visible()) {
       view.push_back(
           booth::session_picker_view(state_.history, sessions_.matches(), sessions_.index(),
@@ -426,7 +426,7 @@ class Root : public ComponentBase {
     TranscriptEntry echo; echo.kind = EntryKind::User; echo.text = display;
     publish(Event{std::move(echo)});
     scroll_.follow();
-    history_.push_back(display); history_pos_ = 0;
+    history_.push_back(display); recall_.reset();
     booth::append_history(history_file_, display);
     std::vector<std::pair<std::string, std::string>> resources;
     for (const auto& attachment : state_.attachments) resources.emplace_back(attachment.name, attachment.uri);
@@ -554,7 +554,7 @@ class Root : public ComponentBase {
   bool mouse_enabled_{true};
   bool local_python_{false};
   std::vector<std::string> history_;
-  std::size_t history_pos_{0};
+  booth::PromptRecall recall_;
   KeyBindings keys_;
   booth::TranscriptScroll scroll_;
   booth::SlashMenu slash_;

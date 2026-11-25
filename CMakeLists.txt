@@ -141,6 +141,7 @@ add_library(booth_interaction STATIC
   src/interaction/paste_buffer.cpp
   src/interaction/permission_view.cpp
   src/interaction/view.cpp
+  src/interaction/recall.cpp
   src/interaction/tui.cpp
   src/interaction/run.cpp
 )
