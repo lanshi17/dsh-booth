@@ -103,6 +103,7 @@ class Root : public ComponentBase {
   }
   bool OnEvent(ftxui::Event event) override {
     if (event == ftxui::Event::Custom) { drain(); return true; }
+    if (paste_.feed(event, editor_)) return true;
     if (matches_chord(keys_.cancel, event)) { cancel(); return true; }
     if (event.is_mouse() && !mouse_enabled_) return true;
     if (state_.help && event.is_mouse() && help_scroll_.wheel(event)) return true;
@@ -564,7 +565,7 @@ class Root : public ComponentBase {
   booth::LinkPicker links_;
   booth::FileMenu files_;
   booth::TranscriptSearch transcript_search_;
-  bool tools_expanded_{false}, tools_hidden_{false};
+  bool tools_expanded_{false}, tools_hidden_{false}; booth::PasteBuffer paste_;
   bool show_thoughts_{false};
   bool new_after_close_{false};
   std::deque<std::string> queued_;
@@ -592,7 +593,7 @@ int tui_loop(ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& 
                                 std::filesystem::current_path().string(), config.history_file,
                                 config.dsh_home / "sessions", config.state_dir / "draft",
                                 config.socket_file, *bindings);
-  screen.Loop(root);
+  std::cout << "\x1b[?2004h" << std::flush; screen.Loop(root); std::cout << "\x1b[?2004l" << std::flush;
   root->shutdown();
   return 0;
 }

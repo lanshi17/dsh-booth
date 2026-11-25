@@ -76,6 +76,13 @@ void Editor::SetContent(const std::string& content) {
   }
 }
 
+void Editor::Paste(const std::string& text) {
+  if (text.empty()) return;
+  BeforeEdit(false);
+  Insert(text);
+  typing_ = false;
+}
+
 void Editor::SetCursor(std::size_t offset) {
   offset = std::min(offset, content_.size());
   std::size_t snapped = 0;

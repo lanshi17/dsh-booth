@@ -25,6 +25,8 @@ class Editor {
 
   void Reset();
   void SetContent(const std::string& content);
+  /// Inserts a whole paste as one undo group; embedded newlines stay in the prompt.
+  void Paste(const std::string& text);
   /// Places the caret at `offset`, snapped down to a grapheme boundary and clamped to the buffer.
   /// Splits any open Insert/Replace session so the next edit starts a fresh undo group.
   void SetCursor(std::size_t offset);

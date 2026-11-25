@@ -135,6 +135,7 @@ add_library(booth_interaction STATIC
   src/interaction/markdown_table.cpp
   src/interaction/math.cpp
   src/interaction/math_block.cpp
+  src/interaction/paste_buffer.cpp
   src/interaction/permission_view.cpp
   src/interaction/view.cpp
   src/interaction/tui.cpp

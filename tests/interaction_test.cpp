@@ -12,6 +12,8 @@
 #include "interaction/context_gauge.hpp"
 #include "interaction/commands_ui.hpp"
 #include "interaction/error_view.hpp"
+#include "interaction/editor.hpp"
+#include "interaction/paste_buffer.hpp"
 #include "interaction/thought_view.hpp"
 #include "subagent/kernel.hpp"
 #include "interaction/tool_diff.hpp"
@@ -687,6 +689,21 @@ TEST_CASE("tool titles truncate on terminal cells") {
   REQUIRE(text.find("…") != std::string::npos);
   REQUIRE(text.find("中文路径很长很长.cpp") == std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
+TEST_CASE("bracketed paste inserts newlines without submitting") {
+  std::string content;
+  Editor editor(content);
+  PasteBuffer paste;
+  REQUIRE_FALSE(paste.feed(ftxui::Event::Character("x"), editor));
+  REQUIRE(content.empty());
+  REQUIRE(paste.feed(ftxui::Event::Special("\x1b[200~"), editor));
+  REQUIRE(paste.feed(ftxui::Event::Character("line1"), editor));
+  REQUIRE(paste.feed(ftxui::Event::Return, editor));
+  REQUIRE(paste.feed(ftxui::Event::Character("line2"), editor));
+  REQUIRE(paste.feed(ftxui::Event::Special("\x1b[201~"), editor));
+  REQUIRE(content == "line1\nline2");
+  REQUIRE(editor.CursorOffset() == content.size());
 }
 
 TEST_CASE("the todo HUD tracks the latest list and hides when done") {

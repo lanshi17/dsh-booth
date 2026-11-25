@@ -8,6 +8,7 @@
 #include <ftxui/component/screen_interactive.hpp>
 
 #include "contract/event.hpp"
+#include "interaction/paste_buffer.hpp"
 #include "supervisor/config.hpp"
 
 namespace booth {
