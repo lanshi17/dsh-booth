@@ -145,8 +145,10 @@ std::string clipboard_sequence(const std::string& text) {
   const char* force = std::getenv("BOOTH_CLIPBOARD_TMUX");
   const char* term = std::getenv("TERM");
   const std::string term_name = term == nullptr ? "" : term;
+  const bool ssh = std::getenv("SSH_CONNECTION") != nullptr || std::getenv("SSH_TTY") != nullptr ||
+                   std::getenv("SSH_CLIENT") != nullptr;
   const bool nested = tmux != nullptr || (force != nullptr && *force != '\0' && *force != '0') ||
-                      term_name.starts_with("screen") || term_name.starts_with("tmux");
+                      (ssh && (term_name.starts_with("screen") || term_name.starts_with("tmux")));
   if (!nested) return osc;
   return "\x1bPtmux;\x1b" + osc + "\x1b\\";
 }
