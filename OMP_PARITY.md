@@ -14,6 +14,8 @@ tools, providers, LSP/DAP, memory, and model routing stay with dsh.
 | Prompt | Submitted history, cleared-draft recall, Tab word completion, `@file` links, `^model` mentions, emoji, pending attachments. |
 | Transcript | Markdown, tables, math, syntax fences, tool cards, diffs, todo HUD, errors, queue HUD, search, scrolling, mouse clicks/hover. |
 | Commands | Fuzzy slash menu, aliases, argument completion, Markdown prompt templates from `.booth/commands` and the state directory. |
+| Skills | `/skills` scans dsh project/user roots, lists user-invocable skills and inserts `/name`. |
+| Providers | `/providers` groups the live model catalog, marks the current provider and drills into a provider-filtered model picker. |
 | Sessions | List, resume, close, refresh, filter, relative age/preview, persistent pin/unpin. |
 | Display | Theme overrides, live reload, notifications, mouse capture modes, effective-keybinding help. |
 | Keys | One or more chords per action; `[]` disables an action; help renders the live bindings. |
@@ -34,6 +36,7 @@ surfaces have no corresponding call, so booth does not fake them:
 | `/collab`, `/share`, `/join` | No relay or guest transport. |
 | MCP/plugin/marketplace management | No ACP management calls; profile configuration owns these. |
 | `/move`, `/add-dir` | One workspace per session; additional directories are unsupported. |
+| Provider OAuth sign-in, credential editing | No provider auth calls; dsh owns credentials. |
 | Speech-to-text, live voice | No audio transport. |
 | Cost/usage accounting | The wire carries context usage, not token cost. |
 

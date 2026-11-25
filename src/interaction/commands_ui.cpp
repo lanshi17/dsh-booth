@@ -178,7 +178,7 @@ bool local_command(const std::string& line) {
          token == "/notify" || token == "/export" || token == "/quit" || token == "/context" || token == "/stats" ||
          token == "/effort" || token == "/queue" || token == "/session" || token == "/acp" ||
          token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find" ||
-         token == "/links" || token == "/mouse";
+         token == "/links" || token == "/mouse" || token == "/skills" || token == "/providers";
 }
 
 std::string session_text(const AppState& state, std::size_t queued) {

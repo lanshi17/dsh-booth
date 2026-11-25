@@ -56,6 +56,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/copy last answer · /clear clear transcript"},
       {"/retry last prompt · /export markdown transcript"},
       {"/sessions resume · /new fresh · /close stop"},
+      {"/skills list dsh skills · /providers pick a provider"},
       {"/session /acp /cancel · /find · /attach <path> · /detach"},
       {"/help this card · /quit leave"},
       {".booth/commands/*.md become /name prompt templates"},

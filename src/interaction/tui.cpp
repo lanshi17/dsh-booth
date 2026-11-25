@@ -98,8 +98,8 @@ class Root : public ComponentBase {
   void shutdown() { booth::save_draft(draft_file_, state_.composer); cancel(); animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
   Element OnRender() override {
     mouse_.begin_frame();
-    if (state_.help) return booth::help_view(help_scroll_.offset(), keys_, &mouse_) |
-        ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
+    if (library_.visible()) return library_.view();
+    if (state_.help) return booth::help_view(help_scroll_.offset(), keys_, &mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     return main_view();
   }
   bool OnEvent(ftxui::Event event) override {
@@ -135,6 +135,7 @@ class Root : public ComponentBase {
       return true;
     }
     if (state_.permission) { booth::handle_permission_key(event, state_, supervisor_, keys_); return true; }
+    if (library_.visible()) return booth::handle_library_event(event, state_, library_, model_picker_, editor_);
     if (matches_chord(keys_.model_next, event)) { if (auto choice = booth::cycle_model(state_, 1)) apply_model(*choice); return true; }
     if (matches_chord(keys_.retry, event)) { if (!state_.busy && !history_.empty()) send_prompt(history_.back()); return true; }
     if (matches_chord(keys_.reasoning, event)) {
@@ -286,11 +287,7 @@ class Root : public ComponentBase {
           booth::session_picker_view(state_.history, sessions_.matches(), sessions_.index(),
                                      sessions_.loading(), sessions_.query(), &mouse_));
     }
-    if (model_picker_.visible()) {
-      view.push_back(booth::model_picker_view(state_.models, model_picker_.matches(),
-                                              model_picker_.index(), state_.model,
-                                              model_picker_.query(), &mouse_));
-    }
+    if (model_picker_.visible()) view.push_back(booth::model_picker_view(state_.models, model_picker_.matches(), model_picker_.index(), state_.model, model_picker_.query(), &mouse_));
     view.push_back(ftxui::text(" "));
     long busy_seconds = -1;
     std::string spinner;
@@ -438,6 +435,7 @@ class Root : public ComponentBase {
   void handle_command(std::string line) {
     line = booth::normalize_command(std::move(line));
     if (auto prompt = booth::file_command_prompt(line)) { send_prompt(std::move(*prompt)); return; }
+    if (booth::handle_library_command(line, state_, library_, cwd_)) return;
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
                                     draft_file_.parent_path(), line, show_thoughts_, tools_hidden_)) {
       if (line == "/help") help_scroll_.reset();
@@ -564,6 +562,7 @@ class Root : public ComponentBase {
   booth::CopyPicker copy_picker_;
   booth::LinkPicker links_;
   booth::FileMenu files_;
+  booth::LibraryOverlay library_;
   booth::TranscriptSearch transcript_search_;
   bool tools_expanded_{false}, tools_hidden_{false}; booth::PasteBuffer paste_;
   bool show_thoughts_{false};

@@ -74,7 +74,7 @@ stays above the composer with the transcript visible, reuses the matching tool c
 input, and shows only the choices dsh advertised
 (`y` once, `a` always, `n` deny, `d` deny always when offered). `Enter` arms an allow and requires a
 second press after half a second; `Ctrl+O` expands the full diff.
-Commands: `/status`, `/model`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
+Commands: `/status`, `/model`, `/providers`, `/skills`, `/sessions`, `/new`, `/close`, `/copy`, `/clear`, `/retry`,
 `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`, `/context`, `/stats`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and
 `/notify off` persist terminal notifications in `$BOOTH_STATE_DIR/notify`. Kernel and protocol
@@ -83,10 +83,15 @@ on and use OSC 9 for permission requests and turns lasting at least five seconds
 is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
-`/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/mouse`, `/find`, `/attach`, `/detach`, `/help` and `/quit` stay available
+`/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/mouse`, `/find`, `/attach`, `/detach`,
+`/skills`, `/providers`, `/help` and `/quit` stay available
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
+`/providers` groups the live model catalog by provider; Enter opens that provider's model picker.
+`/skills` scans the dsh skill roots (`<project>/.dsh/skills`, `<project>/.agents/skills`,
+`$DSH_HOME/skills`, `$DSH_AGENTS_HOME/skills`), lists user-invocable skills, and inserts `/name `
+into the composer. Provider credentials stay with dsh; booth does not implement OAuth.
 `/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); `Ctrl+P` cycles to the
 next advertised model, and the selection is applied through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
 name or wire value selects it, and no argument lists the current value and choices. `/theme`

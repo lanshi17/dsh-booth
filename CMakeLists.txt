@@ -131,6 +131,8 @@ add_library(booth_interaction STATIC
   src/interaction/file_command.cpp
   src/interaction/help_view.cpp
   src/interaction/json_view.cpp
+  src/interaction/library_ui.cpp
+  src/interaction/skill_catalog.cpp
   src/interaction/skill_view.cpp
   src/interaction/spill_view.cpp
   src/interaction/external_editor.cpp

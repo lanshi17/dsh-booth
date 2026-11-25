@@ -21,9 +21,11 @@ void erase_last_glyph(std::string& text) {
 
 }  // namespace
 
-void ModelPicker::open(const std::vector<ModelChoice>& choices, const std::string& current) {
+void ModelPicker::open(const std::vector<ModelChoice>& choices, const std::string& current,
+                       const std::string& provider) {
   visible_ = true;
   query_.clear();
+  provider_ = provider;
   index_ = 0;
   filter(choices);
   for (std::size_t row = 0; row < matches_.size(); ++row) {
@@ -41,6 +43,7 @@ void ModelPicker::filter(const std::vector<ModelChoice>& choices) {
   const std::string needle = lower(query_);
   for (std::size_t index = 0; index < choices.size(); ++index) {
     const auto& choice = choices[index];
+    if (!provider_.empty() && choice.provider != provider_) continue;
     if (needle.empty() ||
         lower(choice.name).find(needle) != std::string::npos ||
         lower(choice.provider).find(needle) != std::string::npos ||

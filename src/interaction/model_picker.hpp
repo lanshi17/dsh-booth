@@ -15,7 +15,8 @@ namespace booth {
 /// Searchable `/model` picker.
 class ModelPicker {
  public:
-  void open(const std::vector<ModelChoice>& choices, const std::string& current);
+  void open(const std::vector<ModelChoice>& choices, const std::string& current,
+            const std::string& provider = {});
   void close();
 
   [[nodiscard]] bool visible() const { return visible_; }
@@ -35,6 +36,7 @@ class ModelPicker {
   bool visible_{false};
   std::size_t index_{0};
   std::string query_;
+  std::string provider_;
   std::vector<std::size_t> matches_;
 };
 
