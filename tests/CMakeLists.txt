@@ -223,6 +223,10 @@ add_test(NAME pty_tool_diff
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_tool_diff.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_thinking_hidden
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_thinking_hidden.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_thinking
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_thinking.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

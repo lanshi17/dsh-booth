@@ -563,7 +563,7 @@ class Root : public ComponentBase {
   booth::FileMenu files_;
   booth::TranscriptSearch transcript_search_;
   bool tools_expanded_{false}, tools_hidden_{false};
-  bool show_thoughts_{true};
+  bool show_thoughts_{false};
   bool new_after_close_{false};
   std::deque<std::string> queued_;
   booth::MentionRegistry mention_registry_;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ctrl+T toggles thinking visibility.
+# Ctrl+T reveals thinking, which is hidden by default.
 set -euo pipefail
 
 booth=$1
@@ -12,6 +12,6 @@ trap 'rm -rf "$state" "$output"' EXIT
   timeout 20 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
     >"$output" 2>&1 || true
 
-grep -aq "thinking hidden" "$output"
+grep -aq "thinking shown" "$output"
 grep -aq "Thought for" "$output"
 grep -aq "click to expand" "$output"
