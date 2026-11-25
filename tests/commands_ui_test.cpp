@@ -278,6 +278,13 @@ TEST_CASE("todo, tools, usage and git report local state") {
   REQUIRE(state.notice == "todo 1/2 · next second");
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/tools", false, false));
   REQUIRE(state.notice == "tools 2 · bash 2 · read 1");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/todo export todos.md", false, false));
+  std::ifstream exported(cwd / "todos.md");
+  std::string markdown((std::istreambuf_iterator<char>(exported)), std::istreambuf_iterator<char>());
+  REQUIRE(markdown.find("# Todos") != std::string::npos);
+  REQUIRE(markdown.find("- [x] first") != std::string::npos);
+  REQUIRE(markdown.find("- [ ] second (in progress)") != std::string::npos);
+  std::filesystem::remove(cwd / "todos.md");
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/usage", false, false));
   REQUIRE(state.notice.find("entries 3") != std::string::npos);
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/git", false, false));

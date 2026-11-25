@@ -103,7 +103,7 @@ persists, and applies one color override immediately. Supported keys are `accent
 `line`, `panel`, `border`, `green`, `yellow`, `red`, `git`, `gray`, `token`, and `hover`. Invalid
 keys or colors leave the file unchanged and show a notice.
 `/context` reports dsh's context window usage; `/usage` adds transcript counters, `/stats` counts
-local transcript entries, tools and queued prompts, `/todo` reports the todo HUD, `/tools` ranks
+local transcript entries, tools and queued prompts, `/todo` reports the todo HUD (`/todo copy` or `/todo export [path]` writes Markdown), `/tools` ranks
 tool calls by name, and `/git` reports branch/staged/modified/untracked counts. `/new` closes the current session and leaves a clean transcript, while `/clear`
 only clears the local transcript (dsh has no ACP call that clears a live session's context).
 `/queue <text>` enqueues a prompt for when the active turn ends; `Alt+Up` brings the newest

@@ -58,7 +58,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/sessions resume · /new fresh · /close stop"},
       {"/skills list dsh skills · /providers (or /setup) pick a provider"},
       {"/settings toggle thinking, tools, notifications, mouse and Vim"},
-      {"/todo progress · /tools counts · /usage context and stats"},
+      {"/todo [copy|export] · /tools counts · /usage context and stats"},
       {"/git branch and working-tree counts"},
       {"/session /acp /cancel · /find · /attach <path> · /detach"},
       {"/help this card · /quit leave"},

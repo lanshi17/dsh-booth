@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <map>
 #include <string_view>
 #include <utility>
 
+#include "interaction/clipboard.hpp"
 #include "interaction/commands.hpp"
 #include "interaction/context_gauge.hpp"
 #include "interaction/notify.hpp"
@@ -29,6 +31,17 @@ std::string trim(std::string_view text) {
   if (first == std::string_view::npos) return {};
   const auto last = text.find_last_not_of(" \t\r\n");
   return std::string(text.substr(first, last - first + 1));
+}
+
+std::string todo_markdown(const AppState& state) {
+  std::string out = "# Todos\n\n";
+  for (const auto& item : state.todos) {
+    out += item.status == "completed" ? "- [x] " : "- [ ] ";
+    out += item.content;
+    if (item.status == "in_progress") out += " (in progress)";
+    out += '\n';
+  }
+  return out;
 }
 
 std::string argument_after(const std::string& line, std::string_view command) {
@@ -266,7 +279,30 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     state.notice = context_text(state) + " · " + stats_text(state, queued);
     return true;
   }
-  if (line == "/todo") {
+  if (line == "/todo" || line.rfind("/todo ", 0) == 0) {
+    const std::string action = argument_after(line, "/todo");
+    if (action == "copy") {
+      const std::string text = todo_markdown(state);
+      state.notice = copy_to_clipboard(text) ? "todos copied" : "nothing to copy";
+      return true;
+    }
+    if (action == "export" || action.rfind("export ", 0) == 0) {
+      std::string target = trim(argument_after(line, "/todo export"));
+      if (target.empty()) target = "TODO.md";
+      const auto path = std::filesystem::path(cwd) / target;
+      std::ofstream output(path, std::ios::trunc);
+      if (!output) {
+        state.notice = "could not write " + path.string();
+      } else {
+        output << todo_markdown(state);
+        state.notice = "todos exported to " + path.string();
+      }
+      return true;
+    }
+    if (!action.empty()) {
+      state.notice = "usage: /todo [copy|export [path]]";
+      return true;
+    }
     std::size_t done = 0;
     std::string next;
     for (const auto& item : state.todos) {
