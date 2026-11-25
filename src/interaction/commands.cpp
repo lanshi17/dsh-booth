@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "interaction/file_command.hpp"
+#include "interaction/skill_catalog.hpp"
 
 namespace booth {
 
@@ -55,11 +56,15 @@ namespace {
 std::string lower_ascii(std::string_view text);
 
 std::map<std::string, FileCommand> gFileCommands;
+std::map<std::string, SkillInfo> gSkills;
 
 std::vector<CommandHint> build_hints() {
   std::vector<CommandHint> hints(std::begin(kCommandHints), std::end(kCommandHints));
   for (const auto& [name, command] : gFileCommands) {
     hints.push_back(CommandHint{"/" + name, command.description, "project command template", ""});
+  }
+  for (const auto& [name, skill] : gSkills) {
+    hints.push_back(CommandHint{"/" + name, skill.description, "skill", "", true});
   }
   return hints;
 }
@@ -88,6 +93,31 @@ void load_file_commands(const std::filesystem::path& project, const std::filesys
   load(project / ".booth" / "commands");
   load(state / "commands");
   gHints = build_hints();
+}
+
+void load_skill_commands(const std::filesystem::path& cwd) {
+  gSkills.clear();
+  for (auto& skill : scan_default_skills(cwd)) {
+    std::string name = lower_ascii(skill.name);
+    if (name.empty()) continue;
+    const std::string hint = "/" + name;
+    if (std::any_of(std::begin(kCommandHints), std::end(kCommandHints),
+                    [&](const CommandHint& command) {
+                      if (command.name == hint) return true;
+                      return (" " + command.aliases + " ").find(" " + name + " ") != std::string::npos;
+                    })) continue;
+    if (gFileCommands.contains(name)) continue;
+    if (!gSkills.contains(name)) gSkills.emplace(std::move(name), std::move(skill));
+  }
+  gHints = build_hints();
+}
+
+bool is_skill_prompt(const std::string& line) {
+  const auto first = line.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos || line[first] != '/') return false;
+  const auto end = line.find_first_of(" \t\r\n", first);
+  const std::string name = lower_ascii(line.substr(first + 1, end == std::string::npos ? std::string::npos : end - first - 1));
+  return gSkills.contains(name);
 }
 
 std::optional<std::string> file_command_prompt(const std::string& line) {
@@ -157,7 +187,7 @@ int hint_score(const CommandHint& hint, const std::string& query) {
       subsequence_score(query, searchable) > 0) {
     score = std::max(score, 20);
   }
-  return score;
+  return hint.skill ? std::max(1, score - 50) : score;
 }
 
 }  // namespace

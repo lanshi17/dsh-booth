@@ -94,9 +94,10 @@ current route. Credentials stay in dsh; Enter reports the provider's configurati
 separate and opens the two-pane provider/model browser.
 `/settings` opens a full-screen toggle list for thinking, tool cards, tool output, notifications,
 mouse capture and Vim mode; notification and mouse changes persist.
-`/skills` scans the dsh skill roots (`<project>/.dsh/skills`, `<project>/.agents/skills`,
-`$DSH_HOME/skills`, `$DSH_AGENTS_HOME/skills`), lists user-invocable skills, and inserts `/name `
-into the composer. Provider credentials stay with dsh; booth does not implement OAuth.
+`/skills` also registers user-invocable skills in the slash menu, so typing `/rev` finds
+`/review`; scanning the dsh skill roots (`<project>/.dsh/skills`, `<project>/.agents/skills`,
+`$DSH_HOME/skills`, `$DSH_AGENTS_HOME/skills`), lists user-invocable skills, and inserts `/name ` into the composer. A `/name` skill token is
+submitted to dsh as a prompt gesture rather than treated as an unknown local command. Provider credentials stay with dsh; booth does not implement OAuth.
 `/model` opens a two-pane browser: providers on the left, models on the right; type to search (↑/↓ or wheel, Enter); `Ctrl+P` cycles to the
 next advertised model, and the selection is applied through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
 name or wire value selects it, and no argument lists the current value and choices. `/theme`

@@ -219,6 +219,10 @@ add_test(NAME pty_dequeue
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_dequeue.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_skill_slash
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_skill_slash.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_skills
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_skills.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

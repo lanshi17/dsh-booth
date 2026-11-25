@@ -5,6 +5,7 @@
 #include <map>
 #include <utility>
 
+#include "interaction/commands.hpp"
 #include "interaction/editor.hpp"
 #include "interaction/model_picker.hpp"
 #include "interaction/mouse_mode.hpp"
@@ -201,6 +202,7 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
                             const Editor& editor) {
   const std::string command = first_word(normalize_command(line));
   if (command == "/skills") {
+    load_skill_commands(cwd);
     auto skills = scan_default_skills(cwd);
     if (skills.empty()) {
       state.notice = "no user-invocable skills under the dsh roots";

@@ -90,7 +90,7 @@ class Root : public ComponentBase {
     state_.composer = booth::load_draft(draft_file_); editor_.SetContent(state_.composer);
     mouse_enabled_ = booth::load_mouse_enabled(draft_file_.parent_path());
     if (const char* vim = ::getenv("BOOTH_VIM"); vim != nullptr && *vim != '\0' && *vim != '0') editor_.EnableVim(true);
-    history_ = booth::load_history(history_file_); booth::load_file_commands(cwd_, draft_file_.parent_path());
+    history_ = booth::load_history(history_file_); booth::load_file_commands(cwd_, draft_file_.parent_path()); booth::load_skill_commands(cwd_);
     git_ = booth::read_git(cwd_);
     ticker_ = booth::start_ticker(screen_, animate_, alive_);
     worker_.post([this, ctx = context()]() mutable { booth::ensure_session(ctx); });
@@ -382,17 +382,17 @@ class Root : public ComponentBase {
     if (first == std::string::npos) return;
     const auto last = text.find_last_not_of(" \t\r\n");
     text = text.substr(first, last - first + 1);
-    const bool command = text.front() == '/';
+    const bool command = text.front() == '/'; const bool skill = command && booth::is_skill_prompt(text);
     if (state_.permission) return;
     if (text.front() == '!' || text.front() == '$') { submit_local(text, text.front() == '$'); return; }
     if (state_.busy) {
       if (command && booth::local_command(text)) { state_.composer.clear(); editor_.Reset(); handle_command(text); }
-      else if (!command) { state_.composer.clear(); editor_.Reset(); queued_.push_back(std::move(text)); state_.notice = std::to_string(queued_.size()) + " queued"; }
+      else if (!command || skill) { state_.composer.clear(); editor_.Reset(); queued_.push_back(std::move(text)); state_.notice = std::to_string(queued_.size()) + " queued"; }
       else state_.notice = "busy: local commands and /queue still work";
       return;
     }
     state_.composer.clear(); editor_.Reset(); booth::save_draft(draft_file_, {});
-    if (command) {
+    if (command && !skill) {
       handle_command(text);
       return;
     }

@@ -14,6 +14,7 @@ struct CommandHint {
   std::string description;
   std::string keywords;
   std::string aliases;  // space-separated, without the leading slash
+  bool skill{false};
 };
 
 /// Every command the slash menu and the help card must document.
@@ -24,6 +25,12 @@ void load_file_commands(const std::filesystem::path& project, const std::filesys
 
 /// Expands a registered `/name args` prompt template, or nullopt for other input.
 std::optional<std::string> file_command_prompt(const std::string& line);
+
+/// Loads user-invocable dsh skills into the slash menu for this project.
+void load_skill_commands(const std::filesystem::path& cwd);
+
+/// Whether the first token names a user-invocable skill (a prompt gesture, not a local command).
+bool is_skill_prompt(const std::string& line);
 
 /// Rewrites a command alias to its canonical name, preserving any arguments.
 std::string normalize_command(std::string line);
