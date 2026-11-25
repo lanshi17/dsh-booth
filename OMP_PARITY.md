@@ -52,4 +52,4 @@ dsh. booth renders their tool events and model/config options; it does not reimp
 ./tools/gate.sh
 ```
 
-The gate builds, runs 441 unit/integration/PTY tests, and enforces the 600-line source limit.
+The gate builds, runs 449 unit/integration/PTY tests, and enforces the 600-line source limit.
