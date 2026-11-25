@@ -29,6 +29,7 @@ const CommandHint kCommandHints[] = {
     {"/sessions", "resume a saved session", "list history resume", "resume"},
     {"/skills", "list and invoke dsh skills", "skill invoke catalog", "skill"},
     {"/providers", "choose a provider and model", "provider models auth", "provider setup"},
+    {"/settings", "toggle booth interaction settings", "preferences options interface", ""},
     {"/new", "start a fresh session", "fresh reset close", ""},
     {"/effort", "set the reasoning effort", "reasoning thinking level", "reasoning"},
     {"/queue", "queue a prompt while a run is active", "later after busy", ""},

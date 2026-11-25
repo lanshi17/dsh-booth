@@ -7,6 +7,8 @@
 
 #include "interaction/editor.hpp"
 #include "interaction/model_picker.hpp"
+#include "interaction/mouse_mode.hpp"
+#include "interaction/notify.hpp"
 #include "interaction/skill_catalog.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
@@ -47,6 +49,26 @@ std::string ellipsize(std::string text, std::size_t width) {
   text.resize(width - 1);
   text += "…";
   return text;
+}
+
+std::vector<LibraryRow> settings_rows(const LibrarySettings& settings, const Editor& editor) {
+  std::vector<LibraryRow> rows;
+  rows.push_back({"thinking", "thinking", settings.show_thoughts != nullptr && *settings.show_thoughts
+                                                    ? "shown"
+                                                    : "hidden"});
+  rows.push_back({"tools", "tool cards", settings.tools_hidden != nullptr && *settings.tools_hidden
+                                               ? "hidden"
+                                               : "shown"});
+  rows.push_back({"expanded", "tool output", settings.tools_expanded != nullptr && *settings.tools_expanded
+                                                    ? "expanded"
+                                                    : "collapsed"});
+  rows.push_back({"notifications", "notifications",
+                  notifications_enabled(settings.state_dir) ? "on" : "off"});
+  rows.push_back({"mouse", "mouse capture", settings.mouse_enabled != nullptr && *settings.mouse_enabled
+                                                  ? "on"
+                                                  : "off"});
+  rows.push_back({"vim", "Vim mode", editor.VimEnabled() ? "on" : "off"});
+  return rows;
 }
 
 }  // namespace
@@ -163,14 +185,17 @@ ftxui::Element LibraryOverlay::view() const {
   }
   rows.push_back(ftxui::text(kind_ == LibraryKind::Skills
                                  ? " Enter inserts /name · Esc closes"
-                                 : " Enter opens this provider's models · Esc closes")
+                                 : kind_ == LibraryKind::Settings
+                                       ? " Enter toggles · Esc closes"
+                                       : " Enter opens this provider's models · Esc closes")
                      | ftxui::dim);
   return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 64) |
          ftxui::borderRounded | ftxui::center | ftxui::bgcolor(kPanel);
 }
 
 bool handle_library_command(const std::string& line, AppState& state, LibraryOverlay& overlay,
-                            const std::filesystem::path& cwd) {
+                            const std::filesystem::path& cwd, const LibrarySettings& settings,
+                            const Editor& editor) {
   const std::string command = first_word(normalize_command(line));
   if (command == "/skills") {
     auto skills = scan_default_skills(cwd);
@@ -187,6 +212,10 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
       rows.push_back({skill.name, "/" + skill.name, skill.description + " · " + skill.source});
     }
     overlay.open(LibraryKind::Skills, "skills", std::move(rows));
+    return true;
+  }
+  if (command == "/settings") {
+    overlay.open(LibraryKind::Settings, "settings", settings_rows(settings, editor));
     return true;
   }
   if (command == "/providers") {
@@ -214,11 +243,33 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
 }
 
 bool handle_library_event(ftxui::Event& event, AppState& state, LibraryOverlay& overlay,
-                          ModelPicker& models, Editor& editor) {
+                          ModelPicker& models, Editor& editor, const LibrarySettings& settings) {
   if (!overlay.visible()) return false;
   const LibraryKind kind = overlay.kind();
   const auto chosen = overlay.key(event);
   if (!chosen) return true;
+  if (kind == LibraryKind::Settings) {
+    if (*chosen == "thinking" && settings.show_thoughts != nullptr) {
+      *settings.show_thoughts = !*settings.show_thoughts;
+    } else if (*chosen == "tools" && settings.tools_hidden != nullptr) {
+      *settings.tools_hidden = !*settings.tools_hidden;
+    } else if (*chosen == "expanded" && settings.tools_expanded != nullptr) {
+      *settings.tools_expanded = !*settings.tools_expanded;
+    } else if (*chosen == "notifications") {
+      const bool enabled = notifications_enabled(settings.state_dir);
+      if (!persist_notifications_enabled(settings.state_dir, !enabled)) {
+        state.notice = "could not write notification setting";
+      }
+    } else if (*chosen == "mouse" && settings.mouse_enabled != nullptr) {
+      *settings.mouse_enabled = !*settings.mouse_enabled;
+      save_mouse_enabled(settings.state_dir, *settings.mouse_enabled);
+      if (settings.screen != nullptr) apply_mouse_capture(*settings.screen, *settings.mouse_enabled);
+    } else if (*chosen == "vim") {
+      editor.EnableVim(!editor.VimEnabled());
+    }
+    overlay.open(LibraryKind::Settings, "settings", settings_rows(settings, editor));
+    return true;
+  }
   overlay.close();
   if (kind == LibraryKind::Skills) {
     state.composer = "/" + *chosen + " ";

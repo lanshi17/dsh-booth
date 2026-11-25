@@ -135,7 +135,7 @@ class Root : public ComponentBase {
       return true;
     }
     if (state_.permission) { booth::handle_permission_key(event, state_, supervisor_, keys_); return true; }
-    if (library_.visible()) return booth::handle_library_event(event, state_, library_, model_picker_, editor_);
+    if (library_.visible()) return booth::handle_library_event(event, state_, library_, model_picker_, editor_, {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path()});
     if (matches_chord(keys_.model_next, event)) { if (auto choice = booth::cycle_model(state_, 1)) apply_model(*choice); return true; }
     if (matches_chord(keys_.retry, event)) { if (!state_.busy && !history_.empty()) send_prompt(history_.back()); return true; }
     if (matches_chord(keys_.reasoning, event)) {
@@ -435,7 +435,8 @@ class Root : public ComponentBase {
   void handle_command(std::string line) {
     line = booth::normalize_command(std::move(line));
     if (auto prompt = booth::file_command_prompt(line)) { send_prompt(std::move(*prompt)); return; }
-    if (booth::handle_library_command(line, state_, library_, cwd_)) return;
+    if (booth::handle_library_command(line, state_, library_, cwd_,
+                                      {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path()}, editor_)) return;
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
                                     draft_file_.parent_path(), line, show_thoughts_, tools_hidden_)) {
       if (line == "/help") help_scroll_.reset();

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <ftxui/component/event.hpp>
+#include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
 #include "interaction/state.hpp"
@@ -16,12 +17,22 @@ namespace booth {
 class Editor;
 class ModelPicker;
 
-enum class LibraryKind { None, Skills, Providers };
+enum class LibraryKind { None, Skills, Providers, Settings };
 
 struct LibraryRow {
   std::string value;
   std::string label;
   std::string detail;
+};
+
+/// Live booth toggles the settings overlay reads and writes.
+struct LibrarySettings {
+  bool* show_thoughts{nullptr};
+  bool* tools_hidden{nullptr};
+  bool* tools_expanded{nullptr};
+  bool* mouse_enabled{nullptr};
+  ftxui::ScreenInteractive* screen{nullptr};
+  std::filesystem::path state_dir;
 };
 
 /// Full-screen `/skills` and `/providers` list with filtering and keyboard selection.
@@ -49,10 +60,11 @@ class LibraryOverlay {
 
 /// Handles `/skills` and `/providers`; true when the line was consumed.
 bool handle_library_command(const std::string& line, AppState& state, LibraryOverlay& overlay,
-                            const std::filesystem::path& cwd);
+                            const std::filesystem::path& cwd, const LibrarySettings& settings,
+                            const Editor& editor);
 
 /// Handles overlay navigation and applies the selection; true while the overlay is visible.
 bool handle_library_event(ftxui::Event& event, AppState& state, LibraryOverlay& overlay,
-                          ModelPicker& models, Editor& editor);
+                          ModelPicker& models, Editor& editor, const LibrarySettings& settings);
 
 }  // namespace booth

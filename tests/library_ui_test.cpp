@@ -32,6 +32,7 @@ TEST_CASE("library overlay filters and selects a row") {
 
 TEST_CASE("skills selection fills the composer and providers drill into models") {
   AppState state;
+  LibrarySettings settings;
   state.models = {{"alpha", "one", "a1"}, {"alpha", "two", "a2"}, {"beta", "three", "b1"}};
   LibraryOverlay overlay;
   Editor editor(state.composer);
@@ -41,18 +42,18 @@ TEST_CASE("skills selection fills the composer and providers drill into models")
   Editor skill_editor(content);
   overlay.open(LibraryKind::Skills, "skills", {{"review", "/review", "review"}});
   ftxui::Event enter = ftxui::Event::Return;
-  REQUIRE(handle_library_event(enter, state, overlay, picker, skill_editor));
+  REQUIRE(handle_library_event(enter, state, overlay, picker, skill_editor, settings));
   REQUIRE(state.composer == "/review ");
   REQUIRE(content == "/review ");
 
-  REQUIRE(handle_library_command("/providers", state, overlay, "."));
+  REQUIRE(handle_library_command("/providers", state, overlay, ".", settings, editor));
   REQUIRE(overlay.visible());
   for (const char ch : std::string("alp")) {
     ftxui::Event event = ftxui::Event::Character(ch);
     overlay.key(event);
   }
   ftxui::Event provider_enter = ftxui::Event::Return;
-  REQUIRE(handle_library_event(provider_enter, state, overlay, picker, editor));
+  REQUIRE(handle_library_event(provider_enter, state, overlay, picker, editor, settings));
   REQUIRE_FALSE(overlay.visible());
   REQUIRE(picker.visible());
   ftxui::Event down = ftxui::Event::ArrowDown;
@@ -67,10 +68,12 @@ TEST_CASE("skills selection fills the composer and providers drill into models")
 
 TEST_CASE("provider overlay groups models and marks the current one") {
   AppState state;
+  LibrarySettings settings;
+  Editor editor(state.composer);
   state.model = "two";
   state.models = {{"alpha", "one", "a1"}, {"alpha", "two", "a2"}, {"beta", "three", "b1"}};
   LibraryOverlay overlay;
-  REQUIRE(handle_library_command("/providers", state, overlay, "."));
+  REQUIRE(handle_library_command("/providers", state, overlay, ".", settings, editor));
   auto view = overlay.view();
   ftxui::Screen screen(72, 14);
   ftxui::Render(screen, std::move(view));
@@ -78,4 +81,34 @@ TEST_CASE("provider overlay groups models and marks the current one") {
   REQUIRE(text.find("alpha") != std::string::npos);
   REQUIRE(text.find("2 models") != std::string::npos);
   REQUIRE(text.find("current") != std::string::npos);
+}
+
+TEST_CASE("settings overlay toggles interaction state") {
+  AppState state;
+  bool thoughts = false;
+  bool tools_hidden = false;
+  bool expanded = false;
+  bool mouse = false;
+  LibrarySettings settings{&thoughts, &tools_hidden, &expanded, &mouse, nullptr,
+                           std::filesystem::temp_directory_path()};
+  Editor editor(state.composer);
+  LibraryOverlay overlay;
+  ModelPicker picker;
+  REQUIRE(handle_library_command("/settings", state, overlay, ".", settings, editor));
+  REQUIRE(overlay.visible());
+  for (const char ch : std::string("thinking")) {
+    ftxui::Event event = ftxui::Event::Character(ch);
+    overlay.key(event);
+  }
+  ftxui::Event enter = ftxui::Event::Return;
+  REQUIRE(handle_library_event(enter, state, overlay, picker, editor, settings));
+  REQUIRE(thoughts);
+  REQUIRE(overlay.visible());
+
+  for (const char ch : std::string("vim")) {
+    ftxui::Event event = ftxui::Event::Character(ch);
+    overlay.key(event);
+  }
+  REQUIRE(handle_library_event(enter, state, overlay, picker, editor, settings));
+  REQUIRE(editor.VimEnabled());
 }

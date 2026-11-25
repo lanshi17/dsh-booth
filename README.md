@@ -74,7 +74,7 @@ stays above the composer with the transcript visible, reuses the matching tool c
 input, and shows only the choices dsh advertised
 (`y` once, `a` always, `n` deny, `d` deny always when offered). `Enter` arms an allow and requires a
 second press after half a second; `Ctrl+O` expands the full diff.
-Commands: `/status`, `/model`, `/providers` (`/setup`), `/skills`, `/sessions`, `/new`, `/close`,
+Commands: `/status`, `/model`, `/providers` (`/setup`), `/skills`, `/settings`, `/sessions`, `/new`, `/close`,
 `/copy`, `/clear`, `/retry`, `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`,
 `/context`, `/usage`, `/stats`, `/todo`, `/tools`, `/git`, `/queue`, `/session`, `/acp`, `/cancel`,
 `/find`, `/attach`, `/detach`, `/help`, `/quit`. `/notify` reports the setting; `/notify on` and
@@ -85,11 +85,13 @@ is supported).
 Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 `/copy`, `/clear`, `/export`, `/status`, `/context`, `/stats`, `/effort`, `/theme`, `/queue`,
 `/session`, `/acp`, `/cancel`, `/notify`, `/links`, `/mouse`, `/find`, `/attach`, `/detach`,
-`/skills`, `/providers`, `/todo`, `/tools`, `/usage`, `/git`, `/help` and `/quit` stay available
+`/skills`, `/providers`, `/settings`, `/todo`, `/tools`, `/usage`, `/git`, `/help` and `/quit` stay available
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
 `/providers` groups the live model catalog by provider; Enter opens that provider's model picker.
+`/settings` opens a full-screen toggle list for thinking, tool cards, tool output, notifications,
+mouse capture and Vim mode; notification and mouse changes persist.
 `/skills` scans the dsh skill roots (`<project>/.dsh/skills`, `<project>/.agents/skills`,
 `$DSH_HOME/skills`, `$DSH_AGENTS_HOME/skills`), lists user-invocable skills, and inserts `/name `
 into the composer. Provider credentials stay with dsh; booth does not implement OAuth.
