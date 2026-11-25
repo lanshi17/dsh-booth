@@ -3,6 +3,9 @@
 #include "interaction/view.hpp"
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <set>
 #include <cctype>
 #include <string>
 #include <utility>
@@ -28,6 +31,7 @@ std::string relative_age(long long seconds) {
 #define kGreen (theme_color("green", ftxui::Color::RGB(0, 255, 135)))
 #define kPanel (theme_color("panel", ftxui::Color::RGB(18, 18, 18)))
 #define kHover (theme_color("hover", ftxui::Color::RGB(40, 40, 40)))
+#define kYellow (theme_color("yellow", ftxui::Color::RGB(255, 215, 0)))
 
 bool row_hovered(const MouseRouter* mouse, MouseSurface surface, std::size_t row,
                  bool selected) {
@@ -208,12 +212,26 @@ ftxui::Element command_menu_view(const std::string& composer, std::size_t index,
   return ftxui::vbox(std::move(rows));
 }
 
-void SessionPicker::open() {
+void SessionPicker::open(const std::filesystem::path& pins_file) {
+  pins_file_ = pins_file;
+  pins_.clear();
+  std::ifstream input(pins_file_);
+  std::string line;
+  while (std::getline(input, line)) {
+    if (!line.empty()) pins_.insert(line);
+  }
   visible_ = true;
   loading_ = true;
   index_ = 0;
   query_.clear();
   matches_.clear();
+}
+
+void save_pins(const std::filesystem::path& path, const std::set<std::string>& pins) {
+  std::error_code error;
+  std::filesystem::create_directories(path.parent_path(), error);
+  std::ofstream output(path, std::ios::trunc);
+  for (const auto& id : pins) output << id << '\n';
 }
 
 void SessionPicker::close() { visible_ = false; }
@@ -229,16 +247,20 @@ void SessionPicker::filter(const std::vector<SessionRow>& sessions) {
     for (auto& ch : lowered) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     if (needle.empty() || lowered.find(needle) != std::string::npos) matches_.push_back(row);
   }
+  std::stable_sort(matches_.begin(), matches_.end(), [&](std::size_t left, std::size_t right) {
+    return sessions[left].pinned && !sessions[right].pinned;
+  });
   if (index_ >= matches_.size()) index_ = 0;
 }
 
-void SessionPicker::loaded(const std::vector<SessionRow>& sessions) {
+void SessionPicker::loaded(std::vector<SessionRow>& sessions) {
+  for (auto& session : sessions) session.pinned = pins_.count(session.id.value) != 0;
   loading_ = false;
   filter(sessions);
 }
 
 SessionPicker::Action SessionPicker::key(ftxui::Event& event,
-                                         const std::vector<SessionRow>& sessions) {
+                                         std::vector<SessionRow>& sessions) {
   if (!visible_) return Action::None;
   if (event == ftxui::Event::Escape) {
     if (!query_.empty()) {
@@ -267,6 +289,17 @@ SessionPicker::Action SessionPicker::key(ftxui::Event& event,
   } else if (event == ftxui::Event::Character('r') && query_.empty()) {
     loading_ = true;
     return Action::Refresh;
+  } else if (event.input() == "\x1bk" && !matches_.empty()) {
+    SessionRow& session = sessions[matches_[index_]];
+    const std::string id = session.id.value;
+    session.pinned = !session.pinned;
+    if (session.pinned) pins_.insert(id);
+    else pins_.erase(id);
+    save_pins(pins_file_, pins_);
+    filter(sessions);
+    for (std::size_t row = 0; row < matches_.size(); ++row) {
+      if (sessions[matches_[row]].id.value == id) { index_ = row; break; }
+    }
   } else if (event == ftxui::Event::Character('c') && query_.empty()) {
     close();
     return Action::Close;
@@ -440,7 +473,7 @@ ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,
                                    bool loading, const std::string& query, MouseRouter* mouse) {
   ftxui::Elements rows;
   rows.push_back(ftxui::hbox({ftxui::text(" sessions ") | ftxui::bold | ftxui::color(kAccent),
-                              ftxui::text("type to filter · ↑/↓ · Enter · r refresh · c close · Esc") |
+                              ftxui::text("↑/↓ · Enter · Alt+K pin · r refresh · c close · Esc") |
                                   ftxui::dim}));
   if (!query.empty()) rows.push_back(ftxui::text(" /" + query) | ftxui::color(kText));
   if (matches.empty()) {
@@ -466,7 +499,7 @@ ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,
                                                            : kText;
       ftxui::Element line = ftxui::hbox({
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
-          ftxui::text("● ") | ftxui::color(dot),
+          ftxui::text(session.pinned ? "★ " : "● ") | ftxui::color(session.pinned ? kYellow : dot),
           ftxui::text(title) | (selected ? ftxui::bold : ftxui::nothing),
           ftxui::text("  " + relative_age(session.age_seconds)) | ftxui::dim,
           ftxui::filler(),

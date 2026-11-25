@@ -31,6 +31,7 @@ struct SessionRow {
   std::size_t context_size{0};
   std::string preview;
   long long age_seconds{0};
+  bool pinned{false};
 };
 
 

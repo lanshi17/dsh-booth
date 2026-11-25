@@ -475,7 +475,7 @@ class Root : public ComponentBase {
     if (line == "/close") {
       worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); }); return;
     }
-    if (line == "/sessions") { model_picker_.close(); sessions_.open(); state_.history.clear(); worker_.post([this, ctx = context()]() mutable { booth::list_sessions(ctx); }); return; }
+    if (line == "/sessions") { model_picker_.close(); sessions_.open(draft_file_.parent_path() / "session-pins"); state_.history.clear(); worker_.post([this, ctx = context()]() mutable { booth::list_sessions(ctx); }); return; }
     if (line == "/model") { if (state_.models.empty()) { state_.notice = "no models yet; send a prompt first"; return; } sessions_.close(); model_picker_.open(state_.models, state_.model); return; }
     if (const auto model = argument("/model ")) {
       if (model->empty()) {

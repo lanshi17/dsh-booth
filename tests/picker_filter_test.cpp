@@ -1,9 +1,12 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 #include "interaction/model_picker.hpp"
+#include <unistd.h>
+
 #include "interaction/view.hpp"
 
 using namespace booth;
@@ -58,4 +61,42 @@ TEST_CASE("session picker filters while keeping refresh and close actions") {
   ftxui::Event enter = ftxui::Event::Return;
   REQUIRE(picker.key(enter, sessions) == SessionPicker::Action::Resume);
   REQUIRE_FALSE(picker.visible());
+}
+
+TEST_CASE("pinned sessions persist and sort first") {
+  const auto path = std::filesystem::temp_directory_path() /
+                    ("booth-pins-" + std::to_string(::getpid()) + ".txt");
+  std::filesystem::remove(path);
+  {
+    std::vector<SessionRow> sessions(3);
+    sessions[0].id = SessionId{"s-1"};
+    sessions[0].title = "first";
+    sessions[1].id = SessionId{"s-2"};
+    sessions[1].title = "second";
+    sessions[2].id = SessionId{"s-3"};
+    sessions[2].title = "third";
+    SessionPicker picker;
+    picker.open(path);
+    picker.loaded(sessions);
+    ftxui::Event down = ftxui::Event::ArrowDown;
+    REQUIRE(picker.key(down, sessions) == SessionPicker::Action::None);
+    ftxui::Event pin = ftxui::Event::Special("\x1bk");
+    REQUIRE(picker.key(pin, sessions) == SessionPicker::Action::None);
+    REQUIRE(sessions[1].pinned);
+    REQUIRE(sessions[picker.matches()[0]].id.value == "s-2");
+    REQUIRE(sessions[picker.matches()[picker.index()]].id.value == "s-2");
+  }
+  {
+    std::vector<SessionRow> sessions(3);
+    sessions[0].id = SessionId{"s-1"};
+    sessions[1].id = SessionId{"s-2"};
+    sessions[2].id = SessionId{"s-3"};
+    SessionPicker picker;
+    picker.open(path);
+    picker.loaded(sessions);
+    REQUIRE(sessions[1].pinned);
+    REQUIRE(picker.matches().size() == 3);
+    REQUIRE(sessions[picker.matches()[0]].id.value == "s-2");
+  }
+  std::filesystem::remove(path);
 }

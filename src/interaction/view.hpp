@@ -10,7 +10,9 @@
 #include "interaction/vim.hpp"
 
 #include <deque>
+#include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -151,9 +153,9 @@ class SessionPicker {
  public:
   enum class Action { None, Refresh, Close, Resume };
 
-  void open();
+  void open(const std::filesystem::path& pins_file = {});
   void close();
-  void loaded(const std::vector<SessionRow>& sessions);
+  void loaded(std::vector<SessionRow>& sessions);
 
   [[nodiscard]] bool visible() const { return visible_; }
   [[nodiscard]] bool loading() const { return loading_; }
@@ -161,7 +163,7 @@ class SessionPicker {
   [[nodiscard]] const std::string& query() const { return query_; }
   [[nodiscard]] const std::vector<std::size_t>& matches() const { return matches_; }
 
-  Action key(ftxui::Event& event, const std::vector<SessionRow>& sessions);
+  Action key(ftxui::Event& event, std::vector<SessionRow>& sessions);
 
   /// Selects and resumes one rendered row, exactly like keyboard selection + Enter.
   Action click(std::size_t row, const std::vector<SessionRow>& sessions);
@@ -174,6 +176,8 @@ class SessionPicker {
   std::size_t index_{0};
   std::string query_;
   std::vector<std::size_t> matches_;
+  std::filesystem::path pins_file_;
+  std::set<std::string> pins_;
 };
 
 /// The inline slash-command menu: filter, selection, completion and dismissal state.
