@@ -15,6 +15,10 @@ add_test(NAME pty_smoke
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_smoke.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_inline
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_inline.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_shell_command
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_shell_command.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

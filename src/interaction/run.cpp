@@ -30,7 +30,10 @@ int run_tui(const Config& config, const Env& env) {
   if (term == nullptr || std::string(term) == "dumb") ::setenv("TERM", "xterm-256color", 1);
   if (::getenv("COLORTERM") == nullptr) ::setenv("COLORTERM", "truecolor", 1);
   booth::apply_theme(booth::load_theme(config.state_dir / "theme.conf"));
-  auto screen = ScreenInteractive::TerminalOutput();
+  const char* inline_env = ::getenv("BOOTH_INLINE");
+  const bool inline_mode = inline_env != nullptr && *inline_env != '\0' && *inline_env != '0';
+  auto screen = inline_mode ? ScreenInteractive::TerminalOutput()
+                            : ScreenInteractive::Fullscreen();
   screen.TrackMouse(true);
   screen.ForceHandleCtrlC(false);
   Inbox inbox;
@@ -44,7 +47,7 @@ int run_tui(const Config& config, const Env& env) {
   };
   if (const int fd = connect_daemon(config.socket_file); fd >= 0) {
     RemoteKernel kernel(fd, sink);
-    booth::print_splash();
+    if (inline_mode) booth::print_splash();
     return tui_loop(screen, kernel, state, inbox, config);
   }
   Supervisor supervisor(config, env, sink, BOOTH_VERSION);
@@ -54,7 +57,7 @@ int run_tui(const Config& config, const Env& env) {
     return 1;
   }
   state.snapshot.phase = DshPhase::Ready;
-  booth::print_splash();
+  if (inline_mode) booth::print_splash();
   const int code = tui_loop(screen, supervisor, state, inbox, config);
   auto down = supervisor.down();
   if (!down) {

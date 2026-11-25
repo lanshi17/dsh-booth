@@ -13,7 +13,7 @@ trap 'rm -rf "$state" "$output"' EXIT
   >"$output" 2>&1 || true
 
 grep -aq "hello" "$output"
-grep -aq "booth" "$output"
+grep -aqF $'\x1b[?1049h' "$output"
 test -f "$state/booth.log"
 test -f "$state/history.jsonl"
 grep -aq '"text":"hi"' "$state/history.jsonl"

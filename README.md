@@ -38,8 +38,9 @@ booth down                               # stop the daemon
 booth                                    # the TUI, when stdin is a terminal
 ```
 
-The TUI follows omp's shape: it runs inline (no alternate screen), prints the splash once, and
-keeps the transcript above a two-row composer. The composer's top border is a dark chip band with
+The TUI follows omp's shape: it runs full-screen in the alternate screen by default and keeps the
+transcript above a two-row composer. Set `BOOTH_INLINE=1` for the previous inline mode (no alternate
+screen), which prints the splash once and exposes the terminal's own scrollback. The composer's top border is a dark chip band with
 the model, reasoning effort when dsh reports it, cwd, git branch/dirty counts, working timer and
 a threshold-colored context gauge; the bottom row merges
 the prompt with the key hints. User turns keep omp's full-width band, assistant turns render
@@ -138,6 +139,7 @@ pickers.
 | `DSH_HOME` | `$HOME/.dsh` |
 | `BOOTH_HANDSHAKE_TIMEOUT_S` | `20` |
 | `BOOTH_VIM` | unset (Vim mode off) |
+| `BOOTH_INLINE` | unset (full-screen; set to `1` for inline mode) |
 | `OPENCODE_API_KEY` | unset (OpenCode Go route) |
 
 `tools/sync_omp_models.py` imports `~/.omp/agent/models.yml` into the booth profile's
@@ -171,7 +173,7 @@ composer.
 - `/sessions` resumes dsh's persisted context and replays user, assistant and thinking text from
   dsh's `session.v4` store, including tool calls with input/output/duration. The store is internal
   to dsh and needs the `zstd` CLI; a failure to decompress is shown above the composer.
-- The inline transcript keeps the latest 40 entries; `PageUp`/`PageDown` and the wheel walk the
+- The transcript keeps the latest 40 entries; `PageUp`/`PageDown` and the wheel walk the
   rest and `PageDown` at the end returns to the live view. New entries keep the reader's place.
 - `keybindings.yml` in the state dir maps `booth.cancel`, `booth.quit`, `booth.editor`,
   `booth.history`, `booth.tools`, `booth.thinking`, `booth.hide_tools`, `booth.paste_image`,
