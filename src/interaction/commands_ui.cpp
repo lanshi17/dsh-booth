@@ -201,7 +201,8 @@ std::string acp_text(const AppState& state, bool connected, const std::string& s
 
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
                           std::size_t queued, const std::string& cwd,
-                          const std::filesystem::path& state_dir, const std::string& line) {
+                          const std::filesystem::path& state_dir, const std::string& line,
+                          bool show_thoughts, bool tools_hidden) {
   (void)cwd;
   if (line == "/help") {
     state.help = true;
@@ -264,7 +265,12 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     return true;
   }
   if (line == "/find" || line.rfind("/find ", 0) == 0) {
-    state.notice = search.find(state, scroll, line.size() > 5 ? line.substr(5) : "");
+    const auto visible = [show_thoughts, tools_hidden](const TranscriptEntry& entry) {
+      if (entry.kind == EntryKind::Thought && !show_thoughts) return false;
+      if (entry.kind == EntryKind::Tool && tools_hidden) return false;
+      return true;
+    };
+    state.notice = search.find(state, scroll, line.size() > 5 ? line.substr(5) : "", visible);
     return true;
   }
   if (line == "/attach" || line.rfind("/attach ", 0) == 0) {

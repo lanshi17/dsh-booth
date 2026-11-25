@@ -100,7 +100,8 @@ queued prompt back into the editor. `/session` prints the live ACP session (id, 
 effort, context, queue), and `/acp` prints the protocol, phase, connection and socket.
 `/attach <path>` adds an ACP `resource_link` to the next prompt (shown as a `file N` status chip);
 `/detach [name|all]` clears pending links, and `/cancel` is the explicit ACP cancel command.
-`/find <text>` searches the local transcript and cycles older matches on repeated calls.
+`/find <text>` searches the visible transcript and cycles older matches on repeated calls; cards
+hidden by thinking or tool toggles are skipped, so a match always lands on a drawn row.
 `/links` (or `Alt+L`) lists openable URLs from user, assistant and tool output with `a`–`z`/`A`–`Z`
 hint keys; Enter or a
 hint opens the selection and Esc closes. `/mouse` reports capture; `/mouse on|off` persists it.

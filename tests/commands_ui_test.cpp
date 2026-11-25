@@ -191,6 +191,36 @@ TEST_CASE("transcript search focuses matches and cycles") {
   REQUIRE(search.find(state, scroll, "missing").find("no match") == 0);
 }
 
+TEST_CASE("transcript search skips cards the view hides") {
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptEntry thought;
+  thought.kind = EntryKind::Thought;
+  thought.text = "alpha hidden reasoning";
+  state.entries.push_back(thought);
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.tool = "bash";
+  tool.input = "alpha";
+  state.entries.push_back(tool);
+  TranscriptEntry answer;
+  answer.kind = EntryKind::Assistant;
+  answer.text = "alpha answer";
+  state.entries.push_back(answer);
+
+  const auto only_visible = [](const TranscriptEntry& entry) {
+    return entry.kind == EntryKind::Assistant || entry.kind == EntryKind::User;
+  };
+  TranscriptSearch hidden_search;
+  const std::string visible_match = hidden_search.find(state, scroll, "alpha", only_visible);
+  REQUIRE(visible_match.find("match 1/1") != std::string::npos);
+  REQUIRE(visible_match.find("entry 3") != std::string::npos);
+
+  TranscriptSearch all;
+  const std::string all_match = all.find(state, scroll, "alpha");
+  REQUIRE(all_match.find("match 3/3") != std::string::npos);
+}
+
 TEST_CASE("context and stats describe the state") {
   AppState state;
   REQUIRE(context_text(state) == "context: no active session");

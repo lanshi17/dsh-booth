@@ -20,11 +20,12 @@ std::string trim(std::string_view text) {
 
 }  // namespace
 
-void TranscriptSearch::collect(const AppState& state) {
+void TranscriptSearch::collect(const AppState& state, const VisibleEntry& visible) {
   matches_.clear();
   const std::string needle = lower(query_);
   for (std::size_t index = 0; index < state.entries.size(); ++index) {
     const auto& entry = state.entries[index];
+    if (visible && !visible(entry)) continue;
     const std::string haystack = lower(entry.text + "\n" + entry.input + "\n" + entry.output +
                                       "\n" + entry.tool);
     if (haystack.find(needle) != std::string::npos) matches_.push_back(index);
@@ -32,12 +33,13 @@ void TranscriptSearch::collect(const AppState& state) {
 }
 
 std::string TranscriptSearch::find(AppState& state, TranscriptScroll& scroll,
-                                   const std::string& argument) {
+                                   const std::string& argument,
+                                   const VisibleEntry& visible) {
   const std::string query = trim(argument);
   if (!query.empty() && (!has_query_ || query != query_)) {
     query_ = query;
     has_query_ = true;
-    collect(state);
+    collect(state, visible);
     position_ = matches_.empty() ? 0 : matches_.size() - 1;
   } else if (!has_query_) {
     return "usage: /find <text>";

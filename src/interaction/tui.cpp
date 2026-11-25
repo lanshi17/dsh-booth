@@ -439,7 +439,8 @@ class Root : public ComponentBase {
   void handle_command(std::string line) {
     line = booth::normalize_command(std::move(line));
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
-                                    draft_file_.parent_path(), line)) {
+                                    draft_file_.parent_path(), line, show_thoughts_,
+                                    tools_hidden_)) {
       if (line == "/help") help_scroll_.reset();
       if (line == "/theme" || line.rfind("/theme ", 0) == 0) screen_.PostEvent(ftxui::Event::Custom);
       return;
