@@ -73,6 +73,20 @@ const char* permission_kind(const ftxui::Event& event, const PermissionRequest& 
   return nullptr;
 }
 
+std::optional<ModelChoice> cycle_model(const AppState& state, int step) {
+  if (state.models.empty()) return std::nullopt;
+  std::size_t current = 0;
+  for (std::size_t index = 0; index < state.models.size(); ++index) {
+    if (state.models[index].name == state.model) {
+      current = index;
+      break;
+    }
+  }
+  const int size = static_cast<int>(state.models.size());
+  const int next = ((static_cast<int>(current) + step) % size + size) % size;
+  return state.models[static_cast<std::size_t>(next)];
+}
+
 std::optional<ModelChoice> next_reasoning(const ReasoningOptions& options) {
   if (options.choices.empty()) return std::nullopt;
   std::size_t current = 0;

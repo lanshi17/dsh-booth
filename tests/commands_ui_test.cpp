@@ -245,6 +245,21 @@ TEST_CASE("queue accepts text only while a turn is running") {
   REQUIRE(state.notice == "usage: /queue <prompt>");
 }
 
+TEST_CASE("models cycle with wraparound") {
+  AppState state;
+  state.models = {ModelChoice{"p", "one", "1"}, ModelChoice{"p", "two", "2"},
+                  ModelChoice{"p", "three", "3"}};
+  state.model = "two";
+  auto next = cycle_model(state, 1);
+  REQUIRE(next.has_value());
+  REQUIRE(next->name == "three");
+  auto previous = cycle_model(state, -1);
+  REQUIRE(previous.has_value());
+  REQUIRE(previous->name == "one");
+  state.models.clear();
+  REQUIRE_FALSE(cycle_model(state, 1).has_value());
+}
+
 TEST_CASE("effort reads, matches by name and cycles") {
   AppState state;
   state.reasoning.id = "reasoning_effort";

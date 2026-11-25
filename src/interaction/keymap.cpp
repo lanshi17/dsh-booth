@@ -135,7 +135,8 @@ Result<KeyBindings> load_keybindings(const std::filesystem::path& path) {
         action != "booth.page_down" && action != "booth.dequeue" &&
         action != "booth.help" && action != "booth.model" &&
         action != "booth.sessions" && action != "booth.copy" &&
-        action != "booth.links") {
+        action != "booth.links" && action != "booth.model_next" &&
+        action != "booth.retry") {
       continue;
     }
 

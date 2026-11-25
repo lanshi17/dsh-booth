@@ -45,7 +45,9 @@ the model, reasoning effort when dsh reports it, cwd, git branch/dirty counts, w
 a threshold-colored context gauge; the bottom row merges
 the prompt with the key hints. User turns keep omp's full-width band, assistant turns render
 markdown (lists, links, tables, inline code, LaTeX math, syntax-highlighted fences), and tool calls render as
-full-width frames with input, output, diff statistics and duration; shell cards show the last 10
+full-width frames with input, output, diff statistics and duration; paragraphs wrap at the terminal
+edge, breaking CJK text between glyphs and long tokens (paths, URLs, code lines) instead of clipping
+them, and closing CJK punctuation stays attached to the glyph before it. Shell cards show the last 10
 output lines and the exit status, grep cards group matches by file, glob cards group paths by
 directory, web search cards show the answer and clickable sources, web fetch cards show the URL,
 HTTP status, preview and truncation notice, skill cards show the base directory and instructions,
@@ -57,8 +59,8 @@ filterable picker over answers, fenced code, blockquotes, tool
 output and shell commands, copying with OSC 52 (tmux passthrough included); `/export [path]` writes
 the full transcript as Markdown (default:
 `$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk the prompt history,
-`Ctrl+C` cancels the run, `Ctrl+D` quits and saves the unsent draft for the next start, `Ctrl+R`
-searches prompt history, `Ctrl+G`
+`Ctrl+C` cancels the run, `Ctrl+D` quits and saves the unsent draft for the next start, `Alt+R`
+retries the last prompt while idle, `Ctrl+R` searches prompt history, `Ctrl+G`
 opens `$VISUAL`/`$EDITOR` on the prompt (`booth.editor` in `keybindings.yml` moves that key),
 `PageUp`/`PageDown` or the wheel browse the transcript, `Shift+Tab` cycles dsh's reasoning
 effort. The editor supports `Ctrl+Z` undo, `Alt+Z` redo, `Ctrl`/`Alt`+`←`/`→` word movement,
@@ -83,8 +85,8 @@ Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
-`/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); the selection is applied
-through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
+`/model` opens dsh's model list grouped by provider (↑/↓ or wheel, Enter); `Ctrl+P` cycles to the
+next advertised model, and the selection is applied through the ACP config option. `/effort` changes dsh's reasoning effort: `next` cycles, a level
 name or wire value selects it, and no argument lists the current value and choices. `/theme`
 reloads `$BOOTH_STATE_DIR/theme.conf` into the running TUI; `/theme key=#rrggbb` validates,
 persists, and applies one color override immediately. Supported keys are `accent`, `text`, `dim`,
@@ -178,7 +180,7 @@ composer.
 - `keybindings.yml` in the state dir maps `booth.cancel`, `booth.quit`, `booth.editor`,
   `booth.history`, `booth.tools`, `booth.thinking`, `booth.hide_tools`, `booth.paste_image`,
   `booth.reasoning`, `booth.page_up`, `booth.page_down`, `booth.dequeue`, `booth.help`,
-  `booth.model`, `booth.sessions`, `booth.copy` and `booth.links` to `Ctrl`/`Alt`/`Shift` letter chords, `Esc`,
+  `booth.model`, `booth.sessions`, `booth.copy`, `booth.links`, `booth.model_next` and `booth.retry` to `Ctrl`/`Alt`/`Shift` letter chords, `Esc`,
   `Enter`, `Shift+Tab`, arrows or `PageUp`/`PageDown`.
 - Mouse hit-testing uses each row's final FTXUI box, so resizing and scrolling keep clicks exact.
 - Only Linux is tested; the process layer uses `posix_spawn` and pipes; Vim grapheme clusters use

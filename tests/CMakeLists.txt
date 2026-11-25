@@ -239,6 +239,10 @@ add_test(NAME pty_copy_picker
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_copy_picker.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_model_cycle
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_model_cycle.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_model_filter
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_model_filter.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

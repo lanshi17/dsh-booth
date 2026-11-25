@@ -43,6 +43,8 @@ struct KeyBindings {
   Chord sessions{Chord::Kind::Alt, 'S'};
   Chord copy{Chord::Kind::Alt, 'C'};
   Chord links{Chord::Kind::Alt, 'L'};
+  Chord model_next{Chord::Kind::Ctrl, 'P'};
+  Chord retry{Chord::Kind::Alt, 'R'};
 };
 
 /// Reads `action: chord` lines. A missing file keeps the defaults; one bad line is an error.

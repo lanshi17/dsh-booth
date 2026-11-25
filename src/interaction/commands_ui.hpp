@@ -39,6 +39,9 @@ void handle_permission_key(const ftxui::Event& event, AppState& state, Kernel& k
 /// The next reasoning choice after the current one, or nullopt when none are offered.
 std::optional<ModelChoice> next_reasoning(const ReasoningOptions& options);
 
+/// The next/previous model in the advertised list, or nullopt when empty.
+std::optional<ModelChoice> cycle_model(const AppState& state, int step);
+
 /// Help, status, copy, clear, context, stats, session info, attachments and ACP info.
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
                           std::size_t queued, const std::string& cwd,

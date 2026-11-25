@@ -127,6 +127,8 @@ class Root : public ComponentBase {
       return true;
     }
     if (state_.permission) { booth::handle_permission_key(event, state_, supervisor_, keys_); return true; }
+    if (matches_chord(keys_.model_next, event)) { if (auto choice = booth::cycle_model(state_, 1)) apply_model(*choice); return true; }
+    if (matches_chord(keys_.retry, event)) { if (!state_.busy && !history_.empty()) send_prompt(history_.back()); return true; }
     if (matches_chord(keys_.reasoning, event)) {
       const auto choice = booth::next_reasoning(state_.reasoning);
       if (!choice) {
