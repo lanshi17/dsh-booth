@@ -29,6 +29,17 @@ TEST_CASE("command aliases normalize to canonical names") {
   REQUIRE(normalize_command("/unknown") == "/unknown");
 }
 
+TEST_CASE("help reflects remapped keybindings") {
+  KeyBindings keys;
+  keys.help = Chord{Chord::Kind::Alt, 'X'};
+  keys.copy = Chord{Chord::Kind::Alt, 'Y'};
+  std::string text;
+  for (const auto& line : help_lines(keys)) text += line.text + "\n";
+  REQUIRE(text.find("Alt+X help") != std::string::npos);
+  REQUIRE(text.find("Alt+Y copy") != std::string::npos);
+  REQUIRE(text.find("Alt+H help") == std::string::npos);
+}
+
 TEST_CASE("help documents every command and alias") {
   std::string text;
   for (const auto& line : help_lines()) text += line.text + "\n";

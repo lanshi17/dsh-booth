@@ -25,6 +25,9 @@ std::optional<Chord> parse_chord(std::string_view text);
 /// Whether a terminal event carries this chord.
 bool matches_chord(const Chord& chord, const ftxui::Event& event);
 
+/// Human-readable chord label (`Ctrl+C`, `Alt+Up`, ...).
+std::string chord_label(const Chord& chord);
+
 struct KeyBindings {
   Chord cancel{Chord::Kind::Ctrl, 'C'};
   Chord quit{Chord::Kind::Ctrl, 'D'};

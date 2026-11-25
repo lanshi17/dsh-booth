@@ -4,6 +4,7 @@
 #include "interaction/commands.hpp"
 #include "interaction/copy_picker.hpp"
 #include "interaction/file_menu.hpp"
+#include "interaction/keymap.hpp"
 #include "interaction/model_picker.hpp"
 #include "interaction/mouse_zone.hpp"
 #include "interaction/vim.hpp"
@@ -83,6 +84,7 @@ struct HelpLine {
 };
 
 /// The scrollable help body: key hints, command reference, aliases.
+std::vector<HelpLine> help_lines(const KeyBindings& keys);
 std::vector<HelpLine> help_lines();
 
 /// How many help body rows fit above the composer at the current terminal height.
@@ -92,7 +94,7 @@ int help_visible_lines();
 int help_max_offset();
 
 /// The help card; `offset` is clamped to the scrollable range for this frame.
-ftxui::Element help_view(int offset, MouseRouter* mouse = nullptr);
+ftxui::Element help_view(int offset, const KeyBindings& keys, MouseRouter* mouse = nullptr);
 
 /// The full-screen permission card.
 ftxui::Element permission_view(const PermissionRequest& request, MouseRouter* mouse = nullptr,

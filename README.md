@@ -108,8 +108,9 @@ hint keys; Enter or a
 hint opens the selection and Esc closes. `/mouse` reports capture; `/mouse on|off` persists it.
 Capture defaults off inside tmux so wheel scrollback and native/tmux selection copy work; turn it
 on for booth's wheel scrolling, clicks and hover. `/copy` still writes through tmux's OSC 52
-passthrough. `/help` (or `Alt+H`) lists every command and alias; the card scrolls with ↑/↓,
-PageUp/PageDown, Home/End and the wheel, and Esc or `q` closes it.
+passthrough. `/help` (or `Alt+H`) lists every command and alias and renders the effective
+`keybindings.yml` chords; the card scrolls with ↑/↓, PageUp/PageDown, Home/End and the wheel, and
+Esc or `q` closes it.
 A prompt starting with `!` runs the rest as a local `/bin/sh -c` command in the working directory,
 shows a `bash` tool card, and keeps the command/output out of model context and prompt history.
 `Ctrl+R` searches prompt history; `Ctrl+O` expands tool output, `Ctrl+T` shows or hides thinking

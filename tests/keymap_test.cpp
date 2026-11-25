@@ -21,6 +21,14 @@ std::filesystem::path temp_file(std::string_view name) {
 
 }  // namespace
 
+TEST_CASE("chords render back to labels") {
+  REQUIRE(chord_label(Chord{Chord::Kind::Ctrl, 'C'}) == "Ctrl+C");
+  REQUIRE(chord_label(Chord{Chord::Kind::Alt, 0, Chord::Special::Up}) == "Alt+Up");
+  REQUIRE(chord_label(Chord{Chord::Kind::Enter, 0}) == "Enter");
+  REQUIRE(chord_label(Chord{Chord::Kind::Escape, 0}) == "Esc");
+  REQUIRE(chord_label(Chord{Chord::Kind::BackTab, 0}) == "Shift+Tab");
+}
+
 TEST_CASE("chords parse from the UI spelling") {
   const auto ctrl_c = parse_chord("Ctrl+C");
   REQUIRE(ctrl_c.has_value());

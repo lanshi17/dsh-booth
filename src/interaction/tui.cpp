@@ -97,7 +97,7 @@ class Root : public ComponentBase {
   void shutdown() { booth::save_draft(draft_file_, state_.composer); cancel(); animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
   Element OnRender() override {
     mouse_.begin_frame();
-    if (state_.help) return booth::help_view(help_scroll_.offset(), &mouse_) |
+    if (state_.help) return booth::help_view(help_scroll_.offset(), keys_, &mouse_) |
         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     return main_view();
   }

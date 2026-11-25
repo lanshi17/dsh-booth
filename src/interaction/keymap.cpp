@@ -68,6 +68,33 @@ bool matches_chord(const Chord& chord, const ftxui::Event& event) {
   return false;
 }
 
+std::string chord_label(const Chord& chord) {
+  const auto special = [](Chord::Special key) -> std::string {
+    switch (key) {
+      case Chord::Special::Up: return "Up";
+      case Chord::Special::Down: return "Down";
+      case Chord::Special::PageUp: return "PageUp";
+      case Chord::Special::PageDown: return "PageDown";
+      case Chord::Special::Home: return "Home";
+      case Chord::Special::End: return "End";
+      case Chord::Special::None: return {};
+    }
+    return {};
+  };
+  if (chord.kind == Chord::Kind::Escape) return "Esc";
+  if (chord.kind == Chord::Kind::Enter) return "Enter";
+  if (chord.kind == Chord::Kind::BackTab) return "Shift+Tab";
+  if (chord.kind == Chord::Kind::None) return {};
+  const std::string suffix = chord.special == Chord::Special::None
+                                 ? std::string(1, chord.key)
+                                 : special(chord.special);
+  if (suffix.empty()) return {};
+  if (chord.kind == Chord::Kind::Ctrl) return "Ctrl+" + suffix;
+  if (chord.kind == Chord::Kind::Alt) return "Alt+" + suffix;
+  if (chord.kind == Chord::Kind::Shift) return "Shift+" + suffix;
+  return suffix;
+}
+
 std::optional<Chord> parse_chord(std::string_view text) {
   const std::string value = trim(text);
   if (value.empty()) return std::nullopt;

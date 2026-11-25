@@ -35,12 +35,6 @@ namespace {
 #define kGray (theme_color("gray", ftxui::Color::RGB(168, 168, 168)))
 #define kToken (theme_color("token", ftxui::Color::RGB(95, 135, 175)))
 
-std::string hrule(std::size_t count) {
-  std::string out;
-  for (std::size_t index = 0; index < count; ++index) out += "─";
-  return out;
-}
-
 std::string compact_tokens(std::size_t value) {
   if (value >= 1000000) return std::to_string(value / 1000000) + "M";
   if (value >= 1000) return std::to_string(value / 1000) + "K";
@@ -410,76 +404,6 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
       return ftxui::vbox({ftxui::paragraph(entry.text) | ftxui::color(kRed), ftxui::text(" ")});
   }
   return ftxui::text(entry.text);
-}
-
-std::vector<HelpLine> help_lines() {
-  return {
-      {"Enter send · Alt+Enter newline · ↑/↓ history"},
-      {"Tab word completion · ^G editor · ^C cancel · ^D quit"},
-      {"Ctrl+Z undo · Alt+Z redo · Ctrl/Alt+←→ word"},
-      {"Ctrl+W/U/K/Y kill/yank · Alt+Up edits queue"},
-      {"Ctrl+R history · Ctrl+O tools · Ctrl+T thinking"},
-      {"Alt+H help · Alt+M model · Alt+S sessions · Alt+C copy"},
-      {"Ctrl+V image · :tada: emoji · BOOTH_VIM for Vim"},
-      {"!command runs local /bin/sh · output stays local"},
-      {"$python runs Python locally; an expression prints its value"},
-      {"^model mention applies a model · Alt+M picks one"},
-      {"/ fuzzy commands · ↑/↓ wheel · Tab · Enter · Esc"},
-      {"PageUp/PageDown or wheel browse transcript"},
-      {"Local while running: /theme /notify /copy /clear /export"},
-      {"  /status /context /stats /effort /queue /help /quit"},
-      {"/theme [key=#rrggbb] reload or set a live color"},
-      {"/notify [on|off] terminal attention alerts"},
-      {"/links transcript URLs · Alt+L · a-z hints"},
-      {"/mouse [on|off] tmux scrollback vs app mouse"},
-      {"/status phase, session and model"},
-      {"/model auto|<id>"},
-      {"/effort [level|next] · Shift+Tab · /context"},
-      {"/stats transcript counters"},
-      {"/copy last answer · /clear clear transcript"},
-      {"/retry last prompt · /export markdown transcript"},
-      {"/sessions resume · /new fresh · /close stop"},
-      {"/session /acp /cancel · /find · /attach <path> · /detach"},
-      {"/help this card · /quit leave"},
-      {"Aliases: /resume /models /reasoning /hotkeys /keys /exit /q", true},
-  };
-}
-
-int help_visible_lines() {
-  const int rows = std::max(12, ftxui::Terminal::Size().dimy);
-  return std::max(4, rows - 7);
-}
-
-int help_max_offset() {
-  const int total = static_cast<int>(help_lines().size());
-  return std::max(0, total - std::min(total, help_visible_lines()));
-}
-
-ftxui::Element help_view(int offset, MouseRouter* mouse) {
-  const auto lines = help_lines();
-  const int total = static_cast<int>(lines.size());
-  const int visible = std::min(total, help_visible_lines());
-  const int first = std::clamp(offset, 0, std::max(0, total - visible));
-
-  ftxui::Elements body;
-  body.push_back(ftxui::text("booth — keys and commands") | ftxui::bold | ftxui::color(kAccent));
-  body.push_back(ftxui::text(hrule(58)) | ftxui::color(kLine));
-  for (int index = first; index < first + visible; ++index) {
-    ftxui::Element row = ftxui::text(lines[static_cast<std::size_t>(index)].text);
-    if (lines[static_cast<std::size_t>(index)].dim) row = std::move(row) | ftxui::dim;
-    body.push_back(std::move(row));
-  }
-  const std::string position = std::to_string(first + 1) + "-" +
-                               std::to_string(first + visible) + " / " + std::to_string(total);
-  body.push_back(ftxui::hbox({
-      ftxui::text(total > visible ? "↑/↓ scroll · Esc/q close" : "Esc/q close") | ftxui::dim,
-      ftxui::filler(),
-      ftxui::text(position) | ftxui::dim,
-  }));
-  auto card = ftxui::hbox({ftxui::text(" "), ftxui::vbox(std::move(body)), ftxui::filler()}) |
-              ftxui::bgcolor(kPanel);
-  if (mouse != nullptr) card = mouse->zone(std::move(card), MouseSurface::Help, 0);
-  return card;
 }
 
 void collect_model_options(const nlohmann::json& option, std::vector<ModelChoice>& out,
