@@ -10,8 +10,11 @@ namespace booth {
 
 class AppState;
 
-/// Default: mouse capture on outside tmux, off inside tmux so tmux owns
-/// scrolling and selection.
+/// True when this process runs behind SSH (SSH_CONNECTION/SSH_TTY/SSH_CLIENT).
+bool ssh_session();
+
+/// Default: mouse capture on for a local terminal, off over tmux/SSH so the
+/// terminal owns scrolling and selection.
 bool default_mouse_enabled();
 
 /// Reads `<state>/mouse`; absent or malformed uses default_mouse_enabled().

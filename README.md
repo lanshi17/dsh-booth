@@ -42,6 +42,10 @@ booth                                    # the TUI, when stdin is a terminal
 The TUI follows omp's shape: it runs full-screen in the alternate screen by default and keeps the
 transcript above a two-row composer. Set `BOOTH_INLINE=1` for the previous inline mode (no alternate
 screen), which prints the splash once and exposes the terminal's own scrollback. The composer's top border is a dark chip band with
+The TUI follows omp's shape locally: full-screen alternate screen with the transcript above a
+two-row composer. Over SSH it defaults to inline terminal output and leaves mouse capture off, so
+the local terminal owns scrollback, native selection and copy; `BOOTH_INLINE=1`/`0` forces either
+mode and `/mouse on` re-captures the mouse. The composer's top border is a dark chip band with
 the model, reasoning effort when dsh reports it, cwd, git branch/dirty counts, working timer and
 a threshold-colored context gauge; the bottom row merges
 the prompt with the key hints. User turns keep omp's full-width band, assistant turns render
@@ -58,6 +62,9 @@ numbers, stopping at 40 lines until `Ctrl+O`; edit/write cards title the path wi
 `apply_patch` cards split per file with A/M/D labels and per-file +/− stats. `/copy` opens a
 filterable picker over prompts, answers, fenced code, blockquotes, tool
 output and shell commands, copying with OSC 52 (tmux passthrough included); `/export [path]` writes
+output and shell commands, copying with OSC 52 (tmux passthrough included). Over SSH, if the
+terminal blocks OSC 52, run inline (`BOOTH_INLINE=1`) with `/mouse off` and select/copy through the
+terminal's native scrollback. `/export [path]` writes
 the full transcript as Markdown (default:
 `$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk cleared drafts and prompt history,
 `Ctrl+C` cancels the run or clears an idle draft (Up recalls it), `Ctrl+D` quits and saves the unsent draft for the next start, `Alt+R`
@@ -168,6 +175,7 @@ pickers.
 | `BOOTH_HANDSHAKE_TIMEOUT_S` | `20` |
 | `BOOTH_VIM` | unset (Vim mode off) |
 | `BOOTH_INLINE` | unset (full-screen; set to `1` for inline mode) |
+| `BOOTH_INLINE` | unset (full-screen locally, inline over SSH; `1`/`0` forces it) |
 | `BOOTH_CLIPBOARD_TMUX` | unset (force tmux passthrough when the multiplexer hides `TMUX`) |
 | `OPENCODE_API_KEY` | unset (OpenCode Go route) |
 

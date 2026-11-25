@@ -21,7 +21,12 @@ std::string trim(std::string_view value) {
 
 }  // namespace
 
-bool default_mouse_enabled() { return ::getenv("TMUX") == nullptr; }
+bool ssh_session() {
+  return ::getenv("SSH_CONNECTION") != nullptr || ::getenv("SSH_TTY") != nullptr ||
+         ::getenv("SSH_CLIENT") != nullptr;
+}
+
+bool default_mouse_enabled() { return ::getenv("TMUX") == nullptr && !ssh_session(); }
 
 bool load_mouse_enabled(const std::filesystem::path& state_dir) {
   std::ifstream input(state_dir / "mouse", std::ios::binary);

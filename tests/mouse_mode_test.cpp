@@ -11,7 +11,10 @@
 
 using namespace booth;
 
-TEST_CASE("mouse capture defaults off inside tmux") {
+TEST_CASE("mouse capture defaults off inside tmux and over SSH") {
+  const char* old_ssh = ::getenv("SSH_CONNECTION");
+  const std::string saved_ssh = old_ssh == nullptr ? "" : old_ssh;
+  ::unsetenv("SSH_CONNECTION");
   const char* old = ::getenv("TMUX");
   const std::string saved = old == nullptr ? "" : old;
   ::unsetenv("TMUX");
@@ -19,6 +22,9 @@ TEST_CASE("mouse capture defaults off inside tmux") {
   ::setenv("TMUX", "/tmp/tmux-1/default,1,0", 1);
   REQUIRE_FALSE(default_mouse_enabled());
   if (old == nullptr) ::unsetenv("TMUX"); else ::setenv("TMUX", saved.c_str(), 1);
+  ::setenv("SSH_CONNECTION", "10.0.0.1 1 10.0.0.2 2", 1);
+  REQUIRE_FALSE(default_mouse_enabled());
+  if (old_ssh == nullptr) ::unsetenv("SSH_CONNECTION"); else ::setenv("SSH_CONNECTION", saved_ssh.c_str(), 1);
 }
 
 TEST_CASE("mouse preference persists and falls back on malformed files") {

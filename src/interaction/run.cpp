@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 
+#include "interaction/mouse_mode.hpp"
 #include "interaction/state.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
@@ -31,7 +32,9 @@ int run_tui(const Config& config, const Env& env) {
   if (::getenv("COLORTERM") == nullptr) ::setenv("COLORTERM", "truecolor", 1);
   booth::apply_theme(booth::load_theme(config.state_dir / "theme.conf"));
   const char* inline_env = ::getenv("BOOTH_INLINE");
-  const bool inline_mode = inline_env != nullptr && *inline_env != '\0' && *inline_env != '0';
+  const bool inline_mode = inline_env != nullptr
+                                ? *inline_env != '\0' && *inline_env != '0'
+                                : booth::ssh_session();
   auto screen = inline_mode ? ScreenInteractive::TerminalOutput()
                             : ScreenInteractive::Fullscreen();
   screen.TrackMouse(true);

@@ -23,6 +23,10 @@ add_test(NAME pty_paste_collapse
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_paste_collapse.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_ssh_defaults
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_ssh_defaults.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_inline
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_inline.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
