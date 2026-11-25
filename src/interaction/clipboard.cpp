@@ -1,8 +1,12 @@
 #include "interaction/clipboard.hpp"
 
+#include "interaction/editor.hpp"
+
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
@@ -58,6 +62,33 @@ std::string capture(const std::string& command) {
 
 }  // namespace
 
+std::optional<acp::ImageAttachment> clipboard_image_from_path(std::string_view path_text) {
+  std::string path(path_text);
+  const auto first = path.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return std::nullopt;
+  const auto last = path.find_last_not_of(" \t\r\n");
+  path = path.substr(first, last - first + 1);
+  if (path.rfind("file://", 0) == 0) path.erase(0, 7);
+  if (path.empty()) return std::nullopt;
+  std::string lower = path;
+  for (char& ch : lower) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  std::string media;
+  if (lower.ends_with(".png")) media = "image/png";
+  else if (lower.ends_with(".jpg") || lower.ends_with(".jpeg")) media = "image/jpeg";
+  else if (lower.ends_with(".webp")) media = "image/webp";
+  else if (lower.ends_with(".gif")) media = "image/gif";
+  else return std::nullopt;
+  std::error_code error;
+  if (!std::filesystem::is_regular_file(path, error)) return std::nullopt;
+  const auto size = std::filesystem::file_size(path, error);
+  if (error || size > 32 * 1024 * 1024) return std::nullopt;
+  std::ifstream input(path, std::ios::binary);
+  if (!input) return std::nullopt;
+  const std::string data((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  if (data.empty()) return std::nullopt;
+  return acp::ImageAttachment{media, base64(data), std::filesystem::path(path).filename().string()};
+}
+
 std::optional<acp::ImageAttachment> clipboard_image() {
   static constexpr std::array<const char*, 4> kMedia{
       "image/png", "image/jpeg", "image/webp", "image/gif"};
@@ -73,6 +104,32 @@ std::optional<acp::ImageAttachment> clipboard_image() {
     return acp::ImageAttachment{media, base64(data), "clipboard" + std::string(kSuffix[index])};
   }
   return std::nullopt;
+}
+
+std::optional<std::string> clipboard_text() {
+  std::string text = capture("wl-paste --no-newline 2>/dev/null");
+  if (text.empty()) text = capture("xclip -selection clipboard -o 2>/dev/null");
+  if (text.empty() || text.size() > 1024 * 1024) return std::nullopt;
+  return text;
+}
+
+void paste_clipboard(Editor& editor, std::vector<acp::ImageAttachment>& images, AppState& state) {
+  if (auto image = clipboard_image()) {
+    images.push_back(std::move(*image));
+    state.notice = "image attached";
+    return;
+  }
+  if (auto text = clipboard_text()) {
+    if (auto image = clipboard_image_from_path(*text)) {
+      images.push_back(std::move(*image));
+      state.notice = "image attached";
+      return;
+    }
+    editor.Paste(*text);
+    state.notice = text->size() > 1000 ? "large text pasted" : "text pasted";
+    return;
+  }
+  state.notice = "no image or text in clipboard";
 }
 
 std::string last_answer(const AppState& state) {

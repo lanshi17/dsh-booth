@@ -60,6 +60,7 @@ std::vector<ArgumentHint> matching_arguments(const ArgumentQuery& query, const A
   } else if (query.command == "/copy") {
     append(all, "answer", "copy the last assistant answer");
     append(all, "prompt", "copy the current composer");
+    append(all, "line", "copy the current composer line");
   } else if (query.command == "/model") {
     append(all, "auto", "let dsh route");
     for (const auto& choice : state.models) {

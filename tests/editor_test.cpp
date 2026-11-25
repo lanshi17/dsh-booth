@@ -202,6 +202,31 @@ TEST_CASE("vim normal mode edits, pastes and undoes") {
   REQUIRE(content.find("bcd") != std::string::npos);
 }
 
+TEST_CASE("large pastes collapse into expandable atomic markers") {
+  std::string content;
+  Editor editor(content);
+  std::string large;
+  for (int line = 0; line < 12; ++line) large += "line " + std::to_string(line) + "\n";
+  large.pop_back();
+  editor.Paste(large);
+  REQUIRE(content == "[Paste #1, +12 lines]");
+  REQUIRE(editor.Expanded(content) == large);
+
+  editor.HandleEvent(Event::Backspace);
+  REQUIRE(content.empty());
+
+  editor.Paste(std::string(1001, 'x'));
+  REQUIRE(content == "[Paste #2, 1001 chars]");
+  REQUIRE(editor.Expanded(content) == std::string(1001, 'x'));
+
+  editor.Reset();
+  editor.SetContent("[Paste #1, +12 lines]");
+  REQUIRE(editor.Expanded(content) == large);
+  editor.Reset();
+  editor.Paste("short\ntext");
+  REQUIRE(content == "short\ntext");
+}
+
 TEST_CASE("vim named registers yank and put whole lines") {
   std::string content = "one\ntwo\nthree";
   Editor editor(content);

@@ -2,11 +2,14 @@
 
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "interaction/state.hpp"
 #include "subagent/acp/messages.hpp"
 
 namespace booth {
+
+class Editor;
 
 /// The last committed assistant answer, or the live stream when no answer is committed yet.
 std::string last_answer(const AppState& state);
@@ -22,5 +25,14 @@ void copy_answer(AppState& state);
 
 /// Reads a clipboard raster and returns it base64-encoded, or nullopt when none exists.
 std::optional<acp::ImageAttachment> clipboard_image();
+
+/// Reads clipboard text (wl-paste first, then xclip), or nullopt when empty.
+std::optional<std::string> clipboard_text();
+
+/// Reads one image file path into an attachment.
+std::optional<acp::ImageAttachment> clipboard_image_from_path(std::string_view path);
+
+/// Ctrl+V: image first, then a clipboard path to an image, then text; updates the notice.
+void paste_clipboard(Editor& editor, std::vector<acp::ImageAttachment>& images, AppState& state);
 
 }  // namespace booth

@@ -17,6 +17,8 @@
 
 namespace booth {
 
+class Editor;
+
 class Kernel;
 
 /// True for commands that stay usable while a turn is running (aliases included).
@@ -46,7 +48,8 @@ std::optional<ModelChoice> cycle_model(const AppState& state, int step);
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
                           std::size_t queued, const std::string& cwd,
                           const std::filesystem::path& state_dir, const std::string& line,
-                          bool show_thoughts = true, bool tools_hidden = false);
+                          bool show_thoughts = true, bool tools_hidden = false,
+                          const Editor* editor = nullptr);
 
 /// Moves the newest queued prompt back into the composer; false when the queue is empty.
 bool dequeue_prompt(AppState& state, std::deque<std::string>& queued);

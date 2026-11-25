@@ -26,8 +26,12 @@ class Editor {
 
   void Reset();
   void SetContent(const std::string& content);
-  /// Inserts a whole paste as one undo group; embedded newlines stay in the prompt.
+  /// Inserts a paste as one undo group; large multi-line/long pastes collapse to a `[Paste #N]` marker.
   void Paste(const std::string& text);
+  /// Inserts the paste literally, bypassing marker collapse.
+  void PasteRaw(const std::string& text);
+  /// Replaces every live `[Paste #N]` marker with its stored text.
+  [[nodiscard]] std::string Expanded(const std::string& text) const;
   /// Places the caret at `offset`, snapped down to a grapheme boundary and clamped to the buffer.
   /// Splits any open Insert/Replace session so the next edit starts a fresh undo group.
   void SetCursor(std::size_t offset);
@@ -108,6 +112,8 @@ class Editor {
   std::vector<Snapshot> redo_;
   std::vector<std::string> kill_ring_;
   std::map<char, std::string> vim_registers_;
+  std::map<int, std::string> pastes_;
+  int next_paste_{1};
   std::size_t kill_pos_{0};
   std::size_t yank_start_{0};
   std::size_t yank_len_{0};

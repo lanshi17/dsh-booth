@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 
 namespace booth {
 namespace {
@@ -23,6 +24,28 @@ std::size_t prev_glyph(const std::string& text, std::size_t at) {
 }
 
 bool is_space(char ch) { return std::isspace(static_cast<unsigned char>(ch)) != 0; }
+
+struct PasteSpan {
+  std::size_t start{0};
+  std::size_t end{0};
+};
+
+std::optional<PasteSpan> paste_at(std::string_view text, std::size_t at) {
+  std::size_t from = 0;
+  while ((from = text.find("[Paste #", from)) != std::string_view::npos) {
+    std::size_t cursor = from + 8;
+    while (cursor < text.size() && std::isdigit(static_cast<unsigned char>(text[cursor]))) ++cursor;
+    if (cursor == from + 8) {
+      ++from;
+      continue;
+    }
+    const std::size_t close = text.find(']', cursor);
+    if (close == std::string_view::npos) break;
+    if (at >= from && at <= close) return PasteSpan{from, close + 1};
+    from = close + 1;
+  }
+  return std::nullopt;
+}
 
 std::vector<std::string> split_lines(const std::string& text) {
   std::vector<std::string> lines;
@@ -81,9 +104,57 @@ void Editor::SetContent(const std::string& content) {
 
 void Editor::Paste(const std::string& text) {
   if (text.empty()) return;
+  const std::size_t lines = static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n')) + 1;
+  if (lines > 10 || text.size() > 1000) {
+    const int id = next_paste_++;
+    pastes_[id] = text;
+    const std::string marker = lines > 10
+                                   ? "[Paste #" + std::to_string(id) + ", +" +
+                                         std::to_string(lines) + " lines]"
+                                   : "[Paste #" + std::to_string(id) + ", " +
+                                         std::to_string(text.size()) + " chars]";
+    BeforeEdit(false);
+    Insert(marker);
+    typing_ = false;
+    return;
+  }
+  PasteRaw(text);
+}
+
+void Editor::PasteRaw(const std::string& text) {
+  if (text.empty()) return;
   BeforeEdit(false);
   Insert(text);
   typing_ = false;
+}
+
+std::string Editor::Expanded(const std::string& text) const {
+  std::string out;
+  std::size_t at = 0;
+  while (at < text.size()) {
+    const std::size_t start = text.find("[Paste #", at);
+    if (start == std::string::npos) {
+      out += text.substr(at);
+      break;
+    }
+    out += text.substr(at, start - at);
+    std::size_t cursor = start + 8;
+    while (cursor < text.size() && std::isdigit(static_cast<unsigned char>(text[cursor]))) ++cursor;
+    const int id = cursor == start + 8 ? 0 : std::stoi(text.substr(start + 8, cursor - start - 8));
+    const std::size_t close = text.find(']', cursor);
+    if (close == std::string::npos) {
+      out += text.substr(start);
+      break;
+    }
+    const auto found = pastes_.find(id);
+    if (found == pastes_.end()) {
+      out += text.substr(start, close - start + 1);
+    } else {
+      out += found->second;
+    }
+    at = close + 1;
+  }
+  return out;
 }
 
 void Editor::SetCursor(std::size_t offset) {
@@ -374,6 +445,11 @@ bool Editor::HandleEditingEvent(const ftxui::Event& event) {
   if (event == ftxui::Event::Backspace) {
     if (cursor_ == 0) return true;
     BeforeEdit(false);
+    if (const auto paste = paste_at(content_, cursor_ - 1)) {
+      cursor_ = paste->start;
+      content_.erase(paste->start, paste->end - paste->start);
+      return true;
+    }
     const std::size_t from = prev_glyph(content_, cursor_);
     content_.erase(from, cursor_ - from);
     cursor_ = from;
@@ -382,6 +458,11 @@ bool Editor::HandleEditingEvent(const ftxui::Event& event) {
   if (event == ftxui::Event::Delete) {
     if (cursor_ >= content_.size()) return true;
     BeforeEdit(false);
+    if (const auto paste = paste_at(content_, cursor_)) {
+      content_.erase(paste->start, paste->end - paste->start);
+      cursor_ = paste->start;
+      return true;
+    }
     const std::size_t to = next_glyph(content_, cursor_);
     content_.erase(cursor_, to - cursor_);
     return true;

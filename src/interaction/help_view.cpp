@@ -36,7 +36,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
           chord_label(keys.thinking) + " thinking"},
       {chord_label(keys.help) + " help · " + chord_label(keys.model) + " model · " +
           chord_label(keys.sessions) + " sessions · " + chord_label(keys.copy) + " copy"},
-      {chord_label(keys.paste_image) + " image · " + chord_label(keys.links) + " links · " +
+      {chord_label(keys.paste_image) + " image/text · " + chord_label(keys.links) + " links · " +
           chord_label(keys.model_next) + " next model · :tada: emoji · BOOTH_VIM for Vim"},
       {"!command runs local /bin/sh · output stays local"},
       {"$python runs Python locally; an expression prints its value"},
@@ -53,7 +53,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/model auto|<id>"},
       {"/effort [level|next] · Shift+Tab · /context"},
       {"/stats transcript counters"},
-      {"/copy [answer|prompt] · /clear clear transcript"},
+      {"/copy [answer|prompt|line] · /clear clear transcript"},
       {"/retry last prompt · /export markdown transcript"},
       {"/sessions resume · /new fresh · /close stop"},
       {"/skills list dsh skills · /providers (or /setup) pick a provider"},

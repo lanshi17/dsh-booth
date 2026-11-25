@@ -11,6 +11,7 @@
 #include "interaction/clipboard.hpp"
 #include "interaction/commands.hpp"
 #include "interaction/context_gauge.hpp"
+#include "interaction/editor.hpp"
 #include "interaction/notify.hpp"
 #include "interaction/session_pins.hpp"
 #include "interaction/theme.hpp"
@@ -219,7 +220,7 @@ std::string acp_text(const AppState& state, bool connected, const std::string& s
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
                           std::size_t queued, const std::string& cwd,
                           const std::filesystem::path& state_dir, const std::string& line,
-                          bool show_thoughts, bool tools_hidden) {
+                          bool show_thoughts, bool tools_hidden, const Editor* editor) {
   (void)cwd;
   if (line == "/help") {
     state.help = true;
@@ -278,7 +279,18 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     return true;
   }
   if (line == "/copy prompt") {
-    state.notice = copy_to_clipboard(state.composer) ? "copied prompt" : "nothing to copy";
+    const std::string prompt = editor == nullptr ? state.composer : editor->Expanded(state.composer);
+    state.notice = copy_to_clipboard(prompt) ? "copied prompt" : "nothing to copy";
+    return true;
+  }
+  if (line == "/copy line") {
+    if (editor == nullptr) {
+      state.notice = "no composer line to copy";
+      return true;
+    }
+    const auto lines = editor->Lines();
+    const std::string line_text = lines[std::min(editor->CursorLine(), lines.size() - 1)];
+    state.notice = copy_to_clipboard(line_text) ? "copied line" : "nothing to copy";
     return true;
   }
   if (line == "/copy answer") {

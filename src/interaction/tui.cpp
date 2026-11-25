@@ -95,7 +95,7 @@ class Root : public ComponentBase {
     ticker_ = booth::start_ticker(screen_, animate_, alive_);
     worker_.post([this, ctx = context()]() mutable { booth::ensure_session(ctx); });
   }
-  void shutdown() { booth::save_draft(draft_file_, state_.composer); cancel(); animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
+  void shutdown() { booth::save_draft(draft_file_, editor_.Expanded(state_.composer)); cancel(); animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
   Element OnRender() override {
     mouse_.begin_frame();
     if (library_.visible()) return library_.view();
@@ -217,7 +217,7 @@ class Root : public ComponentBase {
     }
     if (matches_chord(keys_.page_up, event)) { scroll_.page_up(state_.entries.size()); return true; }
     if (matches_chord(keys_.page_down, event)) { scroll_.page_down(); return true; }
-    if (matches_chord(keys_.paste_image, event)) { if (auto image = booth::clipboard_image()) { images_.push_back(*image); state_.notice = "image attached"; } else state_.notice = "no image in clipboard"; return true; }
+    if (matches_chord(keys_.paste_image, event)) { booth::paste_clipboard(editor_, images_, state_); return true; }
     if (matches_chord(keys_.editor, event)) {
       if (booth::edit_in_screen(screen_, state_.composer, state_.notice)) {
         editor_.SetContent(state_.composer);
@@ -377,7 +377,7 @@ class Root : public ComponentBase {
     screen_.PostEvent(ftxui::Event::Custom);
   }
   void submit() {
-    std::string text = state_.composer;
+    std::string text = editor_.Expanded(state_.composer);
     const auto first = text.find_first_not_of(" \t\r\n");
     if (first == std::string::npos) return;
     const auto last = text.find_last_not_of(" \t\r\n");
@@ -438,7 +438,7 @@ class Root : public ComponentBase {
     if (booth::handle_library_command(line, state_, library_, cwd_,
                                       {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path()}, editor_)) return;
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
-                                    draft_file_.parent_path(), line, show_thoughts_, tools_hidden_)) {
+                                    draft_file_.parent_path(), line, show_thoughts_, tools_hidden_, &editor_)) {
       if (line == "/help") help_scroll_.reset();
       if (line == "/theme" || line.rfind("/theme ", 0) == 0) screen_.PostEvent(ftxui::Event::Custom);
       return;

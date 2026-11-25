@@ -40,8 +40,9 @@ TEST_CASE("argument suggestions cover fixed, reasoning and model values") {
   auto copy = argument_query(state.composer);
   REQUIRE(copy.has_value());
   const auto copies = matching_arguments(*copy, state);
-  REQUIRE(copies.size() == 2);
+  REQUIRE(copies.size() == 3);
   REQUIRE(copies[0].value == "answer");
+  REQUIRE(copies[2].value == "line");
 
   state.composer = "/model t";
   auto model = argument_query(state.composer);

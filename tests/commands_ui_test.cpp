@@ -6,10 +6,13 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <string_view>
 
 #include "interaction/commands.hpp"
+#include "interaction/editor.hpp"
 #include "interaction/commands_ui.hpp"
 #include "interaction/scroll.hpp"
 #include "interaction/state.hpp"
@@ -302,6 +305,23 @@ TEST_CASE("todo, tools, usage and git report local state") {
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/unpin", false, false));
   REQUIRE(state.notice == "session unpinned");
   std::filesystem::remove(cwd / "session-pins");
+}
+
+TEST_CASE("copy line reads the composer cursor line") {
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  const auto cwd = std::filesystem::temp_directory_path();
+  std::string content = "one\ntwo";
+  Editor editor(content);
+  std::ostringstream captured;
+  auto* previous = std::cout.rdbuf(captured.rdbuf());
+  const bool handled = handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                                            "/copy line", false, false, &editor);
+  std::cout.rdbuf(previous);
+  REQUIRE(handled);
+  REQUIRE(state.notice == "copied line");
+  REQUIRE(captured.str().find("dHdv") != std::string::npos);
 }
 
 TEST_CASE("dequeue moves the newest prompt back into the composer") {

@@ -128,8 +128,11 @@ shows a `bash` tool card, and keeps the command/output out of model context and 
 cards. When shown, a finished thought collapses to `Thought for Ns` and expands when clicked;
 clicking a tool row toggles its expansion. Mouse clicks also select and activate slash, file, model,
 session, history, copy and model-mention rows, place the composer caret, open OSC-8 links, answer
-permission buttons and dismiss help; moving the pointer paints a hover band. Bracketed multi-line pastes are inserted as one edit and newlines never submit.
-`Ctrl+V` attaches a clipboard raster to the next prompt (shown as an `image N` chip);
+permission buttons and dismiss help; moving the pointer paints a hover band. Bracketed multi-line pastes are inserted as one edit and newlines never submit. Pastes longer than
+1000 bytes or 10 lines collapse to `[Paste #N, +L lines]` / `[Paste #N, C chars]`; Backspace or
+Delete removes the whole marker, and sending expands it back to the original text.
+`Ctrl+V` prefers a clipboard raster, then a clipboard path to a PNG/JPEG/WebP/GIF file, then
+clipboard text (shown as an `image N` chip for images);
 `:smile:`-style shortcodes expand when the prompt is sent. Set
 `BOOTH_VIM=1` for OMP-parity modal editing: insert/normal/visual/visual-line/replace, counts,
 `h j k l 0 ^ $ w b e f F t T ; , gg G % { }`, `d/y/c/>/<`, `dd/yy/cc`, `D/C/x`, `p/P`, `u`,

@@ -21,7 +21,7 @@ tools, providers, LSP/DAP, memory, and model routing stay with dsh.
 | Sessions | List, resume, close, refresh, filter, relative age/preview, persistent picker and `/pin`/`/unpin`. |
 | Display | Theme overrides, live reload, notifications, mouse capture modes, effective-keybinding help. |
 | Keys | One or more chords per action; `[]` disables an action; help renders the live bindings. |
-| Clipboard | OSC 52 copy picker over prompts, answers, code, quotes, tools and shell commands, including tmux passthrough. |
+| Clipboard | OSC 52 copy picker over prompts, answers, code, quotes, tools and shell commands; direct `/copy answer`, expanded `/copy prompt`, `/copy line`; image → image-path → text paste fallback; large pastes collapse to atomic markers. |
 | Links | Transcript and unsent-prompt URLs with hint-key picker; OSC-8 clicks. |
 
 ## Blocked by the dsh ACP surface
@@ -53,4 +53,4 @@ dsh. booth renders their tool events and model/config options; it does not reimp
 ./tools/gate.sh
 ```
 
-The gate builds, runs 451 unit/integration/PTY tests, and enforces the 600-line source limit.
+The gate builds, runs 455 unit/integration/PTY tests, and enforces the 600-line source limit.

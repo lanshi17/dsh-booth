@@ -44,3 +44,21 @@ TEST_CASE("clipboard images become base64 attachments") {
   REQUIRE(image->mime_type == "image/png");
   REQUIRE(image->data == "UE5H");
 }
+
+TEST_CASE("a copied image path becomes an attachment") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-clip-path-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  const auto image_path = dir / "shot.png";
+  {
+    std::ofstream out(image_path, std::ios::binary);
+    out << "PNG";
+  }
+  const auto image = clipboard_image_from_path(image_path.string() + "\n");
+  REQUIRE(image.has_value());
+  REQUIRE(image->mime_type == "image/png");
+  REQUIRE(image->data == "UE5H");
+  REQUIRE(image->name == "shot.png");
+  REQUIRE_FALSE(clipboard_image_from_path((dir / "notes.txt").string()));
+  std::filesystem::remove_all(dir);
+}
