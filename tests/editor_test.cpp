@@ -202,6 +202,69 @@ TEST_CASE("vim normal mode edits, pastes and undoes") {
   REQUIRE(content.find("bcd") != std::string::npos);
 }
 
+TEST_CASE("vim named registers yank and put whole lines") {
+  std::string content = "one\ntwo\nthree";
+  Editor editor(content);
+  editor.EnableVim(true);
+  REQUIRE(editor.HandleEvent(Event::Escape));
+  for (const char key : std::string("gg\"ayyj\"ap")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+  REQUIRE(content == "one\ntwo\none\nthree");
+}
+
+TEST_CASE("vim uppercase named registers append") {
+  std::string content = "one\ntwo\nthree";
+  Editor editor(content);
+  editor.EnableVim(true);
+  REQUIRE(editor.HandleEvent(Event::Escape));
+  for (const char key : std::string("gg\"ayyj\"Ayyj\"ap")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+  REQUIRE(content == "one\ntwo\nthree\none\ntwo");
+}
+
+TEST_CASE("vim numbered, small-delete and black-hole registers") {
+  std::string content = "alpha beta\ngamma delta";
+  Editor editor(content);
+  editor.EnableVim(true);
+  REQUIRE(editor.HandleEvent(Event::Escape));
+  for (const char key : std::string("ggyy")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+  for (const char key : std::string("dd\"_dd")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+  REQUIRE(content.empty());
+  for (const char key : std::string("\"0p")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+  REQUIRE(content == "alpha beta");
+}
+
+TEST_CASE("vim numbered delete and small-delete registers") {
+  {
+    std::string content = "one\ntwo";
+    Editor editor(content);
+    editor.EnableVim(true);
+    REQUIRE(editor.HandleEvent(Event::Escape));
+    for (const char key : std::string("ggdd")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+    for (const char key : std::string("\"1p")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+    REQUIRE(content == "two\none");
+  }
+  {
+    std::string content = "ab";
+    Editor editor(content);
+    editor.EnableVim(true);
+    REQUIRE(editor.HandleEvent(Event::Escape));
+    REQUIRE(editor.HandleEvent(Event::Character('x')));
+    for (const char key : std::string("\"-p")) REQUIRE(editor.HandleEvent(Event::Character(key)));
+    REQUIRE(content == "ab");
+  }
+}
+
+TEST_CASE("vim register prefix is echoed while pending") {
+  std::string content = "one";
+  Editor editor(content);
+  editor.EnableVim(true);
+  REQUIRE(editor.HandleEvent(Event::Escape));
+  REQUIRE(editor.HandleEvent(Event::Character('"')));
+  REQUIRE(editor.HandleEvent(Event::Character('a')));
+  REQUIRE(editor.ModeLabel().find("\"a") != std::string::npos);
+  REQUIRE(editor.HandleEvent(Event::Escape));
+  REQUIRE(editor.VimPending().empty());
+}
+
 TEST_CASE("external editor seeds, reads back and trims the scratch file") {
   ScratchDir dir("booth-editor");
   REQUIRE(!dir.path.empty());

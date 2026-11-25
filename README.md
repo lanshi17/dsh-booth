@@ -124,7 +124,8 @@ permission buttons and dismiss help; moving the pointer paints a hover band. Bra
 `BOOTH_VIM=1` for OMP-parity modal editing: insert/normal/visual/visual-line/replace, counts,
 `h j k l 0 ^ $ w b e f F t T ; , gg G % { }`, `d/y/c/>/<`, `dd/yy/cc`, `D/C/x`, `p/P`, `u`,
 `.`, `J`, `r/R`, text objects (`iw aw iW aW`, quotes, brackets, `ip/ap`), desired column and
-sticky `$`. Type `^` anywhere in the prompt for
+sticky `$`. Registers `"a`–`"z` (append with `"A`–`"Z`), `"0`, `"1`–`"9`, `"-` and `"_` work with
+yank, delete and put; Vim yanks and deletes also feed the `Ctrl+Y` kill ring. Type `^` anywhere in the prompt for
 model autocomplete; known mentions become stable `mN` tags carrying their route. The patched dsh
 `subagent` tool lists those aliases in the system prompt and accepts `agent: "m1"`, resolving the
 route in the kernel; aliases persist in the conversation tags and rebuild on resume. `/sessions`

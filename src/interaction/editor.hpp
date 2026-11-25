@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -91,6 +92,8 @@ class Editor {
   void MoveWord(int direction);
   void Kill(std::size_t from, std::size_t to);
   void RememberKill(std::string text);
+  void WriteVimRegister(std::string text, bool linewise, bool yank, char reg);
+  [[nodiscard]] std::string ReadVimRegister(char reg) const;
   void Undo();
   void Redo();
   void BeforeEdit(bool typing);
@@ -104,6 +107,7 @@ class Editor {
   std::vector<Snapshot> undo_;
   std::vector<Snapshot> redo_;
   std::vector<std::string> kill_ring_;
+  std::map<char, std::string> vim_registers_;
   std::size_t kill_pos_{0};
   std::size_t yank_start_{0};
   std::size_t yank_len_{0};

@@ -57,6 +57,8 @@ struct Command {
   bool out{false};
   bool newline{false};
   bool overwrite{false};
+  /// The `"x` register named for this command, or 0 for the unnamed register.
+  char reg{0};
 };
 
 /// End-exclusive span covered by a Visual selection.
@@ -173,6 +175,8 @@ class VimState {
 
   std::string count_;
   Operator operator_{Operator::None};
+  bool register_pending_{false};
+  char register_{0};
   bool pending_g_{false};
   std::string text_object_;
   std::optional<bool> find_forward_;  // set while `f`/`F`/`t`/`T` waits for a target

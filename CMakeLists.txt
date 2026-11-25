@@ -105,9 +105,11 @@ add_library(booth_interaction STATIC
   src/interaction/history.cpp
   src/interaction/word_completion.cpp
   src/interaction/editor.cpp
+  src/interaction/editor_registers.cpp
   src/interaction/editor_vim.cpp
   src/interaction/vim.cpp
   src/interaction/vim_objects.cpp
+  src/interaction/vim_state.cpp
   src/interaction/vim_motions.cpp
   src/interaction/emoji.cpp
   src/interaction/mention.cpp

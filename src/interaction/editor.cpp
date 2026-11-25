@@ -49,6 +49,7 @@ void Editor::Reset() {
   undo_.clear();
   redo_.clear();
   kill_ring_.clear();
+  vim_registers_.clear();
   kill_pos_ = 0;
   yanked_ = false;
   typing_ = false;

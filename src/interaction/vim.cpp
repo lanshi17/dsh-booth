@@ -326,11 +326,15 @@ std::size_t move_word_left(std::string_view text, std::size_t cursor) {
 }
 
 bool VimState::Pending() const {
-  return !count_.empty() || operator_ != Operator::None || pending_g_ || !text_object_.empty() || find_forward_ || replace_char_;
+  return register_pending_ || register_ != 0 || !count_.empty() || operator_ != Operator::None || pending_g_ ||
+         !text_object_.empty() || find_forward_ || replace_char_;
 }
 
 std::string VimState::PendingText() const {
-  std::string text = count_ + operator_text(operator_);
+  std::string text;
+  if (register_pending_) text += "\"";
+  else if (register_ != 0) text += std::string("\"") + register_;
+  text += count_ + operator_text(operator_);
   if (pending_g_) text += "g";
   text += text_object_;
   if (find_forward_) text += find_till_.value_or(false) ? (*find_forward_ ? "t" : "T") : (*find_forward_ ? "f" : "F");
@@ -339,39 +343,6 @@ std::string VimState::PendingText() const {
 }
 
 bool VimState::Visual() const { return mode == Mode::Visual || mode == Mode::VisualLine; }
-
-void VimState::Reset() {
-  mode = Mode::Normal;
-  anchor.reset();
-  desired_col_.reset();
-  ClearPending();
-  last_find_.reset();
-  cmd_keys_.clear();
-  cmd_count_.clear();
-  last_change_.reset();
-  staged_change_.reset();
-}
-
-bool VimState::IsCountKey(std::string_view key) const {
-  return !find_forward_ && !replace_char_ &&
-         ((key.size() == 1 && key[0] >= '1' && key[0] <= '9') || (key == "0" && !count_.empty()));
-}
-
-void VimState::ClearPending() {
-  count_.clear();
-  operator_ = Operator::None;
-  pending_g_ = false;
-  text_object_.clear();
-  find_forward_.reset();
-  find_till_.reset();
-  replace_char_ = false;
-}
-
-int VimState::TakeCount() {
-  const int count = count_.empty() ? 1 : std::max(1, std::stoi(count_));
-  count_.clear();
-  return count;
-}
 
 Position VimState::ClampNormal(const Buffer& buf, Position pos) const {
   const int line = std::max(0, std::min(pos.line, static_cast<int>(buf.lines.size()) - 1));
@@ -389,7 +360,19 @@ std::optional<std::vector<Command>> VimState::HandleKey(std::string_view key, co
   const bool recording = mode == Mode::Normal;
   const bool dot_is_target = find_forward_.has_value() || replace_char_;
   if (recording) (IsCountKey(key) ? cmd_count_ += std::string(key) : cmd_keys_.emplace_back(key));
+  const char captured_register = register_;
   std::vector<Command> commands = Dispatch(key, buf);
+  const bool command_pending = !count_.empty() || operator_ != Operator::None || pending_g_ ||
+                               !text_object_.empty() || find_forward_ || replace_char_;
+  if (captured_register != 0 && !command_pending) {
+    for (Command& command : commands) {
+      if (command.kind == CommandKind::Yank || command.kind == CommandKind::Delete ||
+          command.kind == CommandKind::Paste) {
+        command.reg = captured_register;
+      }
+    }
+    register_ = 0;
+  }
   if (recording && !Pending()) {
     const bool editing = mode == Mode::Insert || mode == Mode::Replace;
     if ((key != "." || dot_is_target) &&
@@ -487,6 +470,11 @@ std::vector<Command> VimState::Dispatch(std::string_view key, const Buffer& buf)
     for (int i = 0; i < count; ++i) text += k;
     return {Command{.kind = CommandKind::Replace, .from = {buf.cursor_line, buf.cursor_col}, .to = {buf.cursor_line, end}, .text = text}};
   }
+  if (register_pending_) {
+    register_pending_ = false;
+    if (k.size() == 1) register_ = k[0];
+    return {};
+  }
   if (IsCountKey(key)) {
     count_ += k;
     return {};
@@ -504,6 +492,10 @@ std::vector<Command> VimState::Dispatch(std::string_view key, const Buffer& buf)
   if (!text_object_.empty()) {
     desired_col_.reset();
     return ApplyTextObject(k, buf);
+  }
+  if (k == "\"" && operator_ == Operator::None) {
+    register_pending_ = true;
+    return {};
   }
   if ((k == "i" || k == "a") && (operator_ != Operator::None || Visual())) {
     text_object_ = k;
