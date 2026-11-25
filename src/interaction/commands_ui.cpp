@@ -196,7 +196,7 @@ bool local_command(const std::string& line) {
          token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find" ||
          token == "/links" || token == "/mouse" || token == "/skills" || token == "/providers" || token == "/settings" ||
          token == "/todo" || token == "/tools" || token == "/usage" || token == "/git" ||
-         token == "/pin" || token == "/unpin";
+         token == "/pin" || token == "/unpin" || token == "/paste";
 }
 
 std::string session_text(const AppState& state, std::size_t queued) {
@@ -220,7 +220,7 @@ std::string acp_text(const AppState& state, bool connected, const std::string& s
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
                           std::size_t queued, const std::string& cwd,
                           const std::filesystem::path& state_dir, const std::string& line,
-                          bool show_thoughts, bool tools_hidden, const Editor* editor) {
+                          bool show_thoughts, bool tools_hidden, Editor* editor) {
   (void)cwd;
   if (line == "/help") {
     state.help = true;
@@ -281,6 +281,17 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
   if (line == "/copy prompt") {
     const std::string prompt = editor == nullptr ? state.composer : editor->Expanded(state.composer);
     state.notice = copy_to_clipboard(prompt) ? "copied prompt" : "nothing to copy";
+    return true;
+  }
+  if (line == "/paste raw") {
+    if (editor == nullptr) {
+      state.notice = "no composer to paste into";
+    } else if (auto text = clipboard_text()) {
+      editor->PasteRaw(*text);
+      state.notice = "raw text pasted";
+    } else {
+      state.notice = "no text in clipboard";
+    }
     return true;
   }
   if (line == "/copy line") {

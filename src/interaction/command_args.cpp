@@ -21,7 +21,7 @@ std::string trim_left(std::string_view text) {
 
 bool known_argument_command(std::string_view command) {
   return command == "/notify" || command == "/mouse" || command == "/effort" || command == "/model" ||
-         command == "/copy";
+         command == "/copy" || command == "/paste";
 }
 
 void append(std::vector<ArgumentHint>& out, std::string value, std::string description) {
@@ -57,6 +57,8 @@ std::vector<ArgumentHint> matching_arguments(const ArgumentQuery& query, const A
     for (const auto& choice : state.reasoning.choices) {
       append(all, choice.name, choice.value);
     }
+  } else if (query.command == "/paste") {
+    append(all, "raw", "paste without collapsing markers");
   } else if (query.command == "/copy") {
     append(all, "answer", "copy the last assistant answer");
     append(all, "prompt", "copy the current composer");

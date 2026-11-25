@@ -307,6 +307,36 @@ TEST_CASE("todo, tools, usage and git report local state") {
   std::filesystem::remove(cwd / "session-pins");
 }
 
+TEST_CASE("paste raw inserts clipboard text without collapsing") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-paste-raw-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  const auto tool = dir / "wl-paste";
+  {
+    std::ofstream out(tool);
+    out << "#!/bin/sh\nprintf 'raw\\ntext'\n";
+  }
+  std::filesystem::permissions(tool, std::filesystem::perms::owner_exec |
+                                         std::filesystem::perms::group_exec |
+                                         std::filesystem::perms::others_exec,
+                               std::filesystem::perm_options::add);
+  const std::string old_path = ::getenv("PATH") == nullptr ? "" : ::getenv("PATH");
+  ::setenv("PATH", (dir.string() + ":" + old_path).c_str(), 1);
+
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  const auto cwd = std::filesystem::temp_directory_path();
+  std::string content;
+  Editor editor(content);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/paste raw",
+                               false, false, &editor));
+  ::setenv("PATH", old_path.c_str(), 1);
+  std::filesystem::remove_all(dir);
+  REQUIRE(content == "raw\ntext");
+  REQUIRE(state.notice == "raw text pasted");
+}
+
 TEST_CASE("copy line reads the composer cursor line") {
   AppState state;
   TranscriptScroll scroll;

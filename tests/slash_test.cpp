@@ -23,7 +23,7 @@ SlashAction press(SlashMenu& menu, AppState& state, ftxui::Event event) {
 
 TEST_CASE("slash menu lists every command for a bare slash") {
   const auto matches = matching_commands("/");
-  REQUIRE(matches.size() == 34);
+  REQUIRE(matches.size() == 35);
   REQUIRE(matches.front()->name == std::string("/help"));
   REQUIRE(contains(matches, "/theme"));
 }
@@ -64,7 +64,7 @@ TEST_CASE("slash menu navigation wraps and pages") {
   REQUIRE(menu.index() == 0);
 
   REQUIRE(press(menu, state, ftxui::Event::ArrowUp) == SlashAction::Handled);
-  REQUIRE(menu.index() == 33);
+  REQUIRE(menu.index() == 34);
   REQUIRE(press(menu, state, ftxui::Event::ArrowDown) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
   REQUIRE(press(menu, state, ftxui::Event::PageDown) == SlashAction::Handled);
@@ -73,7 +73,7 @@ TEST_CASE("slash menu navigation wraps and pages") {
   REQUIRE(press(menu, state, ftxui::Event::PageUp) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
   REQUIRE(press(menu, state, ftxui::Event::End) == SlashAction::Handled);
-  REQUIRE(menu.index() == 33);
+  REQUIRE(menu.index() == 34);
   REQUIRE(press(menu, state, ftxui::Event::Home) == SlashAction::Handled);
   REQUIRE(menu.index() == 0);
 }
@@ -104,11 +104,11 @@ TEST_CASE("Tab completes, Enter submits and Escape dismisses") {
 TEST_CASE("Enter runs a description-only hit only after the selection moves") {
   SlashMenu menu;
   AppState state;
-  state.composer = "/clipboard";
+  state.composer = "/yank";
   menu.sync(state.composer);
   REQUIRE(menu.visible(state.composer, state));
   REQUIRE(press(menu, state, ftxui::Event::Return) == SlashAction::None);
-  REQUIRE(state.composer == "/clipboard");
+  REQUIRE(state.composer == "/yank");
 
   menu.sync(state.composer);
   REQUIRE(press(menu, state, ftxui::Event::ArrowDown) == SlashAction::Handled);

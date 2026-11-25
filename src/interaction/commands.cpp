@@ -46,6 +46,7 @@ const CommandHint kCommandHints[] = {
     {"/git", "working tree branch and changes", "status branch dirty", ""},
     {"/pin", "pin the active session", "sticky top resume", ""},
     {"/unpin", "unpin the active session", "remove pin resume", ""},
+    {"/paste", "paste clipboard text raw", "paste clipboard raw", ""},
     {"/quit", "leave booth", "exit quit", "exit q"},
 };
 

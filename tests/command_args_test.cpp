@@ -44,6 +44,12 @@ TEST_CASE("argument suggestions cover fixed, reasoning and model values") {
   REQUIRE(copies[0].value == "answer");
   REQUIRE(copies[2].value == "line");
 
+  state.composer = "/paste ";
+  auto paste = argument_query(state.composer);
+  REQUIRE(paste.has_value());
+  REQUIRE(matching_arguments(*paste, state).size() == 1);
+  REQUIRE(matching_arguments(*paste, state)[0].value == "raw");
+
   state.composer = "/model t";
   auto model = argument_query(state.composer);
   REQUIRE(model.has_value());
