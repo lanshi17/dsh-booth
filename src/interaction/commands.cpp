@@ -87,7 +87,8 @@ std::optional<std::string> file_command_prompt(const std::string& line) {
   const std::string name = lower_ascii(line.substr(first + 1, end == std::string::npos ? std::string::npos : end - first - 1));
   const auto found = gFileCommands.find(name);
   if (found == gFileCommands.end()) return std::nullopt;
-  const std::string arguments = end == std::string::npos ? std::string{} : line.substr(end);
+  const auto argument_start = end == std::string::npos ? std::string::npos : line.find_first_not_of(" \t", end);
+  const std::string arguments = argument_start == std::string::npos ? std::string{} : line.substr(argument_start);
   return expand_file_command(found->second, arguments);
 }
 
