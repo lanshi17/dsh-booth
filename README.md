@@ -183,6 +183,8 @@ composer.
   `booth.model`, `booth.sessions`, `booth.copy`, `booth.links`, `booth.model_next` and `booth.retry` to `Ctrl`/`Alt`/`Shift` letter chords, `Esc`,
   `Enter`, `Shift+Tab`, arrows or `PageUp`/`PageDown`.
 - Mouse hit-testing uses each row's final FTXUI box, so resizing and scrolling keep clicks exact.
+- `Ctrl+G` seeds its scratch file through the open descriptor in the first writable of `$TMPDIR`,
+  `$XDG_RUNTIME_DIR`, `/tmp` or `/var/tmp`, so a path swap cannot redirect the write.
 - Only Linux is tested; the process layer uses `posix_spawn` and pipes; Vim grapheme clusters use
   ICU. The profile patch for subagent model selection is only written when the profile has no
   `cordis.patch.yml`.

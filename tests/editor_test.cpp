@@ -1,13 +1,73 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include <ftxui/component/event.hpp>
 
 #include "interaction/editor.hpp"
+#include "interaction/external_editor.hpp"
 
 using booth::Editor;
 using ftxui::Event;
+
+namespace {
+
+struct ScratchDir {
+  std::string path;
+
+  explicit ScratchDir(const std::string& prefix) {
+    std::string pattern = "/tmp/" + prefix + "-XXXXXX";
+    std::vector<char> buffer(pattern.begin(), pattern.end());
+    buffer.push_back('\0');
+    if (::mkdtemp(buffer.data()) != nullptr) path = buffer.data();
+    else path.clear();
+  }
+
+  ~ScratchDir() {
+    if (!path.empty()) {
+      std::filesystem::permissions(path, std::filesystem::perms::owner_all,
+                                   std::filesystem::perm_options::add);
+      std::filesystem::remove_all(path);
+    }
+  }
+};
+
+struct RestoreEnv {
+  const char* name;
+  std::optional<std::string> previous;
+
+  explicit RestoreEnv(const char* variable) : name(variable) {
+    const char* value = std::getenv(variable);
+    if (value != nullptr) previous = std::string(value);
+  }
+
+  void set(const std::string& value) { ::setenv(name, value.c_str(), 1); }
+  void unset() { ::unsetenv(name); }
+
+  ~RestoreEnv() {
+    if (previous) ::setenv(name, previous->c_str(), 1);
+    else ::unsetenv(name);
+  }
+};
+
+std::string write_editor(const std::string& dir, const std::string& body) {
+  const std::string path = dir + "/editor.sh";
+  std::ofstream script(path, std::ios::trunc);
+  script << "#!/bin/sh\n" << body << "\n";
+  script.close();
+  ::chmod(path.c_str(), 0700);
+  return path;
+}
+
+}  // namespace
 
 TEST_CASE("the editor inserts, splits and walks lines") {
   std::string content;
@@ -126,4 +186,47 @@ TEST_CASE("vim normal mode edits, pastes and undoes") {
   REQUIRE(content == "bcd");
   REQUIRE(editor.HandleEvent(Event::Character('p')));
   REQUIRE(content.find("bcd") != std::string::npos);
+}
+
+TEST_CASE("external editor seeds, reads back and trims the scratch file") {
+  ScratchDir dir("booth-editor");
+  REQUIRE(!dir.path.empty());
+  RestoreEnv visual("VISUAL");
+  RestoreEnv editor("EDITOR");
+  visual.unset();
+  editor.set(write_editor(dir.path, "printf 'line one\\nline two\\n' > \"$1\""));
+
+  const auto edited = booth::edit_externally("draft");
+  REQUIRE(edited.has_value());
+  REQUIRE(*edited == "line one\nline two");
+}
+
+TEST_CASE("external editor falls back when TMPDIR is not writable") {
+  ScratchDir dir("booth-editor-ro");
+  REQUIRE(!dir.path.empty());
+  const std::string read_only = dir.path + "/read-only";
+  REQUIRE(std::filesystem::create_directory(read_only));
+  REQUIRE(::chmod(read_only.c_str(), 0500) == 0);
+
+  RestoreEnv tmp("TMPDIR");
+  RestoreEnv visual("VISUAL");
+  RestoreEnv editor("EDITOR");
+  tmp.set(read_only);
+  visual.unset();
+  editor.set(write_editor(dir.path, "printf 'fallback text' > \"$1\""));
+
+  const auto edited = booth::edit_externally("draft");
+  REQUIRE(edited.has_value());
+  REQUIRE(*edited == "fallback text");
+}
+
+TEST_CASE("external editor reports a failing editor") {
+  ScratchDir dir("booth-editor-fail");
+  REQUIRE(!dir.path.empty());
+  RestoreEnv visual("VISUAL");
+  RestoreEnv editor("EDITOR");
+  visual.unset();
+  editor.set(write_editor(dir.path, "exit 3"));
+
+  REQUIRE_FALSE(booth::edit_externally("draft").has_value());
 }
