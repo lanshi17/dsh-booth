@@ -7,3 +7,7 @@
 node_modules/
 /build-asan/
 /build-release/
+
+# Local reference checkouts, not part of the build.
+/deepseek-harness/
+/oh-my-pi/
