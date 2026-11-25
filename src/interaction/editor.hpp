@@ -90,6 +90,7 @@ class Editor {
   void MoveVertical(int direction);
   void MoveWord(int direction);
   void Kill(std::size_t from, std::size_t to);
+  void RememberKill(std::string text);
   void Undo();
   void Redo();
   void BeforeEdit(bool typing);
@@ -102,7 +103,11 @@ class Editor {
   std::size_t cursor_{0};
   std::vector<Snapshot> undo_;
   std::vector<Snapshot> redo_;
-  std::string kill_;
+  std::vector<std::string> kill_ring_;
+  std::size_t kill_pos_{0};
+  std::size_t yank_start_{0};
+  std::size_t yank_len_{0};
+  bool yanked_{false};
   bool typing_{false};
   std::unique_ptr<vim::VimState> vim_;
   std::string vim_pending_;

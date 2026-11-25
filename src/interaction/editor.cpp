@@ -48,7 +48,9 @@ void Editor::Reset() {
   cursor_ = 0;
   undo_.clear();
   redo_.clear();
-  kill_.clear();
+  kill_ring_.clear();
+  kill_pos_ = 0;
+  yanked_ = false;
   typing_ = false;
   session_open_ = false;
   replace_log_.clear();
@@ -288,10 +290,18 @@ void Editor::Insert(const std::string& text) {
   cursor_ += text.size();
 }
 
+void Editor::RememberKill(std::string text) {
+  if (text.empty()) return;
+  if (kill_ring_.size() >= 32) kill_ring_.erase(kill_ring_.begin());
+  kill_ring_.push_back(std::move(text));
+  kill_pos_ = kill_ring_.size() - 1;
+  yanked_ = false;
+}
+
 void Editor::Kill(std::size_t from, std::size_t to) {
   if (from >= to) return;
   BeforeEdit(false);
-  kill_ = content_.substr(from, to - from);
+  RememberKill(content_.substr(from, to - from));
   content_.erase(from, to - from);
   cursor_ = from;
 }
@@ -444,9 +454,22 @@ bool Editor::HandleEditingEvent(const ftxui::Event& event) {
     return true;
   }
   if (event.input() == "\x19") {
-    if (kill_.empty()) return true;
+    if (kill_ring_.empty()) return true;
     BeforeEdit(false);
-    Insert(kill_);
+    kill_pos_ = kill_ring_.size() - 1;
+    yank_start_ = cursor_;
+    Insert(kill_ring_[kill_pos_]);
+    yank_len_ = cursor_ - yank_start_;
+    yanked_ = true;
+    return true;
+  }
+  if (event.input() == "\x1by") {
+    if (!yanked_ || kill_ring_.empty() || cursor_ != yank_start_ + yank_len_) return true;
+    content_.erase(yank_start_, yank_len_);
+    cursor_ = yank_start_;
+    kill_pos_ = (kill_pos_ + kill_ring_.size() - 1) % kill_ring_.size();
+    Insert(kill_ring_[kill_pos_]);
+    yank_len_ = cursor_ - yank_start_;
     return true;
   }
   if (event.is_character()) {

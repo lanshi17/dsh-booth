@@ -376,7 +376,7 @@ void Editor::ApplyVimCommands(const std::vector<vim::Command>& commands) {
         break;
       case vim::CommandKind::Yank: {
         const std::string body = slice_range(lines, command.from, command.to, command.linewise);
-        if (!body.empty()) kill_ = body + (command.linewise ? "\n" : "");
+        if (!body.empty()) RememberKill(body + (command.linewise ? "\n" : ""));
         break;
       }
       case vim::CommandKind::Delete: {
@@ -384,7 +384,7 @@ void Editor::ApplyVimCommands(const std::vector<vim::Command>& commands) {
           const int last_line = std::min(command.to.line, static_cast<int>(lines.size()) - 1);
           const std::string removed = slice_range(lines, command.from, command.to, true);
           if (removed.empty() && command.from.line == last_line && lines.size() == 1) break;
-          kill_ = removed + "\n";
+          RememberKill(removed + "\n");
           lines.erase(lines.begin() + clamped(command.from.line, 0, last_line), lines.begin() + last_line + 1);
           if (lines.empty()) lines.emplace_back();
           line = std::min(command.from.line, static_cast<int>(lines.size()) - 1);
@@ -392,7 +392,7 @@ void Editor::ApplyVimCommands(const std::vector<vim::Command>& commands) {
         } else {
           const std::string removed = slice_range(lines, command.from, command.to, false);
           if (removed.empty()) break;
-          kill_ = removed;
+          RememberKill(removed);
           const int start_line = clamped(command.from.line, 0, static_cast<int>(lines.size()) - 1);
           const int end_line = clamped(command.to.line, 0, static_cast<int>(lines.size()) - 1);
           const std::string head = lines[static_cast<std::size_t>(start_line)].substr(
@@ -416,9 +416,10 @@ void Editor::ApplyVimCommands(const std::vector<vim::Command>& commands) {
         break;
       }
       case vim::CommandKind::Paste: {
-        if (kill_.empty()) break;
-        if (kill_.back() == '\n') {
-          const std::vector<std::string> body = split_lines(kill_.substr(0, kill_.size() - 1));
+        if (kill_ring_.empty()) break;
+        const std::string& killed = kill_ring_.back();
+        if (killed.back() == '\n') {
+          const std::vector<std::string> body = split_lines(killed.substr(0, killed.size() - 1));
           const int at = clamped(command.after ? line + 1 : line, 0, static_cast<int>(lines.size()));
           for (int i = 0; i < std::max(1, command.count); ++i) {
             lines.insert(lines.begin() + at, body.begin(), body.end());
@@ -427,7 +428,7 @@ void Editor::ApplyVimCommands(const std::vector<vim::Command>& commands) {
           col = 0;
         } else {
           std::string text;
-          for (int i = 0; i < std::max(1, command.count); ++i) text += kill_;
+          for (int i = 0; i < std::max(1, command.count); ++i) text += killed;
           const std::string& source = lines[static_cast<std::size_t>(clamped(line, 0, static_cast<int>(lines.size()) - 1))];
           const std::size_t at =
               command.after ? vim::next_grapheme_start(source, static_cast<std::size_t>(col)) : static_cast<std::size_t>(col);

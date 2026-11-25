@@ -66,7 +66,8 @@ opens `$VISUAL`/`$EDITOR` on the prompt (`booth.editor` in `keybindings.yml` mov
 effort. The editor supports `Ctrl+Z` undo, `Alt+Z` redo, `Ctrl`/`Alt`+`←`/`→` word movement,
 `!command` runs a local shell command during any turn and `$python` runs Python locally (an
 expression prints its value); neither is sent to the model or saved as prompt history.
-`Ctrl+W`/`Ctrl+U`/`Ctrl+K` kill and `Ctrl+Y` yank, and `Alt+Up` takes a queued prompt back into
+`Ctrl+W`/`Ctrl+U`/`Ctrl+K` kill and `Ctrl+Y` yank; `Alt+Y` replaces the yank with an older kill.
+`Alt+Up` takes a queued prompt back into
 the editor. Drafts taller than eight rows scroll internally with a `↑N` marker; a permission card
 stays above the composer with the transcript visible, reuses the matching tool card's title and
 input, and shows only the choices dsh advertised

@@ -157,6 +157,20 @@ TEST_CASE("kill to line start and end is reversible with yank") {
   REQUIRE(content == "alpha beta");
 }
 
+TEST_CASE("Alt+Y cycles older kills after a yank") {
+  std::string content = "one two three";
+  Editor editor(content);
+  REQUIRE(editor.HandleEvent(Event::Special("\x17")));
+  REQUIRE(editor.HandleEvent(Event::Special("\x17")));
+  REQUIRE(content == "one ");
+  REQUIRE(editor.HandleEvent(Event::Special("\x19")));
+  REQUIRE(content == "one two ");
+  REQUIRE(editor.HandleEvent(Event::Special("\x1by")));
+  REQUIRE(content == "one three");
+  REQUIRE(editor.HandleEvent(Event::Special("\x1by")));
+  REQUIRE(content == "one two ");
+}
+
 TEST_CASE("vim normal mode edits, pastes and undoes") {
   std::string content;
   Editor editor(content);
