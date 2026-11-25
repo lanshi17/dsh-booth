@@ -26,6 +26,17 @@ void ModelPicker::open(const std::vector<ModelChoice>& choices, const std::strin
   visible_ = true;
   query_.clear();
   provider_ = provider;
+  providers_.clear();
+  for (const auto& choice : choices) providers_.push_back(choice.provider);
+  std::sort(providers_.begin(), providers_.end());
+  providers_.erase(std::unique(providers_.begin(), providers_.end()), providers_.end());
+  provider_index_ = 0;
+  if (!provider_.empty()) {
+    for (std::size_t at = 0; at < providers_.size(); ++at) {
+      if (providers_[at] == provider_) { provider_index_ = at + 1; break; }
+    }
+  }
+  model_focus_ = false;
   index_ = 0;
   filter(choices);
   for (std::size_t row = 0; row < matches_.size(); ++row) {
@@ -75,14 +86,39 @@ std::optional<ModelChoice> ModelPicker::key(ftxui::Event& event,
     filter(choices);
     return std::nullopt;
   }
-  if (event == ftxui::Event::ArrowUp ||
-      (event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelUp)) {
+  const bool wheel_up = event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelUp;
+  const bool wheel_down = event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelDown;
+  if ((event == ftxui::Event::ArrowUp || wheel_up) && !model_focus_) {
+    const std::size_t count = providers_.size() + 1;
+    provider_index_ = (provider_index_ + count - 1) % count;
+    provider_ = provider_index_ == 0 ? std::string{} : providers_[provider_index_ - 1];
+    index_ = 0;
+    filter(choices);
+    return std::nullopt;
+  }
+  if ((event == ftxui::Event::ArrowDown || wheel_down) && !model_focus_) {
+    const std::size_t count = providers_.size() + 1;
+    provider_index_ = (provider_index_ + 1) % count;
+    provider_ = provider_index_ == 0 ? std::string{} : providers_[provider_index_ - 1];
+    index_ = 0;
+    filter(choices);
+    return std::nullopt;
+  }
+  if (event == ftxui::Event::ArrowUp || wheel_up) {
     if (!matches_.empty()) index_ = (index_ + matches_.size() - 1) % matches_.size();
     return std::nullopt;
   }
-  if (event == ftxui::Event::ArrowDown ||
-      (event.is_mouse() && event.mouse().button == ftxui::Mouse::WheelDown)) {
+  if (event == ftxui::Event::ArrowDown || wheel_down) {
     if (!matches_.empty()) index_ = (index_ + 1) % matches_.size();
+    return std::nullopt;
+  }
+  if (event == ftxui::Event::ArrowRight ||
+      (event == ftxui::Event::Return && !model_focus_)) {
+    model_focus_ = true;
+    return std::nullopt;
+  }
+  if (event == ftxui::Event::ArrowLeft) {
+    model_focus_ = false;
     return std::nullopt;
   }
   if (event == ftxui::Event::Return) {
@@ -95,6 +131,7 @@ std::optional<ModelChoice> ModelPicker::key(ftxui::Event& event,
     return chosen;
   }
   if (event.is_character()) {
+    model_focus_ = true;
     query_ += event.input();
     filter(choices);
   }

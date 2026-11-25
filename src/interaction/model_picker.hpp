@@ -22,6 +22,9 @@ class ModelPicker {
   [[nodiscard]] bool visible() const { return visible_; }
   [[nodiscard]] std::size_t index() const { return index_; }
   [[nodiscard]] const std::string& query() const { return query_; }
+  [[nodiscard]] const std::string& provider() const { return provider_; }
+  [[nodiscard]] bool model_focus() const { return model_focus_; }
+  [[nodiscard]] const std::vector<std::string>& providers() const { return providers_; }
   [[nodiscard]] const std::vector<std::size_t>& matches() const { return matches_; }
 
   /// Navigates/filters, and returns the chosen model on Enter.
@@ -37,6 +40,9 @@ class ModelPicker {
   std::size_t index_{0};
   std::string query_;
   std::string provider_;
+  std::vector<std::string> providers_;
+  std::size_t provider_index_{0};
+  bool model_focus_{false};
   std::vector<std::size_t> matches_;
 };
 

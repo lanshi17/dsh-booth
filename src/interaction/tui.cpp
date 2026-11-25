@@ -99,6 +99,7 @@ class Root : public ComponentBase {
   Element OnRender() override {
     mouse_.begin_frame();
     if (library_.visible()) return library_.view();
+    if (model_picker_.visible()) return booth::model_picker_view(state_.models, model_picker_.matches(), model_picker_.index(), state_.model, model_picker_.query(), model_picker_.provider(), model_picker_.model_focus(), &mouse_) | ftxui::center;
     if (state_.help) return booth::help_view(help_scroll_.offset(), keys_, &mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
     return main_view();
   }
@@ -135,7 +136,7 @@ class Root : public ComponentBase {
       return true;
     }
     if (state_.permission) { booth::handle_permission_key(event, state_, supervisor_, keys_); return true; }
-    if (library_.visible()) return booth::handle_library_event(event, state_, library_, model_picker_, editor_, {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path()});
+    if (library_.visible()) return booth::handle_library_event(event, state_, library_, editor_, {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path()});
     if (matches_chord(keys_.model_next, event)) { if (auto choice = booth::cycle_model(state_, 1)) apply_model(*choice); return true; }
     if (matches_chord(keys_.retry, event)) { if (!state_.busy && !history_.empty()) send_prompt(history_.back()); return true; }
     if (matches_chord(keys_.reasoning, event)) {
@@ -287,7 +288,6 @@ class Root : public ComponentBase {
           booth::session_picker_view(state_.history, sessions_.matches(), sessions_.index(),
                                      sessions_.loading(), sessions_.query(), &mouse_));
     }
-    if (model_picker_.visible()) view.push_back(booth::model_picker_view(state_.models, model_picker_.matches(), model_picker_.index(), state_.model, model_picker_.query(), &mouse_));
     view.push_back(ftxui::text(" "));
     long busy_seconds = -1;
     std::string spinner;

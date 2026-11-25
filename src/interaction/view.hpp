@@ -123,6 +123,7 @@ ReasoningOptions read_reasoning_options(const nlohmann::json& config_options);
 ftxui::Element model_picker_view(const std::vector<ModelChoice>& choices,
                                  const std::vector<std::size_t>& matches, std::size_t index,
                                  const std::string& current, const std::string& query,
+                                 const std::string& provider, bool model_focus,
                                  MouseRouter* mouse = nullptr);
 
 /// The inline `@path` completion rows.

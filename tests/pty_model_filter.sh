@@ -13,4 +13,5 @@ trap 'rm -rf "$state" "$output"' EXIT
     >"$output" 2>&1 || true
 
 grep -aq "model model-three" "$output"
+grep -aq "All models" "$output"
 grep -aq "effort Low" "$output"

@@ -170,7 +170,7 @@ TEST_CASE("picker views record exact row zones") {
   const std::vector<ModelChoice> choices = {
       {"p", "one", "v1"}, {"p", "two", "v2"}, {"p", "three", "v3"}};
   router.begin_frame();
-  render(model_picker_view(choices, {0, 1, 2}, 0, "one", "", &router));
+  render(model_picker_view(choices, {0, 1, 2}, 0, "one", "", "", false, &router));
   REQUIRE(zone_count(router, MouseSurface::Model) == 3);
   REQUIRE(router.zones().back().index == 2);
 

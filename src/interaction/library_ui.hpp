@@ -65,6 +65,6 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
 
 /// Handles overlay navigation and applies the selection; true while the overlay is visible.
 bool handle_library_event(ftxui::Event& event, AppState& state, LibraryOverlay& overlay,
-                          ModelPicker& models, Editor& editor, const LibrarySettings& settings);
+                          Editor& editor, const LibrarySettings& settings);
 
 }  // namespace booth

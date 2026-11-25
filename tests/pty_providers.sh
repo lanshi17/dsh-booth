@@ -15,3 +15,4 @@ trap 'rm -rf "$state" "$output"' EXIT
 grep -aq "providers" "$output"
 grep -aq "Other" "$output"
 grep -aq "Provider" "$output"
+grep -aq "configured" "$output"

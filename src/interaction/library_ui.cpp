@@ -183,11 +183,14 @@ ftxui::Element LibraryOverlay::view() const {
       rows.push_back(ftxui::text("   ↓ " + std::to_string(matches_.size() - end) + " more") | ftxui::dim);
     }
   }
+  if (kind_ == LibraryKind::Providers) {
+    rows.push_back(ftxui::text(" Configured providers · credentials stay in dsh") | ftxui::dim);
+  }
   rows.push_back(ftxui::text(kind_ == LibraryKind::Skills
                                  ? " Enter inserts /name · Esc closes"
                                  : kind_ == LibraryKind::Settings
                                        ? " Enter toggles · Esc closes"
-                                       : " Enter opens this provider's models · Esc closes")
+                                       : " Enter shows configuration · Esc closes")
                      | ftxui::dim);
   return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 64) |
          ftxui::borderRounded | ftxui::center | ftxui::bgcolor(kPanel);
@@ -232,7 +235,8 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
     std::vector<LibraryRow> rows;
     rows.reserve(providers.size());
     for (const auto& [provider, info] : providers) {
-      std::string detail = std::to_string(info.first) + (info.first == 1 ? " model" : " models");
+      std::string detail = "configured · " + std::to_string(info.first) +
+                           (info.first == 1 ? " model" : " models");
       if (info.second) detail += " · current";
       rows.push_back({provider, provider, std::move(detail)});
     }
@@ -243,7 +247,7 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
 }
 
 bool handle_library_event(ftxui::Event& event, AppState& state, LibraryOverlay& overlay,
-                          ModelPicker& models, Editor& editor, const LibrarySettings& settings) {
+                          Editor& editor, const LibrarySettings& settings) {
   if (!overlay.visible()) return false;
   const LibraryKind kind = overlay.kind();
   const auto chosen = overlay.key(event);
@@ -275,8 +279,12 @@ bool handle_library_event(ftxui::Event& event, AppState& state, LibraryOverlay& 
     state.composer = "/" + *chosen + " ";
     editor.SetContent(state.composer);
   } else if (kind == LibraryKind::Providers) {
-    models.open(state.models, state.model, *chosen);
-    state.notice = "provider " + *chosen;
+    std::size_t count = 0;
+    for (const auto& model : state.models) {
+      if (model.provider == *chosen) ++count;
+    }
+    state.notice = "provider " + *chosen + " · " + std::to_string(count) +
+                   (count == 1 ? " model" : " models") + " · credentials managed by dsh";
   }
   return true;
 }

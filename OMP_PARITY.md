@@ -15,7 +15,8 @@ tools, providers, LSP/DAP, memory, and model routing stay with dsh.
 | Transcript | Markdown, tables, math, syntax fences, tool cards, diffs, todo HUD, errors, queue HUD, search, scrolling, mouse clicks/hover. |
 | Commands | Fuzzy slash menu, aliases, argument completion, Markdown prompt templates from `.booth/commands` and the state directory. |
 | Skills | `/skills` scans dsh project/user roots, lists user-invocable skills and inserts `/name`. |
-| Providers | `/providers` (`/setup`) groups the live model catalog, marks the current provider and drills into a provider-filtered model picker. |
+| Providers | `/providers` (`/setup`) lists configured providers with model counts and the current route; credentials stay in dsh. |
+| Models | `/model` opens a two-pane provider/model browser with search and current-model marker. |
 | Settings | `/settings` toggles thinking, tool cards, tool output, notifications, mouse capture and Vim mode. |
 | Introspection | `/todo`, `/tools`, `/usage` and `/git` report local task, tool, context and working-tree state. |
 | Sessions | List, resume, close, refresh, filter, relative age/preview, persistent picker and `/pin`/`/unpin`. |
@@ -53,4 +54,4 @@ dsh. booth renders their tool events and model/config options; it does not reimp
 ./tools/gate.sh
 ```
 
-The gate builds, runs 456 unit/integration/PTY tests, and enforces the 600-line source limit.
+The gate builds, runs 458 unit/integration/PTY tests, and enforces the 600-line source limit.

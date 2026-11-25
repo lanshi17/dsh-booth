@@ -56,7 +56,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/copy [answer|prompt|line] · /paste raw · /clear clear transcript"},
       {"/retry last prompt · /export markdown transcript"},
       {"/sessions resume · /new fresh · /close stop"},
-      {"/skills list dsh skills · /providers (or /setup) pick a provider"},
+      {"/skills list dsh skills · /providers (or /setup) provider setup"},
       {"/settings toggle thinking, tools, notifications, mouse and Vim"},
       {"/todo [copy|export] · /tools counts · /usage context and stats"},
       {"/git branch and working-tree counts"},

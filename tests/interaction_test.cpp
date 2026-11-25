@@ -1242,7 +1242,7 @@ TEST_CASE("tool footer keeps failure status with duration") {
 
 TEST_CASE("model picker truncates long labels by cells") {
   std::vector<ModelChoice> choices{{"provider", "a-very-long-model-name-that-keeps-going-on", "v"}};
-  auto view = model_picker_view(choices, {0}, 0, "", "");
+  auto view = model_picker_view(choices, {0}, 0, "", "", "", false);
   ftxui::Screen screen(60, 10);
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("…") != std::string::npos);
@@ -1256,6 +1256,18 @@ TEST_CASE("command menu truncates long descriptions") {
   ftxui::Render(screen, std::move(view));
   REQUIRE(screen.ToString().find("…") != std::string::npos);
   ftxui::Terminal::SetFallbackSize({80, 24});
+}
+
+TEST_CASE("model browser renders provider and model panes") {
+  std::vector<ModelChoice> choices = {{"alpha", "one", "a1"}, {"beta", "two", "b2"}};
+  auto view = model_picker_view(choices, {0, 1}, 0, "one", "", "", false, nullptr);
+  ftxui::Screen screen(90, 18);
+  ftxui::Render(screen, std::move(view));
+  const std::string text = screen.ToString();
+  REQUIRE(text.find("providers") != std::string::npos);
+  REQUIRE(text.find("alpha") != std::string::npos);
+  REQUIRE(text.find("beta") != std::string::npos);
+  REQUIRE(text.find("one") != std::string::npos);
 }
 
 TEST_CASE("command menu renders argument suggestions") {

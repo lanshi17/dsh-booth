@@ -461,25 +461,56 @@ ftxui::Element history_search_view(const std::string& query,
 ftxui::Element model_picker_view(const std::vector<ModelChoice>& choices,
                                  const std::vector<std::size_t>& matches, std::size_t index,
                                  const std::string& current, const std::string& query,
+                                 const std::string& provider, bool model_focus,
                                  MouseRouter* mouse) {
-  ftxui::Elements rows;
-  rows.push_back(ftxui::hbox({ftxui::text(" models ") | ftxui::bold | ftxui::color(kAccent),
-                              ftxui::text("type to filter · ↑/↓ · Enter · Esc") | ftxui::dim}));
-  if (!query.empty()) rows.push_back(ftxui::text(" /" + query) | ftxui::color(kText));
+  std::vector<std::pair<std::string, std::size_t>> providers;
+  for (const auto& choice : choices) {
+    auto found = std::find_if(providers.begin(), providers.end(),
+                              [&](const auto& item) { return item.first == choice.provider; });
+    if (found == providers.end()) providers.push_back({choice.provider, 1});
+    else ++found->second;
+  }
+  std::sort(providers.begin(), providers.end(),
+            [](const auto& left, const auto& right) { return left.first < right.first; });
+
+  ftxui::Elements sidebar;
+  const auto provider_row = [&](const std::string& name, std::size_t count, bool selected) {
+    ftxui::Element row = ftxui::hbox({
+        ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
+        ftxui::text(ellipsize(name, 20)) | (selected ? ftxui::bold : ftxui::nothing),
+        ftxui::filler(),
+        ftxui::text(std::to_string(count) + " ") | ftxui::dim,
+    });
+    if (selected) row = row | ftxui::bgcolor(kHover);
+    return row;
+  };
+  sidebar.push_back(ftxui::text(" providers ") | ftxui::bold | ftxui::color(kAccent));
+  sidebar.push_back(provider_row("All models", choices.size(), provider.empty()));
+  for (const auto& [name, count] : providers) {
+    sidebar.push_back(provider_row(name.empty() ? "unrouted" : name, count, provider == name));
+  }
+
+  ftxui::Elements list;
+  list.push_back(ftxui::text(provider.empty() ? " all available models " : " " + provider + " ") |
+                 ftxui::bold | ftxui::color(kAccent));
+  list.push_back(ftxui::text(model_focus ? " ↑/↓ model · Enter select · Esc"
+                                         : " ↑/↓ provider · Enter/→ models")
+                     | ftxui::dim);
+  if (!query.empty()) list.push_back(ftxui::text(" /" + query) | ftxui::color(kText));
   if (matches.empty()) {
-    rows.push_back(ftxui::text(" no matches") | ftxui::dim);
+    list.push_back(ftxui::text(" no matches") | ftxui::dim);
   } else {
-    constexpr std::size_t kRows = 10;
+    constexpr std::size_t kRows = 12;
     std::size_t start = index >= kRows / 2 ? index - kRows / 2 : 0;
     if (start + kRows > matches.size()) start = matches.size() > kRows ? matches.size() - kRows : 0;
     const std::size_t end = std::min(start + kRows, matches.size());
-    if (start > 0) rows.push_back(ftxui::text("   ↑ " + std::to_string(start) + " more") | ftxui::dim);
-    std::string provider;
+    if (start > 0) list.push_back(ftxui::text("   ↑ " + std::to_string(start) + " more") | ftxui::dim);
+    std::string group;
     for (std::size_t row = start; row < end; ++row) {
       const auto& choice = choices[matches[row]];
-      if (choice.provider != provider) {
-        provider = choice.provider;
-        if (!provider.empty()) rows.push_back(ftxui::text("   " + ellipsize(provider, 36)) | ftxui::dim);
+      if (provider.empty() && choice.provider != group) {
+        group = choice.provider;
+        list.push_back(ftxui::text("   " + ellipsize(group, 40)) | ftxui::dim);
       }
       const bool selected = row == index;
       const bool active = choice.name == current;
@@ -487,20 +518,22 @@ ftxui::Element model_picker_view(const std::vector<ModelChoice>& choices,
       ftxui::Element line = ftxui::hbox({
           ftxui::text(selected ? " › " : "   ") | ftxui::color(kAccent),
           ftxui::text(active ? "● " : "  ") | ftxui::color(kGreen),
-          ftxui::text((provider.empty() ? "" : "  ") + ellipsize(choice.name, 32)) |
-              (selected ? ftxui::bold : ftxui::nothing),
+          ftxui::text(ellipsize(choice.name, 22)) | (selected ? ftxui::bold : ftxui::nothing),
           ftxui::filler(),
       });
       paint_row(line, selected, hovered);
-      rows.push_back(hit_row(std::move(line), MouseSurface::Model, row, mouse));
+      list.push_back(hit_row(std::move(line), MouseSurface::Model, row, mouse));
     }
     if (end < matches.size()) {
-      rows.push_back(ftxui::text("   ↓ " + std::to_string(matches.size() - end) + " more") |
-                     ftxui::dim);
+      list.push_back(ftxui::text("   ↓ " + std::to_string(matches.size() - end) + " more") | ftxui::dim);
     }
   }
-  return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 44) |
-         ftxui::borderRounded | ftxui::hcenter | ftxui::bgcolor(kPanel);
+  list.push_back(ftxui::text(" current " + current) | ftxui::dim);
+  return ftxui::hbox({ftxui::vbox(std::move(sidebar)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 28),
+                      ftxui::text("│") | ftxui::dim,
+                      ftxui::vbox(std::move(list)) | ftxui::flex}) |
+         ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 88) | ftxui::borderRounded | ftxui::hcenter |
+         ftxui::bgcolor(kPanel);
 }
 
 ftxui::Element session_picker_view(const std::vector<SessionRow>& sessions,

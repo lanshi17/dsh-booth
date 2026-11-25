@@ -28,7 +28,7 @@ const CommandHint kCommandHints[] = {
     {"/export", "write the transcript as markdown", "save file markdown", ""},
     {"/sessions", "resume a saved session", "list history resume", "resume"},
     {"/skills", "list and invoke dsh skills", "skill invoke catalog", "skill"},
-    {"/providers", "choose a provider and model", "provider models auth", "provider setup"},
+    {"/providers", "configure and inspect providers", "provider setup credentials auth", "provider setup"},
     {"/settings", "toggle booth interaction settings", "preferences options interface", ""},
     {"/new", "start a fresh session", "fresh reset close", ""},
     {"/effort", "set the reasoning effort", "reasoning thinking level", "reasoning"},

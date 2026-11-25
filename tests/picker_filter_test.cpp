@@ -35,6 +35,27 @@ TEST_CASE("model picker filters by typing and accepts the match") {
   REQUIRE_FALSE(picker.visible());
 }
 
+TEST_CASE("model picker navigates providers before models") {
+  std::vector<ModelChoice> choices = {
+      {"alpha", "one", "a1"}, {"alpha", "two", "a2"}, {"beta", "three", "b3"}};
+  ModelPicker picker;
+  picker.open(choices, "three");
+  REQUIRE(picker.provider().empty());
+  REQUIRE_FALSE(picker.model_focus());
+  ftxui::Event down = ftxui::Event::ArrowDown;
+  REQUIRE_FALSE(picker.key(down, choices).has_value());
+  REQUIRE(picker.provider() == "alpha");
+  REQUIRE(picker.matches().size() == 2);
+  ftxui::Event right = ftxui::Event::ArrowRight;
+  REQUIRE_FALSE(picker.key(right, choices).has_value());
+  REQUIRE(picker.model_focus());
+  REQUIRE_FALSE(picker.key(down, choices).has_value());
+  ftxui::Event enter = ftxui::Event::Return;
+  const auto chosen = picker.key(enter, choices);
+  REQUIRE(chosen.has_value());
+  REQUIRE(chosen->value == "a2");
+}
+
 TEST_CASE("session picker filters while keeping refresh and close actions") {
   std::vector<SessionRow> sessions(3);
   sessions[0].id = SessionId{"s-1"};
