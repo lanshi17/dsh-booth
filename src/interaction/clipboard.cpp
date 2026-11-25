@@ -141,7 +141,13 @@ std::string last_answer(const AppState& state) {
 
 std::string clipboard_sequence(const std::string& text) {
   const std::string osc = "\x1b]52;c;" + base64(text) + "\x07";
-  if (std::getenv("TMUX") == nullptr) return osc;
+  const char* tmux = std::getenv("TMUX");
+  const char* force = std::getenv("BOOTH_CLIPBOARD_TMUX");
+  const char* term = std::getenv("TERM");
+  const std::string term_name = term == nullptr ? "" : term;
+  const bool nested = tmux != nullptr || (force != nullptr && *force != '\0' && *force != '0') ||
+                      term_name.starts_with("screen") || term_name.starts_with("tmux");
+  if (!nested) return osc;
   return "\x1bPtmux;\x1b" + osc + "\x1b\\";
 }
 

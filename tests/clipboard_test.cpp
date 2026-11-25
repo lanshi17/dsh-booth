@@ -22,6 +22,26 @@ TEST_CASE("inside tmux the sequence is wrapped for passthrough") {
   REQUIRE(sequence == "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
 }
 
+TEST_CASE("screen and tmux terminals wrap OSC 52 for passthrough") {
+  const char* old_term = ::getenv("TERM");
+  const char* old_tmux = ::getenv("TMUX");
+  const char* old_force = ::getenv("BOOTH_CLIPBOARD_TMUX");
+  const std::string term = old_term == nullptr ? "" : old_term;
+  const std::string tmux = old_tmux == nullptr ? "" : old_tmux;
+  const std::string force = old_force == nullptr ? "" : old_force;
+  ::unsetenv("TMUX");
+  ::unsetenv("BOOTH_CLIPBOARD_TMUX");
+  ::setenv("TERM", "screen-256color", 1);
+  REQUIRE(clipboard_sequence("hi") == "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
+  ::setenv("TERM", "xterm-256color", 1);
+  ::setenv("BOOTH_CLIPBOARD_TMUX", "1", 1);
+  REQUIRE(clipboard_sequence("hi") == "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
+  ::unsetenv("BOOTH_CLIPBOARD_TMUX");
+  if (old_term != nullptr) ::setenv("TERM", term.c_str(), 1); else ::unsetenv("TERM");
+  if (old_tmux != nullptr) ::setenv("TMUX", tmux.c_str(), 1); else ::unsetenv("TMUX");
+  if (old_force != nullptr) ::setenv("BOOTH_CLIPBOARD_TMUX", force.c_str(), 1); else ::unsetenv("BOOTH_CLIPBOARD_TMUX");
+}
+
 TEST_CASE("clipboard images become base64 attachments") {
   const auto dir = std::filesystem::temp_directory_path() /
                    ("booth-clip-" + std::to_string(::getpid()));

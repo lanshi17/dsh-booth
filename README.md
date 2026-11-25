@@ -168,6 +168,7 @@ pickers.
 | `BOOTH_HANDSHAKE_TIMEOUT_S` | `20` |
 | `BOOTH_VIM` | unset (Vim mode off) |
 | `BOOTH_INLINE` | unset (full-screen; set to `1` for inline mode) |
+| `BOOTH_CLIPBOARD_TMUX` | unset (force tmux passthrough when the multiplexer hides `TMUX`) |
 | `OPENCODE_API_KEY` | unset (OpenCode Go route) |
 
 `tools/sync_omp_models.py` imports `~/.omp/agent/models.yml` into the booth profile's
