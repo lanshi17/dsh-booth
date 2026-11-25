@@ -287,6 +287,13 @@ TEST_CASE("todo, tools, usage and git report local state") {
   std::filesystem::remove(cwd / "todos.md");
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/usage", false, false));
   REQUIRE(state.notice.find("entries 3") != std::string::npos);
+  state.composer.clear();
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/copy prompt", false, false));
+  REQUIRE(state.notice == "nothing to copy");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/copy answer", false, false));
+  REQUIRE(state.notice == "nothing to copy");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/session info", false, false));
+  REQUIRE(state.notice.find("session: none") == 0);
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/git", false, false));
   REQUIRE(state.notice == "not a git repository");
   state.session = "s-9";

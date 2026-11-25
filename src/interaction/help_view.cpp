@@ -53,7 +53,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/model auto|<id>"},
       {"/effort [level|next] · Shift+Tab · /context"},
       {"/stats transcript counters"},
-      {"/copy last answer · /clear clear transcript"},
+      {"/copy [answer|prompt] · /clear clear transcript"},
       {"/retry last prompt · /export markdown transcript"},
       {"/sessions resume · /new fresh · /close stop"},
       {"/skills list dsh skills · /providers (or /setup) pick a provider"},

@@ -277,6 +277,14 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     state.notice = stats_text(state, queued);
     return true;
   }
+  if (line == "/copy prompt") {
+    state.notice = copy_to_clipboard(state.composer) ? "copied prompt" : "nothing to copy";
+    return true;
+  }
+  if (line == "/copy answer") {
+    copy_answer(state);
+    return true;
+  }
   if (line == "/usage") {
     state.notice = context_text(state) + " · " + stats_text(state, queued);
     return true;
@@ -365,7 +373,7 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     }
     return true;
   }
-  if (line == "/session") {
+  if (line == "/session" || line == "/session info") {
     state.notice = session_text(state, queued);
     return true;
   }

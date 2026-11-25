@@ -107,7 +107,7 @@ local transcript entries, tools and queued prompts, `/todo` reports the todo HUD
 tool calls by name, and `/git` reports branch/staged/modified/untracked counts. `/new` closes the current session and leaves a clean transcript, while `/clear`
 only clears the local transcript (dsh has no ACP call that clears a live session's context).
 `/queue <text>` enqueues a prompt for when the active turn ends; `Alt+Up` brings the newest
-queued prompt back into the editor. `/session` prints the live ACP session (id, title, model,
+queued prompt back into the editor. `/session` (or `/session info`) prints the live ACP session (id, title, model,
 effort, context, queue), and `/acp` prints the protocol, phase, connection and socket.
 `/attach <path>` adds an ACP `resource_link` to the next prompt (shown as a `file N` status chip);
 `/detach [name|all]` clears pending links, and `/cancel` is the explicit ACP cancel command.
