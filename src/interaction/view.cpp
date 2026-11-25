@@ -375,6 +375,7 @@ ftxui::Element composer_view(const AppState& state, const std::string& cwd,
 
 ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
   const ftxui::Color kChip = ftxui::Color::RGB(18, 18, 18);
+  const int columns = ftxui::Terminal::Size().dimx;
   switch (entry.kind) {
     case EntryKind::Assistant:
       return ftxui::vbox({markdown_view(entry.text, false), ftxui::text(" ")});
@@ -395,8 +396,8 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
       std::string line;
       while (std::getline(input, line)) {
         band.push_back(ftxui::hbox({ftxui::text(" ") | ftxui::bgcolor(kChip),
-                                    inline_words_view(line, false) | ftxui::flex |
-                                        ftxui::bgcolor(kChip)}));
+                                    inline_words_view(line, false, columns - 3) |
+                                        ftxui::flex | ftxui::bgcolor(kChip)}));
       }
       if (band.empty()) {
         band.push_back(ftxui::hbox({ftxui::text(" ") | ftxui::bgcolor(kChip),

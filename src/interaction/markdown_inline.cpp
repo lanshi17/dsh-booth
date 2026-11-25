@@ -4,13 +4,16 @@
 #include "interaction/markdown_util.hpp"
 #include "interaction/theme.hpp"
 
+#include <algorithm>
 #include <cctype>
-#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <ftxui/dom/elements.hpp>
+#include <ftxui/screen/string.hpp>
+#include <ftxui/screen/terminal.hpp>
 
 namespace booth {
 namespace {
@@ -43,9 +46,70 @@ bool is_autolink_target(const std::string& text) {
          starts_with(text, "mailto:");
 }
 
-ftxui::Element inline_words(const std::string& raw, bool dim) {
+bool is_cjk_opening(const std::string& glyph) {
+  static const std::string kOpening = "（【《「『〈〔｛“‘";
+  return !glyph.empty() && kOpening.find(glyph) != std::string::npos;
+}
+
+bool is_cjk_closing(const std::string& glyph) {
+  static const std::string kClosing = "。，、；：！？）】》」』〉〕｝”’…—～·";
+  return !glyph.empty() && kClosing.find(glyph) != std::string::npos;
+}
+
+struct InlinePiece {
+  ftxui::Element element;
+  int width{0};
+  bool space{false};
+};
+
+// TerminalOutput sizes its frame from the document's min_y, but an hflow
+// wrapped paragraph reports one row until it is given a width. Laying the
+// rows out here keeps the reported height equal to the drawn height, so the
+// tail of a wrapped answer is not clipped away.
+ftxui::Element layout_inline(const std::vector<InlinePiece>& pieces, int width) {
+  if (width <= 0) width = std::max(20, ftxui::Terminal::Size().dimx - 3);
+  ftxui::Elements rows;
+  ftxui::Elements row;
+  int used = 0;
+  bool pending_space = false;
+  ftxui::Element pending_element;
+  const auto flush_row = [&] {
+    if (!row.empty()) {
+      rows.push_back(ftxui::hbox(std::move(row)));
+      row.clear();
+    }
+    used = 0;
+  };
+  for (const auto& piece : pieces) {
+    if (piece.space) {
+      if (used > 0) {
+        pending_space = true;
+        pending_element = piece.element;
+      }
+      continue;
+    }
+    const int gap = pending_space ? 1 : 0;
+    if (used > 0 && used + gap + piece.width > width) {
+      flush_row();
+      pending_space = false;
+    }
+    if (pending_space) {
+      row.push_back(pending_element ? pending_element : ftxui::text(" "));
+      pending_element.reset();
+      ++used;
+      pending_space = false;
+    }
+    row.push_back(piece.element);
+    used += std::max(0, piece.width);
+  }
+  flush_row();
+  if (rows.empty()) rows.push_back(ftxui::text(""));
+  return ftxui::vbox(std::move(rows));
+}
+
+ftxui::Element inline_words(const std::string& raw, bool dim, int width) {
   const std::string text = decode_html_entities(raw);
-  ftxui::Elements parts;
+  std::vector<InlinePiece> pieces;
   bool code = false;
   bool bold = false;
   bool italic = false;
@@ -62,12 +126,115 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
     if (strike) part = part | ftxui::strikethrough;
     return part;
   };
+  const auto push = [&](ftxui::Element element, int cells) {
+    pieces.push_back(InlinePiece{std::move(element), cells, false});
+  };
+  const auto push_space = [&] {
+    if (pieces.empty() || pieces.back().space) return;
+    pieces.push_back(InlinePiece{styled(ftxui::text(" ")), 1, true});
+  };
+  const auto for_each_chunk = [&](const std::string& value, auto&& emit) {
+    if (width <= 0 || ftxui::string_width(value) <= width) {
+      emit(value);
+      return;
+    }
+    std::string chunk;
+    int used = 0;
+    for (const auto& glyph : ftxui::Utf8ToGlyphs(value)) {
+      if (glyph.empty()) continue;
+      const int cells = ftxui::string_width(glyph);
+      if (used > 0 && used + cells > width) {
+        emit(chunk);
+        chunk.clear();
+        used = 0;
+      }
+      chunk += glyph;
+      used += cells;
+    }
+    if (!chunk.empty()) emit(chunk);
+  };
+  // CJK text has no spaces, so a whole sentence would be one unbreakable
+  // element. One element per wide glyph keeps every line inside the width;
+  // closing punctuation stays attached to the glyph before it.
+  const auto push_unit = [&](const std::string& unit) {
+    const int cells = ftxui::string_width(unit);
+    if (width <= 0 || cells <= width) {
+      push(styled(ftxui::text(unit)), cells);
+      return;
+    }
+    std::string chunk;
+    int used = 0;
+    for (const auto& glyph : ftxui::Utf8ToGlyphs(unit)) {
+      if (glyph.empty()) continue;
+      const int glyph_cells = ftxui::string_width(glyph);
+      if (used > 0 && used + glyph_cells > width) {
+        push(styled(ftxui::text(chunk)), used);
+        chunk.clear();
+        used = 0;
+      }
+      chunk += glyph;
+      used += glyph_cells;
+    }
+    if (!chunk.empty()) push(styled(ftxui::text(chunk)), used);
+  };
+  const auto push_token = [&](const std::string& token) {
+    std::vector<std::string> units;
+    std::string opening;
+    bool last_wide = false;
+    for (const auto& glyph : ftxui::Utf8ToGlyphs(token)) {
+      if (glyph.empty()) continue;
+      const int cells = ftxui::string_width(glyph);
+      if (cells == 0) {
+        if (!units.empty()) units.back() += glyph;
+        continue;
+      }
+      const bool wide = cells >= 2;
+      if (wide && is_cjk_opening(glyph)) {
+        opening += glyph;
+        continue;
+      }
+      if (wide && is_cjk_closing(glyph) && !units.empty()) {
+        units.back() += glyph;
+        last_wide = false;
+        continue;
+      }
+      if (wide) {
+        units.push_back(opening + glyph);
+        opening.clear();
+        last_wide = true;
+      } else if (!units.empty() && !last_wide) {
+        units.back() += glyph;
+      } else {
+        units.push_back(opening + glyph);
+        opening.clear();
+        last_wide = false;
+      }
+    }
+    if (!opening.empty()) {
+      if (!units.empty()) {
+        units.back() += opening;
+      } else {
+        units.push_back(opening);
+      }
+    }
+    for (const auto& unit : units) push_unit(unit);
+  };
   const auto flush = [&] {
-    std::istringstream words(segment);
-    std::string word;
-    while (words >> word) {
+    for (std::size_t index = 0; index < segment.size();) {
+      if (std::isspace(static_cast<unsigned char>(segment[index]))) {
+        push_space();
+        ++index;
+        continue;
+      }
+      std::size_t end = index;
+      while (end < segment.size() &&
+             !std::isspace(static_cast<unsigned char>(segment[end]))) {
+        ++end;
+      }
+      const std::string token = segment.substr(index, end - index);
+      index = end;
       if (!code) {
-        std::string url = word;
+        std::string url = token;
         std::string suffix;
         if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
           url = url.substr(1, url.size() - 2);
@@ -79,18 +246,20 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
         }
         if (is_autolink_target(url)) {
           const std::string href = starts_with(url, "www.") ? "https://" + url : url;
-          ftxui::Element label =
-              ftxui::text(url) | ftxui::color(kAccent) | ftxui::underlined;
-          if (bold) label = label | ftxui::bold;
-          if (italic) label = label | ftxui::italic;
-          if (strike) label = label | ftxui::strikethrough;
-          if (dim) label = label | ftxui::dim;
-          parts.push_back(ftxui::hyperlink(href, std::move(label)));
-          parts.push_back(styled(ftxui::text(suffix + " ")));
+          for_each_chunk(url, [&](const std::string& part) {
+            ftxui::Element label =
+                ftxui::text(part) | ftxui::color(kAccent) | ftxui::underlined;
+            if (bold) label = label | ftxui::bold;
+            if (italic) label = label | ftxui::italic;
+            if (strike) label = label | ftxui::strikethrough;
+            if (dim) label = label | ftxui::dim;
+            push(ftxui::hyperlink(href, std::move(label)), ftxui::string_width(part));
+          });
+          if (!suffix.empty()) push(styled(ftxui::text(suffix)), ftxui::string_width(suffix));
           continue;
         }
       }
-      parts.push_back(styled(ftxui::text(word + " ")));
+      push_token(token);
     }
     segment.clear();
   };
@@ -133,10 +302,10 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
         if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
           url = url.substr(1, url.size() - 2);
         }
-        ftxui::Element image =
-            ftxui::text(label.empty() ? "[image]" : "[image: " + label + "]") | ftxui::color(kDim);
+        const std::string shown = label.empty() ? "[image]" : "[image: " + label + "]";
+        ftxui::Element image = ftxui::text(shown) | ftxui::color(kDim);
         if (!url.empty()) image = ftxui::hyperlink(url, std::move(image));
-        parts.push_back(std::move(image));
+        push(std::move(image), ftxui::string_width(shown));
         index = url_end + 1;
         continue;
       }
@@ -154,7 +323,7 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
           if (italic) link = link | ftxui::italic;
           if (strike) link = link | ftxui::strikethrough;
           if (dim) link = link | ftxui::dim;
-          parts.push_back(ftxui::hyperlink("mailto:" + inner, std::move(link)));
+          push(ftxui::hyperlink("mailto:" + inner, std::move(link)), ftxui::string_width(inner));
           index = close + 1;
           continue;
         }
@@ -181,12 +350,15 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
         if (url.size() >= 2 && url.front() == '<' && url.back() == '>') {
           url = url.substr(1, url.size() - 2);
         }
-        ftxui::Element link = ftxui::text(label) | ftxui::color(kAccent) | ftxui::underlined;
-        if (bold) link = link | ftxui::bold;
-        if (italic) link = link | ftxui::italic;
-        if (strike) link = link | ftxui::strikethrough;
-        if (dim) link = link | ftxui::dim;
-        parts.push_back(ftxui::hyperlink(url, std::move(link)));
+        for_each_chunk(label, [&](const std::string& part) {
+          ftxui::Element link =
+              ftxui::text(part) | ftxui::color(kAccent) | ftxui::underlined;
+          if (bold) link = link | ftxui::bold;
+          if (italic) link = link | ftxui::italic;
+          if (strike) link = link | ftxui::strikethrough;
+          if (dim) link = link | ftxui::dim;
+          push(ftxui::hyperlink(url, std::move(link)), ftxui::string_width(part));
+        });
         index = url_end + 1;
         continue;
       }
@@ -242,13 +414,13 @@ ftxui::Element inline_words(const std::string& raw, bool dim) {
     segment += text[index++];
   }
   flush();
-  return ftxui::hflow(std::move(parts));
+  return layout_inline(pieces, width);
 }
 
 }  // namespace
 
-ftxui::Element inline_words_view(const std::string& text, bool dim) {
-  return inline_words(text, dim);
+ftxui::Element inline_words_view(const std::string& text, bool dim, int width) {
+  return inline_words(text, dim, width);
 }
 
 }  // namespace booth

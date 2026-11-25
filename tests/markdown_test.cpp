@@ -733,6 +733,76 @@ TEST_CASE("quoted lists style their markers") {
   ftxui::Terminal::SetFallbackSize({80, 24});
 }
 
+
+TEST_CASE("cjk paragraphs wrap without dropping their tail") {
+  const std::string source =
+      "这是一段没有任何空格的中文段落，用来验证折行行为是否正确。如果渲染器不能在汉字之间断行，"
+      "这一整段就会被屏幕右边缘直接裁掉，后面的内容全部丢失，读者永远看不到结尾标记甲。\n"
+      "\n"
+      "结尾标记乙：这一段应该出现在第二行或更后面。\n";
+  const auto lines = split_lines(render_markdown(source, 60, 30));
+  std::string joined;
+  for (const auto& line : lines) {
+    for (const char ch : line) {
+      if (ch != ' ') joined += ch;
+    }
+    REQUIRE(line.rfind("。", 0) != 0);
+    REQUIRE(line.rfind("，", 0) != 0);
+  }
+  REQUIRE(joined.find("标记甲") != std::string::npos);
+  REQUIRE(joined.find("标记乙") != std::string::npos);
+}
+
+TEST_CASE("long code lines wrap instead of losing characters") {
+  const std::string line =
+      "rg --hidden --glob '!build/**' -n \"markdown_view|render_inline|table_view\" src tests "
+      "| sed -n '1,40p' AND-A-UNIQUE-CODE-TAIL";
+  const std::string source = "```bash\n" + line + "\n```\n";
+  const auto lines = split_lines(render_markdown(source, 60, 40));
+  std::string joined;
+  for (const auto& row : lines) {
+    for (const char ch : row) {
+      if (ch != ' ') joined += ch;
+    }
+  }
+  REQUIRE(joined.find("AND-A-UNIQUE-CODE-TAIL") != std::string::npos);
+  REQUIRE(joined.find("--glob") != std::string::npos);
+  REQUIRE(joined.find("render_inline") != std::string::npos);
+  for (const auto& row : lines) {
+    REQUIRE(static_cast<int>(ftxui::string_width(row)) <= 60);
+  }
+}
+
+TEST_CASE("a link keeps the space that follows it") {
+  const std::string text =
+      render_markdown("See [the docs](https://example.com) for details.\n", 60, 6);
+  REQUIRE(text.find("the docs for details") != std::string::npos);
+}
+
+TEST_CASE("an unbreakable inline token wraps instead of vanishing") {
+  const std::string token = "src/a-very-long-directory-name/another-long-segment/" +
+                            std::string("deeply/nested/") +
+                            "file-with-a-very-long-name-that-does-not-fit.cpp";
+  const std::string text = render_markdown("path: " + token + " tail-marker\n", 40, 20);
+  std::string joined;
+  for (const char ch : text) {
+    if (ch != ' ' && ch != '\n' && ch != '\r') joined += ch;
+  }
+  REQUIRE(joined.find("file-with-a-very-long-name-that-does-not-fit.cpp") != std::string::npos);
+  REQUIRE(joined.find("tail-marker") != std::string::npos);
+}
+
+TEST_CASE("a long url wraps instead of being clipped") {
+  const std::string url = "https://example.com/" + std::string(90, 'a') + "-url-tail";
+  const std::string text = render_markdown("see " + url + " after-marker\n", 40, 20);
+  std::string joined;
+  for (const char ch : text) {
+    if (ch != ' ' && ch != '\n' && ch != '\r') joined += ch;
+  }
+  REQUIRE(joined.find("-url-tail") != std::string::npos);
+  REQUIRE(joined.find("after-marker") != std::string::npos);
+}
+
 TEST_CASE("table charts use fractional blocks") {
   std::vector<std::vector<TableCell>> rows{{TableCell{"name", "", false, false, false, false},
                                             TableCell{"value", "", false, false, false, false}}};

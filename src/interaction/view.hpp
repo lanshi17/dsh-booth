@@ -74,7 +74,7 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools = f
 ftxui::Element markdown_view(const std::string& text, bool dim);
 
 /// Inline emphasis/code spans for one line (used by the user band).
-ftxui::Element inline_words_view(const std::string& text, bool dim);
+ftxui::Element inline_words_view(const std::string& text, bool dim, int width = 0);
 
 /// One scrollable row of the help card.
 struct HelpLine {
