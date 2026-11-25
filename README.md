@@ -55,7 +55,7 @@ spill notices stay visible with omitted bytes and the recovery path, read cards 
 gutter, generic JSON tool output pretty-prints as an indented tree, and a diff shows old/new line
 numbers, stopping at 40 lines until `Ctrl+O`; edit/write cards title the path with +/− stats, and
 `apply_patch` cards split per file with A/M/D labels and per-file +/− stats. `/copy` opens a
-filterable picker over answers, fenced code, blockquotes, tool
+filterable picker over prompts, answers, fenced code, blockquotes, tool
 output and shell commands, copying with OSC 52 (tmux passthrough included); `/export [path]` writes
 the full transcript as Markdown (default:
 `$BOOTH_STATE_DIR/transcript-<timestamp>.md`). `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk the prompt history,

@@ -100,6 +100,12 @@ bool CopyPicker::open(const AppState& state) {
       items_.push_back({label + first_line(text, 32), text});
       continue;
     }
+    if (entry->kind == EntryKind::User) {
+      if (!entry->text.empty()) {
+        items_.push_back({"prompt · " + first_line(entry->text, 48), entry->text});
+      }
+      continue;
+    }
     if (entry->kind != EntryKind::Assistant) continue;
     if (!entry->text.empty()) {
       items_.push_back({"answer · " + first_line(entry->text, 48), entry->text});

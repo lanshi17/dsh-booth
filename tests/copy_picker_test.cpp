@@ -21,10 +21,24 @@ TEST_CASE("copy picker lists assistant answers and fenced code") {
 
   CopyPicker picker;
   REQUIRE(picker.open(state));
-  REQUIRE(picker.items().size() == 2);
-  REQUIRE(picker.items()[0].label.rfind("answer ·", 0) == 0);
-  REQUIRE(picker.items()[1].label == "code · cpp");
-  REQUIRE(picker.items()[1].text == "int x = 1;\n");
+  REQUIRE(picker.items().size() == 3);
+  REQUIRE(picker.items()[0].label == "prompt · question");
+  REQUIRE(picker.items()[1].label.rfind("answer ·", 0) == 0);
+  REQUIRE(picker.items()[2].label == "code · cpp");
+  REQUIRE(picker.items()[2].text == "int x = 1;\n");
+}
+
+TEST_CASE("copy picker includes user prompts") {
+  AppState state;
+  TranscriptEntry prompt;
+  prompt.kind = EntryKind::User;
+  prompt.text = "please fix the build";
+  state.entries.push_back(prompt);
+  CopyPicker picker;
+  REQUIRE(picker.open(state));
+  REQUIRE(picker.items().size() == 1);
+  REQUIRE(picker.items()[0].label.rfind("prompt ·", 0) == 0);
+  REQUIRE(picker.items()[0].text == "please fix the build");
 }
 
 TEST_CASE("copy picker navigates, copies and cancels") {
