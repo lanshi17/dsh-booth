@@ -26,6 +26,9 @@ std::string link_hint(std::size_t index);
 std::vector<TranscriptLink> collect_transcript_links(
     const std::vector<TranscriptEntry>& entries);
 
+/// Collects the same URL forms from one piece of text, such as an unsent prompt.
+std::vector<TranscriptLink> collect_text_links(std::string_view text);
+
 /// Alt+L / `/links`: a keyboard hint picker over the transcript's links.
 class LinkPicker {
  public:

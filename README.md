@@ -103,7 +103,7 @@ effort, context, queue), and `/acp` prints the protocol, phase, connection and s
 `/detach [name|all]` clears pending links, and `/cancel` is the explicit ACP cancel command.
 `/find <text>` searches the visible transcript and cycles older matches on repeated calls; cards
 hidden by thinking or tool toggles are skipped, so a match always lands on a drawn row.
-`/links` (or `Alt+L`) lists openable URLs from user, assistant and tool output with `a`–`z`/`A`–`Z`
+`/links` (or `Alt+L`) lists openable URLs from user, assistant and tool output, plus the unsent prompt, with `a`–`z`/`A`–`Z`
 hint keys; Enter or a
 hint opens the selection and Esc closes. `/mouse` reports capture; `/mouse on|off` persists it.
 Capture defaults off inside tmux so wheel scrollback and native/tmux selection copy work; turn it

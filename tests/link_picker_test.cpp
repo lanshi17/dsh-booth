@@ -54,6 +54,27 @@ TEST_CASE("link picker filters non-openable URLs and assigns stable hints") {
   REQUIRE(link_hint(52) == "?");
 }
 
+TEST_CASE("link picker collects URLs from an unsent prompt") {
+  const auto links = collect_text_links("ref [spec](https://spec.test/a) and https://spec.test/a and https://typed.test/b");
+  REQUIRE(links.size() == 2);
+  REQUIRE(links[0].url == "https://spec.test/a");
+  REQUIRE(links[1].url == "https://typed.test/b");
+  REQUIRE(links[0].hint == "a");
+  REQUIRE(links[1].hint == "b");
+}
+
+TEST_CASE("link picker merges composer URLs after transcript URLs") {
+  AppState state;
+  state.entries.push_back(entry(EntryKind::Assistant, "https://a.test"));
+  state.composer = "use https://typed.test/x and https://a.test again";
+  LinkPicker picker;
+  REQUIRE(picker.open(state));
+  REQUIRE(picker.items().size() == 2);
+  REQUIRE(picker.items()[0].url == "https://a.test");
+  REQUIRE(picker.items()[1].url == "https://typed.test/x");
+  REQUIRE(picker.items()[1].hint == "b");
+}
+
 TEST_CASE("link picker opens, navigates and selects hints without launching a browser") {
   AppState state;
   state.entries.push_back(entry(EntryKind::Assistant, "https://a.test https://b.test"));

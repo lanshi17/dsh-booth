@@ -152,6 +152,18 @@ std::string link_hint(std::size_t index) {
   return "?";
 }
 
+void append_links(const std::vector<Candidate>& candidates, std::vector<TranscriptLink>& links) {
+  for (const auto& candidate : candidates) {
+    if (!is_openable_url(candidate.url)) continue;
+    const bool seen = std::any_of(links.begin(), links.end(), [&](const TranscriptLink& link) {
+      return link.url == candidate.url;
+    });
+    if (seen) continue;
+    links.push_back(TranscriptLink{candidate.url, host_of(candidate.url),
+                                   link_hint(links.size())});
+  }
+}
+
 std::vector<TranscriptLink> collect_transcript_links(
     const std::vector<TranscriptEntry>& entries) {
   std::vector<Candidate> candidates;
@@ -173,20 +185,33 @@ std::vector<TranscriptLink> collect_transcript_links(
                    });
 
   std::vector<TranscriptLink> links;
-  for (const auto& candidate : candidates) {
-    if (!is_openable_url(candidate.url)) continue;
-    const bool seen = std::any_of(links.begin(), links.end(), [&](const TranscriptLink& link) {
-      return link.url == candidate.url;
-    });
-    if (seen) continue;
-    links.push_back(TranscriptLink{candidate.url, host_of(candidate.url),
-                                   link_hint(links.size())});
-  }
+  append_links(candidates, links);
+  return links;
+}
+
+std::vector<TranscriptLink> collect_text_links(std::string_view text) {
+  const std::string body(text);
+  std::vector<Candidate> candidates;
+  markdown_candidates(body, 0, candidates);
+  bare_candidates(body, 0, candidates);
+  std::stable_sort(candidates.begin(), candidates.end(),
+                   [](const Candidate& left, const Candidate& right) {
+                     return left.position < right.position;
+                   });
+  std::vector<TranscriptLink> links;
+  append_links(candidates, links);
   return links;
 }
 
 bool LinkPicker::open(const AppState& state) {
   items_ = collect_transcript_links(state.entries);
+  for (auto& link : collect_text_links(state.composer)) {
+    const bool seen = std::any_of(items_.begin(), items_.end(),
+                                  [&](const TranscriptLink& item) { return item.url == link.url; });
+    if (seen) continue;
+    link.hint = link_hint(items_.size());
+    items_.push_back(std::move(link));
+  }
   index_ = 0;
   visible_ = true;
   return !items_.empty();
