@@ -4,9 +4,9 @@
 keystrokes into prompts, cancels and permission answers.
 
 ```
- boo CLI ──┬── run ───────────────┐
-           ├── supervisor ────────┤
-           └── daemon (socket) ───┤
+ booth CLI ──┬── run ───────────────┐
+            ├── supervisor ────────┤
+            └── daemon (socket) ───┤
                                   ▼
                           Supervisor (posix_spawn)
                                   │ stdio JSON-RPC
@@ -24,8 +24,8 @@ keystrokes into prompts, cancels and permission answers.
 
 `booth run` starts an in-process supervisor, opens a session, sends one prompt and exits.
 `booth up` detaches the daemon; `run` and the TUI then connect to its Unix socket and forward
-ACP traffic. `sessions`, `status` and `logs` read from the kernel or the state dir. `profile
-init` writes the overlay file and creates the dsh profile package if needed.
+ACP traffic. `sessions`, `status` and `logs` read from the kernel or the state dir. The profile
+package and its overlay file are created by the supervisor's config layer on first start.
 
 ### Supervisor
 
@@ -47,10 +47,10 @@ inbox.
 `src/interaction/state.cpp` is the only mutation point: it applies one `Event` to `AppState`.
 `view.cpp` renders that state as FTXUI elements; `scroll.cpp` windows the transcript and keeps a
 reader's place when new entries arrive; `tui.cpp` owns the component tree, input, history,
-commands and the worker that sends ACP requests. The app uses FTXUI's inline
-`TerminalOutput` mode: the splash is printed once into the scrollback, and the component is the
-transcript plus omp's two-row composer (status chips on the top border, input merged into the
-bottom border).
+commands and the worker that sends ACP requests. The TUI renders full-screen in the alternate
+screen by default; `BOOTH_INLINE=1` switches to FTXUI's inline `TerminalOutput` mode, where the
+splash is printed once into the scrollback. Either way the component is the transcript plus omp's
+two-row composer (status chips on the top border, input merged into the bottom border).
 
 ### Profile
 
