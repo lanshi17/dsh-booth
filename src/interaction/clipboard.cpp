@@ -169,7 +169,14 @@ std::optional<acp::ImageAttachment> clipboard_image() {
 bool clipboard_is_remote() { return ssh_session(); }
 
 std::optional<std::string> clipboard_text() {
-  if (ssh_session()) return std::nullopt;
+  if (ssh_session()) {
+    const char* tmux = std::getenv("TMUX");
+    if (tmux == nullptr || *tmux == '\0') return std::nullopt;
+    std::string buffered = capture("tmux show-buffer 2>/dev/null");
+    if (buffered.empty()) buffered = capture("tmux save-buffer - 2>/dev/null");
+    if (buffered.empty() || buffered.size() > 1024 * 1024) return std::nullopt;
+    return buffered;
+  }
   std::string text;
   const char* wayland = std::getenv("WAYLAND_DISPLAY");
   if (wayland != nullptr && *wayland != '\0') {
@@ -185,7 +192,12 @@ std::optional<std::string> clipboard_text() {
 
 void paste_clipboard(Editor& editor, std::vector<acp::ImageAttachment>& images, AppState& state) {
   if (clipboard_is_remote()) {
-    state.notice = "clipboard is remote over SSH; use your terminal's paste (Ctrl+Shift+V)";
+    if (auto text = clipboard_text()) {
+      editor.Paste(*text);
+      state.notice = "tmux buffer pasted";
+    } else {
+      state.notice = "clipboard is remote over SSH; use terminal paste (Ctrl+Shift+V / tmux prefix+])";
+    }
     return;
   }
   if (auto image = clipboard_image()) {
@@ -214,23 +226,47 @@ std::string last_answer(const AppState& state) {
 }
 
 std::string clipboard_sequence(const std::string& text) {
-  const std::string osc = "\x1b]52;c;" + base64(text) + "\x07";
-  const char* tmux = std::getenv("TMUX");
-  const char* force = std::getenv("BOOTH_CLIPBOARD_TMUX");
-  const char* term = std::getenv("TERM");
-  const std::string term_name = term == nullptr ? "" : term;
-  const bool ssh = std::getenv("SSH_CONNECTION") != nullptr || std::getenv("SSH_TTY") != nullptr ||
-                   std::getenv("SSH_CLIENT") != nullptr;
-  const bool nested = tmux != nullptr || (force != nullptr && *force != '\0' && *force != '0') ||
-                      (ssh && (term_name.starts_with("screen") || term_name.starts_with("tmux")));
-  if (!nested) return osc;
-  return "\x1bPtmux;\x1b" + osc + "\x1b\\";
+  return "\x1b]52;c;" + base64(text) + "\x07";
+}
+
+std::string clipboard_passthrough_sequence(const std::string& text) {
+  return "\x1bPtmux;\x1b" + clipboard_sequence(text) + "\x1b\\";
+}
+
+bool tmux_allows_passthrough() {
+  if (std::getenv("TMUX") == nullptr) return false;
+  const char* pane = std::getenv("TMUX_PANE");
+  std::string command = "tmux show-options -Apqv ";
+  if (pane != nullptr && *pane != '\0') {
+    command += "-t ";
+    command += pane;
+    command += " ";
+  }
+  command += "allow-passthrough 2>/dev/null";
+  const std::string value = capture(command);
+  const auto first = value.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return false;
+  const auto last = value.find_last_not_of(" \t\r\n");
+  const std::string mode = value.substr(first, last - first + 1);
+  return mode == "on" || mode == "all";
 }
 
 bool copy_to_clipboard(const std::string& text) {
   if (text.empty()) return false;
+  // Raw OSC 52 is what tmux understands natively (set-clipboard) and what a
+  // direct terminal consumes. Only add the DCS envelope when tmux 3.3+ has
+  // allow-passthrough enabled; otherwise tmux silently drops wrapped payloads.
   std::cout << clipboard_sequence(text) << std::flush;
+  const char* force = std::getenv("BOOTH_CLIPBOARD_TMUX");
+  if (tmux_allows_passthrough() || (force != nullptr && *force != '\0' && *force != '0')) {
+    std::cout << clipboard_passthrough_sequence(text) << std::flush;
+  }
   copy_native(text);  // best-effort local clipboard; OSC 52 already emitted above
+  if (std::getenv("TMUX") != nullptr) {
+    // Also owns tmux's paste buffer, so prefix+] works even when the outer
+    // terminal blocks OSC 52 and allow-passthrough is off.
+    feed("tmux load-buffer - 2>/dev/null", text);
+  }
   return true;
 }
 

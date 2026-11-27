@@ -14,8 +14,11 @@ class Editor;
 /// The last committed assistant answer, or the live stream when no answer is committed yet.
 std::string last_answer(const AppState& state);
 
-/// The OSC 52 sequence for a terminal clipboard, wrapped for tmux passthrough when `$TMUX` is set.
+/// The raw OSC 52 sequence; tmux handles this natively via set-clipboard.
 std::string clipboard_sequence(const std::string& text);
+
+/// The tmux DCS envelope used only when allow-passthrough is enabled.
+std::string clipboard_passthrough_sequence(const std::string& text);
 
 /// Writes the text to the terminal clipboard with OSC 52. Returns false for empty text.
 bool copy_to_clipboard(const std::string& text);

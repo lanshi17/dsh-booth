@@ -64,7 +64,7 @@ tools, providers, LSP/DAP, memory, and model routing stay with dsh.
 | Session lifecycle | `/rename`, `/fork`, `/branch [seq]`, `/tree` and `/delete` use the harness's persisted session log and fork seed. |
 | Display | Theme overrides, live reload, notifications, mouse capture modes, effective-keybinding help. |
 | Keys | One or more chords per action; `[]` disables an action; help renders the live bindings. |
-| Clipboard | OSC 52 copy picker over prompts, answers, code, quotes, tools and shell commands, plus local `wl-copy`/`xclip`/`pbcopy` fallback; direct `/copy answer|prompt|line|code|cmd|link|local`; Ctrl+V checks image magic → image path → text; SSH reads are skipped with a terminal-paste hint; large pastes collapse to atomic markers. |
+| Clipboard | OSC 52 copy picker over prompts, answers, code, quotes, tools and shell commands, plus tmux `load-buffer`, conditional tmux passthrough and local `wl-copy`/`xclip`/`pbcopy`; direct `/copy answer|prompt|line|code|cmd|link|local`; Ctrl+V checks image magic → image path → text; SSH+tmux reads `tmux show-buffer`, other remote sessions use the terminal-paste hint; large pastes collapse to atomic markers. |
 | Links | Transcript and unsent-prompt URLs with hint-key picker; OSC-8 clicks. |
 
 ## Command inventory

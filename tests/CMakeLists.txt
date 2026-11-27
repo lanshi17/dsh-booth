@@ -244,6 +244,10 @@ add_test(NAME pty_vim
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_vim.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
 
+add_test(NAME pty_tmux_clipboard
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_tmux_clipboard.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 add_test(NAME pty_image
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_image.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

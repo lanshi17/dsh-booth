@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <sstream>
 #include <string>
 
 #include "interaction/clipboard.hpp"
@@ -15,35 +17,52 @@ TEST_CASE("copy emits an OSC 52 sequence") {
   REQUIRE(clipboard_sequence("hi") == "\x1b]52;c;aGk=\x07");
 }
 
-TEST_CASE("inside tmux the sequence is wrapped for passthrough") {
-  ::setenv("TMUX", "/tmp/tmux-1000/default,1,0", 1);
-  const std::string sequence = clipboard_sequence("hi");
-  ::unsetenv("TMUX");
-  REQUIRE(sequence == "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
+TEST_CASE("tmux keeps raw OSC 52 and offers a separate passthrough envelope") {
+  REQUIRE(clipboard_sequence("hi") == "\x1b]52;c;aGk=\x07");
+  REQUIRE(clipboard_passthrough_sequence("hi") ==
+          "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
 }
 
-TEST_CASE("screen and tmux terminals wrap OSC 52 for passthrough") {
-  const char* old_term = ::getenv("TERM");
+TEST_CASE("tmux buffer is copied and read over SSH") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-tmux-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  const auto log = dir / "buffer.txt";
+  const auto tool = dir / "tmux";
+  {
+    std::ofstream out(tool);
+    out << "#!/bin/sh\n"
+           "case \"$1\" in\n"
+           "  show-buffer|save-buffer) printf 'tmux buffered';;\n"
+           "  load-buffer) cat > \"" << log.string() << "\";;\n"
+           "  show-options) printf 'off';;\n"
+           "esac\n";
+  }
+  std::filesystem::permissions(tool, std::filesystem::perms::owner_exec |
+                                         std::filesystem::perms::group_exec |
+                                         std::filesystem::perms::others_exec,
+                               std::filesystem::perm_options::add);
+  const std::string old_path = ::getenv("PATH") == nullptr ? "" : ::getenv("PATH");
   const char* old_tmux = ::getenv("TMUX");
-  const char* old_force = ::getenv("BOOTH_CLIPBOARD_TMUX");
   const char* old_ssh = ::getenv("SSH_CONNECTION");
-  const std::string term = old_term == nullptr ? "" : old_term;
-  const std::string tmux = old_tmux == nullptr ? "" : old_tmux;
-  const std::string force = old_force == nullptr ? "" : old_force;
-  ::unsetenv("TMUX");
-  ::unsetenv("BOOTH_CLIPBOARD_TMUX");
+  ::setenv("PATH", (dir.string() + ":" + old_path).c_str(), 1);
+  ::setenv("TMUX", "/tmp/tmux-1000/default,1,0", 1);
   ::setenv("SSH_CONNECTION", "10.0.0.1 1 10.0.0.2 2", 1);
-  ::setenv("TERM", "screen-256color", 1);
-  REQUIRE(clipboard_sequence("hi") == "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
-  ::setenv("TERM", "xterm-256color", 1);
-  ::setenv("BOOTH_CLIPBOARD_TMUX", "1", 1);
-  REQUIRE(clipboard_sequence("hi") == "\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\");
-  ::unsetenv("BOOTH_CLIPBOARD_TMUX");
-  ::unsetenv("SSH_CONNECTION");
-  if (old_term != nullptr) ::setenv("TERM", term.c_str(), 1); else ::unsetenv("TERM");
-  if (old_tmux != nullptr) ::setenv("TMUX", tmux.c_str(), 1); else ::unsetenv("TMUX");
-  if (old_force != nullptr) ::setenv("BOOTH_CLIPBOARD_TMUX", force.c_str(), 1); else ::unsetenv("BOOTH_CLIPBOARD_TMUX");
+  const auto text = clipboard_text();
+  REQUIRE(text.has_value());
+  REQUIRE(*text == "tmux buffered");
+  std::ostringstream captured;
+  auto* previous = std::cout.rdbuf(captured.rdbuf());
+  REQUIRE(copy_to_clipboard("hello"));
+  std::cout.rdbuf(previous);
+  std::ifstream input(log);
+  const std::string copied((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+  REQUIRE(copied == "hello");
+  REQUIRE(captured.str().find("\x1b]52;c;") != std::string::npos);
+  ::setenv("PATH", old_path.c_str(), 1);
+  if (old_tmux != nullptr) ::setenv("TMUX", old_tmux, 1); else ::unsetenv("TMUX");
   if (old_ssh != nullptr) ::setenv("SSH_CONNECTION", old_ssh, 1); else ::unsetenv("SSH_CONNECTION");
+  std::filesystem::remove_all(dir);
 }
 
 TEST_CASE("clipboard images become base64 attachments") {

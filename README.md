@@ -58,9 +58,10 @@ gutter, generic JSON tool output pretty-prints as an indented tree, and a diff s
 numbers, stopping at 40 lines until `Ctrl+O`; edit/write cards title the path with +/− stats, and
 `apply_patch` cards split per file with A/M/D labels and per-file +/− stats. `/copy` opens a
 filterable picker over prompts, answers, fenced code, blockquotes, tool
-output and shell commands, copying with OSC 52 (tmux passthrough included) and, on a local
-session, through `wl-copy`/`xclip`/`pbcopy` as a fallback. Over SSH native clipboard reads are
-skipped because they belong to the remote host; use the terminal's paste chord. If the terminal
+output and shell commands, copying with raw OSC 52, tmux's own paste buffer (`tmux load-buffer`)
+and, on a local session, `wl-copy`/`xclip`/`pbcopy`. A tmux DCS passthrough envelope is added only
+when `allow-passthrough` is on; tmux 3.3+ otherwise drops wrapped sequences. Over SSH+tmux `Ctrl+V` reads `tmux show-buffer`, so booth's own copy is immediately pasteable;
+outside that, use the terminal's paste chord (`Ctrl+Shift+V` / `tmux prefix+]`). If the terminal
 blocks OSC 52, run inline (`BOOTH_INLINE=1`) with `/mouse off` and select/copy through the
 terminal's native scrollback. `/export [--themes] [path]` writes a self-contained HTML
 transcript (default: `$BOOTH_STATE_DIR/transcript-<timestamp>.html`); a `.md` or `.markdown`

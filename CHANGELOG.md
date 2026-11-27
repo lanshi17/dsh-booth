@@ -36,8 +36,10 @@
 - `/providers` retries the control directory during startup instead of silently
   showing model-derived rows with a misleading edit hint.
 - Clipboard copy now falls back to `wl-copy`/`xclip`/`pbcopy` locally, while
-  Ctrl+V validates image magic so xclip text no longer attaches as an image;
-  SSH pastes explain that the terminal owns the clipboard.
+  Ctrl+V validates image magic so xclip text no longer attaches as an image.
+- tmux now receives raw OSC 52 plus `tmux load-buffer`; the DCS passthrough
+  envelope is conditional on `allow-passthrough` (3.3+ drops it when off), and
+  SSH+tmux Ctrl+V reads `tmux show-buffer`.
 - Provider edits skip unchanged `api`/`models`/`baseURL` fields, preserving rich
   model entries such as per-model context windows and reasoning capabilities.
 - The external provider editor requests a full repaint and a synthetic frame after

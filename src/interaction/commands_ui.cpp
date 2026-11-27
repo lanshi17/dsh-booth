@@ -356,11 +356,11 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
   if (line == "/paste raw") {
     if (editor == nullptr) {
       state.notice = "no composer to paste into";
-    } else if (clipboard_is_remote()) {
-      state.notice = "clipboard is remote over SSH; use your terminal's paste (Ctrl+Shift+V)";
     } else if (auto text = clipboard_text()) {
       editor->PasteRaw(*text);
-      state.notice = "raw text pasted";
+      state.notice = clipboard_is_remote() ? "tmux buffer pasted" : "raw text pasted";
+    } else if (clipboard_is_remote()) {
+      state.notice = "clipboard is remote over SSH; use terminal paste (Ctrl+Shift+V / tmux prefix+])";
     } else {
       state.notice = "no text in clipboard";
     }
