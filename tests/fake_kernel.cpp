@@ -123,6 +123,9 @@ json control_reply(const std::string& method, const json& params) {
     return {{"provider", provider}, {"baseURL", params.value("baseURL", std::string{})},
             {"text", "Updated " + provider + "."}};
   }
+  if (method == "providers.discover") {
+    return {{"text", "models for mock (2)\n  one — One · 128k ctx\n  two"}};
+  }
   if (method == "providers.remove") {
     const std::string provider = params.value("provider", std::string{"mock"});
     return {{"text", "Removed user configuration for " + provider + "; profile defaults remain."}};

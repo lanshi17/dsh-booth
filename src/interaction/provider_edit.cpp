@@ -102,9 +102,17 @@ bool handle_provider_command(ControlClient& control, ftxui::ScreenInteractive& s
     remove_provider(control, screen, state, provider, !option.empty());
     return true;
   }
+  if (verb == "models" || verb == "discover") {
+    if (argument.empty() || argument.find_first_of(" \t") != std::string::npos) {
+      state.notice = "usage: /providers models <provider>";
+      return true;
+    }
+    discover_provider_models(control, screen, state, argument);
+    return true;
+  }
   if (verb == "help") {
     state.notice =
-        "usage: /providers [list] · /providers add <provider> · /providers edit <provider> · "
+        "usage: /providers [list] · /providers add|edit <provider> · /providers models <provider> · "
         "/providers remove <provider> [--key]";
     return true;
   }
@@ -142,7 +150,7 @@ void edit_provider(ControlClient& control, ftxui::ScreenInteractive& screen, App
        << "# api: blank keeps the catalog/default protocol\n"
        << "# models: comma-separated ids; blank keeps the catalog/default list\n"
        << "# baseURL: blank restores the provider default\n"
-       << "# apiKey: blank keeps the current key (or leaves the route keyless)\n";
+       << "# apiKey: blank keeps the current key; !clear removes the stored key\n";
   if (key_configured) seed << "# current key: configured " << masked << "\n";
   else seed << "# current key: not configured\n";
   seed << "\ndisplayName=" << (display_name == provider ? "" : display_name) << "\n"
@@ -187,18 +195,45 @@ void edit_provider(ControlClient& control, ftxui::ScreenInteractive& screen, App
       api_key = value_after(view, "apiKey=");
     }
   }
+  std::string next_model_ids;
+  for (const auto& id : next_models) {
+    if (!next_model_ids.empty()) next_model_ids += ", ";
+    next_model_ids += id;
+  }
+  const std::string initial_display = display_name == provider ? std::string{} : display_name;
   nlohmann::json params = {{"provider", provider}};
-  if (display_seen && (configured || !next_display.empty())) params["displayName"] = next_display;
-  if (api_seen && (configured || !next_api.empty())) params["api"] = next_api;
-  if (base_seen && (configured || !next_base.empty())) params["baseURL"] = next_base;
-  if (models_seen && (configured || !next_models.empty())) params["models"] = next_models;
-  if (!api_key.empty()) params["apiKey"] = api_key;
+  if (display_seen && (configured ? next_display != initial_display : !next_display.empty())) {
+    params["displayName"] = next_display;
+  }
+  if (api_seen && (configured ? next_api != api : !next_api.empty())) params["api"] = next_api;
+  if (base_seen && (configured ? next_base != base_url : !next_base.empty())) params["baseURL"] = next_base;
+  if (models_seen && (configured ? next_model_ids != models : !next_models.empty())) {
+    params["models"] = next_models;
+  }
+  if (!api_key.empty()) {
+    if (api_key == "!clear") params["removeKey"] = true;
+    else params["apiKey"] = api_key;
+  }
   if (params.size() == 1) {
     state.notice = "provider unchanged";
     return;
   }
   auto saved = control.request("providers.update", params, std::chrono::seconds(60));
   state.notice = saved ? saved->value("text", std::string{"provider updated"}) : saved.error().detail;
+  force_repaint(screen);
+}
+
+void discover_provider_models(ControlClient& control, ftxui::ScreenInteractive& screen,
+                              AppState& state, std::string provider) {
+  provider = trim(provider);
+  if (provider.empty()) {
+    state.notice = "usage: /providers models <provider>";
+    return;
+  }
+  auto discovered = control.request("providers.discover", {{"provider", provider}},
+                                    std::chrono::seconds(60));
+  state.notice = discovered ? discovered->value("text", std::string{"no models discovered"})
+                            : discovered.error().detail;
   force_repaint(screen);
 }
 

@@ -20,6 +20,10 @@ bool handle_provider_command(ControlClient& control, ftxui::ScreenInteractive& s
 void edit_provider(ControlClient& control, ftxui::ScreenInteractive& screen, AppState& state,
                    std::string provider, bool create = false);
 
+/// Ask dsh for the models a provider route or draft endpoint advertises.
+void discover_provider_models(ControlClient& control, ftxui::ScreenInteractive& screen,
+                              AppState& state, std::string provider);
+
 /// Remove one user-level provider profile; `remove_key` also deletes its key.
 void remove_provider(ControlClient& control, ftxui::ScreenInteractive& screen, AppState& state,
                      std::string provider, bool remove_key);

@@ -14,6 +14,7 @@ SH
 chmod +x "$editor"
 
 ( sleep 1; printf '/providers edit mock\n'; sleep 3
+  printf '/providers models mock\n'; sleep 2
   printf '/providers add fresh\n'; sleep 3
   printf '/providers remove fresh --key\n'; sleep 2
   printf '\x04' ) |
@@ -21,6 +22,8 @@ chmod +x "$editor"
     script -qec "stty rows 30 cols 100; $booth" /dev/null >"$output" 2>&1 || true
 
 grep -aq "Updated mock" "$output"
+grep -aq "models for mock" "$output"
+grep -aq "128k ctx" "$output"
 grep -aq "Updated fresh" "$output"
 grep -aq "Removed user configuration for fresh" "$output"
 grep -aq "Enter send" "$output"

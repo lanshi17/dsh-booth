@@ -104,7 +104,7 @@ the `llm-pi-ai` settings namespace stores `providers.<route>.baseURL`, `apiKeyEn
 credential store under that reference. `/providers` reads the configurable
 provider directory plus `providers.list`, so configuration works before any model
 or session exists. `add`/`edit` write displayName, api, models, baseURL and the
-credential reference; `remove [--key]` unsets the user-level route (profile
+credential reference; `models` runs dsh model discovery; `remove [--key]` unsets the user-level route (profile
 defaults remain) and optionally deletes the stored credential. Changes are
 visible to the next request without restarting booth.
 

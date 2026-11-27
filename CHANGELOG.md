@@ -30,6 +30,12 @@
 - `/providers add|edit|remove` round-trips `displayName`, `api`, `models`, `baseURL`
   and `apiKey`, with removal scoped to the user settings layer and optional key
   deletion. Unconfigured catalog rows are listed and can be configured in place.
+- `/providers models <name>` asks dsh's model discovery for the route's catalog
+  or endpoint listing, so custom providers can be populated before saving.
+- Provider edits accept `apiKey=!clear` to delete the stored key without removing
+  the route, and model-list edits retain existing per-model metadata.
+- Provider edits skip unchanged `api`/`models`/`baseURL` fields, preserving rich
+  model entries such as per-model context windows and reasoning capabilities.
 - The external provider editor requests a full repaint and a synthetic frame after
   exiting `$EDITOR`, removing the gray alternate-screen state.
 - `/clear` closes the live session so the next prompt starts a genuinely fresh

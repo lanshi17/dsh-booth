@@ -1680,13 +1680,23 @@ refresh();setInterval(refresh,1500);
 			if (typeof params.api === "string") setOrUnset("api", params.api.trim());
 			if (typeof params.displayName === "string") setOrUnset("displayName", params.displayName.trim());
 			if (Array.isArray(params.models)) {
+				const existingModels = new Map();
+				if (Array.isArray(profile?.models)) {
+					for (const model of profile.models) {
+						const id = typeof model === "string" ? model : model?.id;
+						if (typeof id === "string" && id.length > 0) existingModels.set(id, model);
+					}
+				}
 				const models = [];
 				const seen = new Set();
 				for (const entry of params.models) {
 					const id = typeof entry === "string" ? entry.trim() : typeof entry?.id === "string" ? entry.id.trim() : "";
 					if (id.length === 0 || seen.has(id)) continue;
 					seen.add(id);
-					models.push(typeof entry === "object" && entry !== null ? { ...entry, id } : { id });
+					const existing = existingModels.get(id);
+					if (typeof entry === "object" && entry !== null) models.push({ ...entry, id });
+					else if (existing !== undefined) models.push({ ...existing, id });
+					else models.push({ id });
 				}
 				if (models.length === 0) ops.push({ op: "unset", path: ["providers", provider, "models"] });
 				else ops.push({ op: "set", path: ["providers", provider, "models"], value: models });
@@ -1698,10 +1708,45 @@ refresh();setInterval(refresh,1500);
 				keyRef = typeof profile?.apiKeyEnv === "string" && profile.apiKeyEnv.length > 0 ? profile.apiKeyEnv : apiKeyRef(provider);
 				if (profile?.apiKeyEnv === undefined) ops.push({ op: "set", path: ["providers", provider, "apiKeyEnv"], value: keyRef });
 			}
+			let keyCleared = false;
+			if (params.removeKey === true) {
+				const ref = typeof profile?.apiKeyEnv === "string" && profile.apiKeyEnv.length > 0 ? profile.apiKeyEnv : apiKeyRef(provider);
+				await ctx.credentials.unset(ref);
+				keyCleared = true;
+			}
 			if (ops.length > 0) await ctx.settings.mutate("llm-pi-ai", ops, descriptor.revision);
 			if (keyRef !== undefined) await ctx.credentials.set(keyRef, params.apiKey.trim());
-			if (ops.length === 0 && keyRef === undefined) return { ...(await providerView(provider)), text: `No changes for ${provider}.` };
-			return { ...(await providerView(provider)), text: `Updated ${provider}.` };
+			if (ops.length === 0 && keyRef === undefined && !keyCleared) {
+				return { ...(await providerView(provider)), text: `No changes for ${provider}.` };
+			}
+			return { ...(await providerView(provider)), text: `${keyCleared ? "Cleared key for" : "Updated"} ${provider}.` };
+		},
+
+		async "providers.discover"(params) {
+			const provider = String(params.provider ?? "").trim();
+			if (provider.length === 0) fail("providers/bad-request", "provider is required");
+			const request = { provider };
+			if (typeof params.baseURL === "string" && params.baseURL.trim().length > 0) request.baseURL = params.baseURL.trim();
+			if (typeof params.api === "string" && params.api.trim().length > 0) request.api = params.api.trim();
+			if (typeof params.apiKey === "string" && params.apiKey.trim().length > 0) request.apiKey = params.apiKey.trim();
+			if (typeof ctx.llm?.discoverModels !== "function") fail("providers/discover", "this profile mounts no model discovery");
+			let models;
+			try {
+				models = await ctx.llm.discoverModels("llm-pi-ai", request);
+			} catch (error) {
+				fail("providers/discover", messageOf(error));
+			}
+			const rows = models.map(model => {
+				const context = Number(model.contextWindow) > 0 ? ` · ${Math.round(Number(model.contextWindow) / 1000)}k ctx` : "";
+				const name = typeof model.name === "string" && model.name.length > 0 && model.name !== model.id ? ` — ${model.name}` : "";
+				return `  ${model.id}${name}${context}`;
+			});
+			const shown = rows.slice(0, 30);
+			if (rows.length > shown.length) shown.push(`  … +${rows.length - shown.length} more`);
+			return {
+				models: models.map(model => ({ id: model.id, name: model.name ?? "", contextWindow: model.contextWindow })),
+				text: `models for ${provider} (${models.length})${models.length === 0 ? "\n  (none)" : "\n" + shown.join("\n")}`,
+			};
 		},
 
 		async "providers.remove"(params) {

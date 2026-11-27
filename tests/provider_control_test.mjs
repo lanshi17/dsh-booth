@@ -10,7 +10,7 @@ const socket = join(root, "control.sock");
 process.env.BOOTH_STATE_DIR = root;
 process.env.BOOTH_CONTROL_SOCKET = socket;
 
-let value = { providers: { mock: { baseURL: "https://old.example/v1" } } };
+let value = { providers: { mock: { baseURL: "https://old.example/v1", models: [{ id: "one", contextWindow: 123000 }] } } };
 let revision = 3;
 let key = null;
 let cleanup = async () => {};
@@ -40,6 +40,11 @@ const ctx = {
 		unset: async () => { key = null; },
 	},
 	llm: {
+		discoverModels: async (ns, request) => {
+			assert.equal(ns, "llm-pi-ai");
+			assert.equal(request.provider, "mock");
+			return [{ id: "one", name: "One", contextWindow: 128000 }, { id: "two" }];
+		},
 		listConfigurableProviders: () => [
 			{ provider: "mock", displayName: "Mock", settingsNs: "llm-pi-ai", settingsPath: ["providers", "mock"], declared: true, defaultBaseURL: "https://default.example" },
 			{ provider: "other", displayName: "Other", settingsNs: "llm-pi-ai", settingsPath: ["providers", "other"], declared: false, defaultBaseURL: "https://other.example" },
@@ -84,9 +89,15 @@ try {
 	let result = await request("providers.get", { provider: "mock" });
 	assert.equal(result.baseURL, "https://old.example/v1");
 	assert.equal(result.apiKeyConfigured, false);
+	let discovered = await request("providers.discover", { provider: "mock" });
+	assert.equal(discovered.models.length, 2);
+	assert.match(discovered.text, /models for mock \(2\)/);
+	assert.match(discovered.text, /one — One · 128k ctx/);
 	result = await request("providers.get", { provider: "other" });
 	assert.equal(result.configured, false);
 	assert.equal(result.displayName, "Other");
+	result = await request("providers.update", { provider: "mock", baseURL: "https://base-only.example/v1" });
+	assert.deepEqual(value.providers.mock.models, [{ id: "one", contextWindow: 123000 }]);
 	result = await request("providers.update", {
 		provider: "mock", baseURL: "https://new.example/v1", api: "openai-completions",
 		displayName: "Mock Gateway", models: ["one", "two"], apiKey: "sk-test-123",
@@ -97,7 +108,12 @@ try {
 	assert.equal(value.providers.mock.apiKeyEnv, "MOCK_API_KEY");
 	assert.equal(value.providers.mock.api, "openai-completions");
 	assert.equal(value.providers.mock.displayName, "Mock Gateway");
-	assert.deepEqual(value.providers.mock.models, [{ id: "one" }, { id: "two" }]);
+	assert.deepEqual(value.providers.mock.models, [{ id: "one", contextWindow: 123000 }, { id: "two" }]);
+	result = await request("providers.update", { provider: "mock", removeKey: true });
+	assert.match(result.text, /Cleared key for mock/);
+	assert.equal(key, null);
+	result = await request("providers.update", { provider: "mock", apiKey: "sk-test-123" });
+	assert.equal(key, "sk-test-123");
 	result = await request("providers.remove", { provider: "mock", removeKey: true });
 	assert.match(result.text, /Removed user configuration for mock and key MOCK_API_KEY/);
 	assert.equal(value.providers.mock, undefined);
