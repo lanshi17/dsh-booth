@@ -27,6 +27,17 @@ void append_output(ShellCommandResult& result, const char* bytes, std::size_t co
   if (kept < count) result.truncated = true;
 }
 
+void write_stderr(std::string_view text) {
+  while (!text.empty()) {
+    const ssize_t written = ::write(STDERR_FILENO, text.data(), text.size());
+    if (written < 0) {
+      if (errno == EINTR) continue;
+      return;
+    }
+    text.remove_prefix(static_cast<std::size_t>(written));
+  }
+}
+
 int exit_code(int status) {
   if (WIFEXITED(status)) return WEXITSTATUS(status);
   if (WIFSIGNALED(status)) return 128 + WTERMSIG(status);
@@ -62,13 +73,11 @@ ShellCommandResult run_shell_command(const std::string& command, const std::stri
         ::dup2(output_pipe[1], STDERR_FILENO) < 0) _exit(127);
     ::close(output_pipe[1]);
     if (::chdir(cwd.c_str()) != 0) {
-      const char message[] = "chdir failed\n";
-      (void)::write(STDERR_FILENO, message, sizeof(message) - 1);
+      write_stderr("chdir failed\n");
       _exit(127);
     }
     ::execl("/bin/sh", "sh", "-c", command.c_str(), static_cast<char*>(nullptr));
-    const char message[] = "exec /bin/sh failed\n";
-    (void)::write(STDERR_FILENO, message, sizeof(message) - 1);
+    write_stderr("exec /bin/sh failed\n");
     _exit(127);
   }
 

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <deque>
 #include <filesystem>
+#include <set>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -17,6 +18,7 @@
 #include "interaction/scroll.hpp"
 #include "interaction/state.hpp"
 #include "interaction/theme.hpp"
+#include "interaction/todo_commands.hpp"
 #include "interaction/view.hpp"
 
 using namespace booth;
@@ -30,6 +32,13 @@ TEST_CASE("command aliases normalize to canonical names") {
   REQUIRE(normalize_command("/exit") == "/quit");
   REQUIRE(normalize_command("/setup") == "/providers");
   REQUIRE(normalize_command("/q") == "/quit");
+  REQUIRE(normalize_command("/hub") == "/agents");
+  REQUIRE(normalize_command("/plugin") == "/plugins");
+  REQUIRE(normalize_command("/switch") == "/model");
+  REQUIRE(normalize_command("/switch opus") == "/model opus");
+  REQUIRE(normalize_command("/subagents") == "/agents");
+  REQUIRE(normalize_command("/rewind") == "/branch");
+  REQUIRE(normalize_command("/worktree") == "/wt");
   REQUIRE(normalize_command("/unknown") == "/unknown");
 }
 
@@ -261,7 +270,7 @@ TEST_CASE("context and stats describe the state") {
           "entries 3 · you 1 · assistant 1 · tools 1 · thoughts 0 · queued 2");
 }
 
-TEST_CASE("todo, tools, usage and git report local state") {
+TEST_CASE("todo, usage and session controls report local state") {
   AppState state;
   TranscriptScroll scroll;
   TranscriptSearch search;
@@ -279,8 +288,6 @@ TEST_CASE("todo, tools, usage and git report local state") {
 
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/todo", false, false));
   REQUIRE(state.notice == "todo 1/2 · next second");
-  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/tools", false, false));
-  REQUIRE(state.notice == "tools 2 · bash 2 · read 1");
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/todo export todos.md", false, false));
   std::ifstream exported(cwd / "todos.md");
   std::string markdown((std::istreambuf_iterator<char>(exported)), std::istreambuf_iterator<char>());
@@ -290,6 +297,15 @@ TEST_CASE("todo, tools, usage and git report local state") {
   std::filesystem::remove(cwd / "todos.md");
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/usage", false, false));
   REQUIRE(state.notice.find("entries 3") != std::string::npos);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/stats --port 9090", false, false));
+  REQUIRE(state.notice.find("dashboard unavailable") != std::string::npos);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/stats bogus", false, false));
+  REQUIRE(state.notice.text.rfind("usage: /stats", 0) == 0);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/stats --port 9090 --host 127.0.0.1", false, false));
+  REQUIRE(state.notice.find("dashboard unavailable") != std::string::npos);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/stats --port", false, false));
+  REQUIRE(state.notice.text.rfind("usage: /stats", 0) == 0);
   state.composer.clear();
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/copy prompt", false, false));
   REQUIRE(state.notice == "nothing to copy");
@@ -297,14 +313,106 @@ TEST_CASE("todo, tools, usage and git report local state") {
   REQUIRE(state.notice == "nothing to copy");
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/session info", false, false));
   REQUIRE(state.notice.find("session: none") == 0);
-  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/git", false, false));
-  REQUIRE(state.notice == "not a git repository");
   state.session = "s-9";
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/pin", false, false));
   REQUIRE(state.notice == "session pinned");
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/unpin", false, false));
   REQUIRE(state.notice == "session unpinned");
   std::filesystem::remove(cwd / "session-pins");
+}
+
+TEST_CASE("clear inside a session requests a fresh context") {
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  const auto cwd = std::filesystem::temp_directory_path();
+  state.session = "s-1";
+  TranscriptEntry entry;
+  entry.kind = EntryKind::Assistant;
+  entry.text = "old answer";
+  state.entries.push_back(entry);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/clear", false, false));
+  REQUIRE(state.context_reset_requested);
+  REQUIRE(state.entries.empty());
+  REQUIRE(state.notice.find("fresh session") != std::string::npos);
+  state.session = "s-2";
+  state.context_reset_requested = false;
+  state.busy = true;
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/clear", false, false));
+  REQUIRE_FALSE(state.context_reset_requested);
+  REQUIRE(state.notice.find("wait for the current turn") != std::string::npos);
+}
+
+TEST_CASE("todo subcommands mutate the local list") {
+  AppState state;
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  const auto cwd = std::filesystem::temp_directory_path();
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo append write docs", false, false));
+  REQUIRE(state.todos.size() == 1);
+  REQUIRE(state.todos[0].status == "pending");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo start write", false, false));
+  REQUIRE(state.todos[0].status == "in_progress");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo done write", false, false));
+  REQUIRE(state.todos[0].status == "completed");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo append ship", false, false));
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo rm ship", false, false));
+  REQUIRE(state.todos.size() == 1);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo expand", false, false));
+  REQUIRE(state.todo_expanded);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo collapse", false, false));
+  REQUIRE_FALSE(state.todo_expanded);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd,
+                               "/todo rm missing", false, false));
+  REQUIRE(state.notice == "no todo matches \"missing\"");
+}
+
+TEST_CASE("todo mutation helper reports usage and all-target actions") {
+  std::vector<TodoItem> todos{{"one", "pending"}, {"two", "completed"}};
+  std::string error;
+  REQUIRE(apply_todo_action(todos, "start", "", error) == 0);
+  REQUIRE(error == "usage: /todo start <task>");
+  error.clear();
+  REQUIRE(apply_todo_action(todos, "done", "", error) == 2);
+  REQUIRE(error.empty());
+  REQUIRE(todos[0].status == "completed");
+  REQUIRE(apply_todo_action(todos, "drop", "all", error) == 2);
+  REQUIRE(todos.empty());
+}
+
+TEST_CASE("copy subcommands use the last transcript content") {
+  AppState state;
+  TranscriptEntry answer;
+  answer.kind = EntryKind::Assistant;
+  answer.text = "```cpp\nint x = 1;\n```\nhttps://example.com";
+  state.entries.push_back(answer);
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.tool = "bash";
+  tool.input = "make test";
+  state.entries.push_back(tool);
+  TranscriptScroll scroll;
+  TranscriptSearch search;
+  const auto cwd = std::filesystem::temp_directory_path();
+  std::ostringstream captured;
+  auto* previous = std::cout.rdbuf(captured.rdbuf());
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/copy code", false, false));
+  REQUIRE(state.notice == "copied code block");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/copy cmd", false, false));
+  REQUIRE(state.notice == "copied command");
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/copy link", false, false));
+  REQUIRE(state.notice == "copied link");
+  std::cout.rdbuf(previous);
+  REQUIRE(captured.str().find("\x1b]52;c;") != std::string::npos);
+  REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/copy missing", false, false));
+  REQUIRE(state.notice == "usage: /copy [code|cmd|link|local|answer|prompt|line]");
 }
 
 TEST_CASE("paste raw inserts clipboard text without collapsing") {
@@ -456,4 +564,15 @@ TEST_CASE("stats report failed tools") {
   tool.status = "failed";
   state.entries.push_back(tool);
   REQUIRE(stats_text(state, 0).find("failed 1") != std::string::npos);
+}
+
+
+TEST_CASE("every OMP slash command is recognized") {
+  const char* omp[] = {"add-dir", "advisor", "agents", "branch", "browser", "btw", "changelog", "cleanse", "clear", "collab", "commit", "compact", "computer", "context", "copy", "debug", "delete", "dirs", "dump", "effort", "exit", "export", "extended-context", "extensions", "fast", "force", "forget-approvals", "fork", "fresh", "git", "goal", "guided-goal", "handoff", "hotkeys", "hub", "jobs", "join", "leave", "live", "local", "login", "logout", "loop", "marketplace", "mcp", "memory", "model", "modelpreset", "move", "new", "omfg", "open", "pause", "pin", "plan", "plan-review", "plugins", "prewalk", "queue", "quit", "ratchet", "record", "reload-plugins", "remove-dir", "rename", "restart", "resume", "retry", "security", "session", "settings", "setup", "shake", "share", "skillful", "skills", "slow", "ssh", "stats", "switch", "tan", "todo", "tools", "trace", "tree", "unpin", "usage", "vibe", "wt"};
+  std::set<std::string> canonical;
+  for (const auto& hint : command_hints()) canonical.insert(hint.name);
+  for (const char* name : omp) {
+    const auto normalized = normalize_command(std::string("/") + name);
+    REQUIRE(canonical.count(normalized) == 1);
+  }
 }

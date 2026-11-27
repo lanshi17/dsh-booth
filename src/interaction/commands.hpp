@@ -7,6 +7,8 @@
 #include <string_view>
 #include <vector>
 
+#include "interaction/skill_catalog.hpp"
+
 namespace booth {
 
 struct CommandHint {
@@ -26,8 +28,9 @@ void load_file_commands(const std::filesystem::path& project, const std::filesys
 /// Expands a registered `/name args` prompt template, or nullopt for other input.
 std::optional<std::string> file_command_prompt(const std::string& line);
 
-/// Loads user-invocable dsh skills into the slash menu for this project.
-void load_skill_commands(const std::filesystem::path& cwd);
+/// Loads user-invocable dsh skills into the slash menu and returns them, so callers that
+/// list skills (for example `/skills`) do not have to scan the roots a second time.
+std::vector<SkillInfo> load_skill_commands(const std::filesystem::path& cwd);
 
 /// Whether the first token names a user-invocable skill (a prompt gesture, not a local command).
 bool is_skill_prompt(const std::string& line);

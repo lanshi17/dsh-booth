@@ -55,6 +55,8 @@ Result<Config> Config::from_env(const Env& env) {
   config.lock_file = config.state_dir / "booth-service.lock";
   config.history_file = config.state_dir / "history.jsonl";
   config.socket_file = config.state_dir / "booth.sock";
+  config.control_socket = config.state_dir / "control.sock";
+  config.profile_dir = config.dsh_home / "profiles" / config.base_profile;
 
   if (auto value = non_empty(env("BOOTH_HANDSHAKE_TIMEOUT_S"))) {
     try {

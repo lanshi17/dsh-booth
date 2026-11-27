@@ -57,6 +57,9 @@ class Supervisor : public Kernel {
                                  const std::optional<std::string>& option_id) override;
   void notify(std::string_view method, const acp::Json& params) override;
   [[nodiscard]] bool connected() const override;
+  Result<void> pause() override;
+  Result<void> resume() override;
+  [[nodiscard]] bool paused() const override { return paused_; }
 
  private:
   Result<void> ensure_state_dir();
@@ -78,6 +81,7 @@ class Supervisor : public Kernel {
   std::unique_ptr<acp::Client> client_;
   DshPhase phase_{DshPhase::Down};
   std::string detail_;
+  bool paused_{false};
 };
 
 }  // namespace booth

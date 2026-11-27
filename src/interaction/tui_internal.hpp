@@ -16,6 +16,7 @@ namespace booth {
 
 struct AppState;
 class Kernel;
+class ControlClient;
 
 /// Events posted by kernel reader threads, drained on the UI thread.
 struct Inbox {
@@ -23,8 +24,11 @@ struct Inbox {
   std::deque<Event> events;
 };
 
+/// Push one event and wake the UI loop; safe from kernel and worker threads.
+void post_event(Inbox& inbox, ftxui::ScreenInteractive& screen, Event event);
+
 int tui_loop(ftxui::ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& inbox,
-             const Config& config);
+             const Config& config, ControlClient& control);
 
 /// Toggles a transcript entry's disclosure; live thoughts and non-tool entries are ignored.
 void toggle_entry(AppState& state, std::set<std::size_t>& open_tools, std::size_t index);

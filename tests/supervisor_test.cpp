@@ -162,6 +162,12 @@ TEST_CASE("the supervisor spawns a kernel, handshakes and stops it") {
   auto config = Config::from_env(env);
   REQUIRE(config.has_value());
 
+  std::filesystem::create_directories(config->profile_dir);
+  {
+    std::ofstream stale(config->profile_dir / "cordis.patch.yml", std::ios::trunc);
+    stale << "- insert:\n  - id: booth-control\n    name: stale.mjs\n    config:\n      socket: stale.sock\n";
+  }
+
   std::mutex mutex;
   std::vector<Event> events;
   Supervisor supervisor(
@@ -178,7 +184,14 @@ TEST_CASE("the supervisor spawns a kernel, handshakes and stops it") {
   REQUIRE(status.phase == DshPhase::Ready);
   REQUIRE(status.connected);
   REQUIRE(status.pid > 0);
+  REQUIRE(probe_status(*config).pid == ::getpid());
   REQUIRE(std::filesystem::exists(config->pid_file));
+  {
+    std::ifstream patch(config->profile_dir / "cordis.patch.yml");
+    const std::string content{std::istreambuf_iterator<char>(patch), std::istreambuf_iterator<char>()};
+    REQUIRE(content.find("stale.mjs") == std::string::npos);
+    REQUIRE(content.find("id: booth-control") != std::string::npos);
+  }
 
   auto handshake = supervisor.request("initialize", acp::initialize_params("test"),
                                       std::chrono::seconds(1));

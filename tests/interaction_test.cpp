@@ -326,6 +326,10 @@ TEST_CASE("closing the session clears the transcript and title") {
   REQUIRE(state.title.empty());
   REQUIRE(state.entries.empty());
   REQUIRE_FALSE(state.busy);
+  REQUIRE(state.notice == "session closed");
+  state.notice.clear();
+  apply(state, Event{SessionClosed{"context cleared · fresh next"}});
+  REQUIRE(state.notice == "context cleared · fresh next");
 }
 
 TEST_CASE("model options keep provider groups") {
@@ -743,6 +747,13 @@ TEST_CASE("the todo HUD tracks the latest list and hides when done") {
   apply(state, Event{SessionSwitched{SessionId{"s-2"}, "next"}});
   REQUIRE(state.todos.empty());
   REQUIRE_FALSE(todo_hud(state.todos).has_value());
+  state.todos = {{"write", "completed"}};
+  REQUIRE_FALSE(todo_hud(state.todos).has_value());
+  auto expanded = todo_hud(state.todos, true);
+  REQUIRE(expanded.has_value());
+  ftxui::Screen expanded_screen(80, 6);
+  ftxui::Render(expanded_screen, std::move(*expanded));
+  REQUIRE(strip_ansi(expanded_screen.ToString()).find("write") != std::string::npos);
 }
 
 TEST_CASE("generic JSON output renders as a pretty tree") {

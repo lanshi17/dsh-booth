@@ -2,7 +2,7 @@ add_executable(fake_kernel fake_kernel.cpp)
 target_link_libraries(fake_kernel PRIVATE nlohmann_json::nlohmann_json)
 booth_warnings(fake_kernel)
 
-add_executable(booth_tests contract_test.cpp click_row_test.cpp mouse_zone_test.cpp mouse_picker_test.cpp mouse_actions_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp commands_ui_test.cpp command_args_test.cpp copy_picker_test.cpp picker_filter_test.cpp draft_test.cpp recall_test.cpp file_menu_test.cpp file_command_test.cpp tool_diff_test.cpp session_pins_test.cpp skill_catalog_test.cpp theme_test.cpp emoji_test.cpp mention_test.cpp mention_menu_test.cpp history_search_test.cpp keymap_test.cpp editor_test.cpp vim_test.cpp replay_test.cpp clipboard_test.cpp notify_test.cpp word_completion_test.cpp library_ui_test.cpp link_picker_test.cpp mouse_mode_test.cpp python_command_test.cpp shell_command_test.cpp markdown_test.cpp math_test.cpp text_util_test.cpp)
+add_executable(booth_tests contract_test.cpp click_row_test.cpp mouse_zone_test.cpp mouse_picker_test.cpp mouse_actions_test.cpp acp_test.cpp supervisor_test.cpp interaction_test.cpp scroll_test.cpp slash_test.cpp control_test.cpp mcp_config_test.cpp preset_store_test.cpp restart_test.cpp loop_controller_test.cpp git_commands_test.cpp extra_commands_test.cpp export_test.cpp commands_ui_test.cpp command_args_test.cpp command_parsing_test.cpp copy_picker_test.cpp picker_filter_test.cpp draft_test.cpp recall_test.cpp file_menu_test.cpp file_command_test.cpp tool_diff_test.cpp session_pins_test.cpp skill_catalog_test.cpp skill_slash_test.cpp theme_test.cpp emoji_test.cpp mention_test.cpp mention_menu_test.cpp history_search_test.cpp keymap_test.cpp editor_test.cpp vim_test.cpp replay_test.cpp clipboard_test.cpp notify_test.cpp word_completion_test.cpp library_ui_test.cpp link_picker_test.cpp mouse_mode_test.cpp python_command_test.cpp shell_command_test.cpp markdown_test.cpp math_test.cpp text_util_test.cpp recorder_test.cpp recorder_play_test.cpp changelog_test.cpp trace_report_test.cpp ssh_config_test.cpp approvals_test.cpp)
 target_link_libraries(booth_tests PRIVATE booth_interaction Catch2::Catch2WithMain)
 target_compile_definitions(booth_tests PRIVATE FAKE_KERNEL_PATH="$<TARGET_FILE:fake_kernel>")
 add_dependencies(booth_tests fake_kernel)
@@ -11,9 +11,59 @@ booth_warnings(booth_tests)
 include(Catch)
 catch_discover_tests(booth_tests)
 
+find_program(NODE_EXECUTABLE node)
+if(NODE_EXECUTABLE)
+  add_test(NAME plugins_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/plugins_control_test.mjs)
+  add_test(NAME memory_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/memory_control_test.mjs)
+  add_test(NAME marketplace_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/marketplace_control_test.mjs)
+  add_test(NAME cleanse_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/cleanse_control_test.mjs)
+  add_test(NAME security_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/security_control_test.mjs)
+  add_test(NAME prewalk_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/prewalk_control_test.mjs)
+  add_test(NAME omfg_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/omfg_control_test.mjs)
+  add_test(NAME advisor_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/advisor_control_test.mjs)
+  add_test(NAME account_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/account_control_test.mjs)
+  add_test(NAME features_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/features_control_test.mjs)
+  add_test(NAME plan_review_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/plan_review_control_test.mjs)
+  add_test(NAME force_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/force_control_test.mjs)
+  add_test(NAME skillful_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/skillful_control_test.mjs)
+  add_test(NAME extended_context
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/extended_context_test.mjs)
+  add_test(NAME share_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/share_control_test.mjs)
+  add_test(NAME service_tier
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/service_tier_test.mjs)
+  add_test(NAME provider_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/provider_control_test.mjs)
+  add_test(NAME vibe_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/vibe_control_test.mjs)
+  add_test(NAME todo_control
+    COMMAND ${NODE_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/todo_control_test.mjs)
+endif()
+
 add_test(NAME pty_smoke
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_smoke.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )
+add_test(NAME pty_restart
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_restart.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_control
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_control.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
 
 add_test(NAME pty_paste
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_paste.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
@@ -354,4 +404,24 @@ add_test(NAME pty_retry
 
 add_test(NAME pty_word_completion
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_word_completion.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_pause
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_pause.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_share
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_share.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_vibe
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_vibe.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_provider_edit
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_provider_edit.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+)
+
+add_test(NAME pty_double_cancel
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_double_cancel.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
 )

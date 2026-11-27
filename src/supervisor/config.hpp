@@ -26,6 +26,8 @@ struct Config {
   std::filesystem::path lock_file;     // state_dir/booth-service.lock
   std::filesystem::path history_file;  // state_dir/history.jsonl
   std::filesystem::path socket_file;   // state_dir/booth.sock
+  std::filesystem::path control_socket;  // state_dir/control.sock
+  std::filesystem::path profile_dir;     // dsh_home/profiles/<base_profile>
   int handshake_timeout_s{20};
 
   static Result<Config> from_env(const Env& env);

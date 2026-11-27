@@ -15,6 +15,9 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
+#include "control/plugin.hpp"
 #include "subagent/acp/messages.hpp"
 
 namespace booth {
@@ -41,6 +44,102 @@ Result<void> write_atomic(const std::filesystem::path& path, const std::string& 
                                std::filesystem::perms::owner_read |
                                    std::filesystem::perms::owner_write,
                                std::filesystem::perm_options::replace, error);
+  return {};
+}
+
+/// Quote one YAML scalar with single quotes; embedded quotes double.
+std::string yaml_quote(std::string_view text) {
+  std::string out{"'"};
+  for (const char ch : text) {
+    if (ch == '\'') out += "''";
+    else out += ch;
+  }
+  out += '\'';
+  return out;
+}
+
+constexpr std::string_view kControlBegin = "# --- booth-control (managed by booth) ---\n";
+constexpr std::string_view kControlEnd = "# --- end booth-control ---\n";
+
+/// Install the compiled control plugin and keep one managed insert row in the
+/// profile patch. User rows before and after it are preserved byte-for-byte.
+Result<void> ensure_control_profile(const Config& config) {
+  std::error_code error;
+  std::filesystem::create_directories(config.profile_dir, error);
+  if (error) {
+    return std::unexpected(Error{Layer::State, "cannot create the dsh profile directory", std::nullopt});
+  }
+  const auto plugin = config.profile_dir / "booth-control.mjs";
+  auto written = write_atomic(plugin, std::string(control_plugin_source()));
+  if (!written) return written;
+
+  const auto patch = config.profile_dir / "cordis.patch.yml";
+  std::string content;
+  {
+    std::ifstream input(patch, std::ios::binary);
+    if (input) content.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+  }
+  for (std::size_t pos = 0; (pos = content.find("- insert:\n", pos)) != std::string::npos;) {
+    const auto next = content.find("\n- ", pos + 1);
+    const auto end = next == std::string::npos ? content.size() : next;
+    if (content.substr(pos, end - pos).find("booth-control") != std::string::npos) {
+      content.erase(pos, end - pos);
+    } else {
+      pos = end;
+    }
+  }
+  if (const auto begin = content.find(kControlBegin); begin != std::string::npos) {
+    const auto end = content.find(kControlEnd, begin);
+    if (end != std::string::npos) {
+      content.erase(begin, end + kControlEnd.size() - begin);
+    } else {
+      content.erase(begin);
+    }
+  }
+  while (!content.empty() && (content.back() == '\n' || content.back() == '\r' || content.back() == ' ')) {
+    content.pop_back();
+  }
+  if (content == "[]" || content == "---\n[]" || content == "---" || content == "---\r\n[]") content.clear();
+  if (!content.empty() && content.back() != '\n') content += '\n';
+  content += kControlBegin;
+  content += "- insert:\n";
+  content += "    - id: booth-control\n";
+  content += "      name: " + yaml_quote(plugin.string()) + "\n";
+  content += "      config:\n";
+  content += "        socket: " + yaml_quote(config.control_socket.string()) + "\n";
+  content += "    - id: webserver\n";
+  content += "      name: '@deepseek-ai/dsh-host-webserver'\n";
+  content += "      config:\n";
+  content += "        host: 127.0.0.1\n";
+  content += "        port: 0\n";
+  nlohmann::json features = nlohmann::json::object();
+  {
+    std::ifstream input(config.state_dir / "features.json", std::ios::binary);
+    if (input) features = nlohmann::json::parse(input, nullptr, false);
+  }
+  const auto feature_enabled = [&](const char* name) {
+    return features.is_object() && features.contains(name) && features[name].is_object() &&
+           features[name].value("enabled", false);
+  };
+  if (feature_enabled("browser")) {
+    const bool headless = features["browser"].value("headless", true);
+    content += "    - id: browser-use\n";
+    content += "      name: '@deepseek-ai/dsh-browser-use'\n";
+    content += "    - id: browser-playwright\n";
+    content += "      name: '@deepseek-ai/dsh-experimental-browser-use-playwright-mcp'\n";
+    content += "      config:\n";
+    content += "        mode: launch\n";
+    content += std::string("        headless: ") + (headless ? "true" : "false") + "\n";
+  }
+  if (feature_enabled("computer")) {
+    content += "    - id: computer-use\n";
+    content += "      name: '@deepseek-ai/dsh-computer-use'\n";
+    content += "    - id: computer-cua\n";
+    content += "      name: '@deepseek-ai/dsh-experimental-computer-use-cua-driver-native'\n";
+  }
+  content += kControlEnd;
+  auto patched = write_atomic(patch, content);
+  if (!patched) return patched;
   return {};
 }
 
@@ -89,7 +188,7 @@ Result<void> ensure_dsh_profile(const Config& config) {
                                    std::nullopt});
     }
   }
-  return {};
+  return ensure_control_profile(config);
 }
 
 }  // namespace
@@ -202,7 +301,7 @@ std::vector<std::pair<std::string, std::string>> Supervisor::child_env() const {
   std::vector<std::pair<std::string, std::string>> out;
   constexpr const char* kKeys[] = {
       "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TMPDIR", "DSH_HOME",
-      "DEEPSEEK_API_KEY", "TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "OPENAI_API_KEY",
+      "DEEPSEEK_API_KEY", "BOOTH_STATE_DIR", "BOOTH_PROFILE", "BOOTH_BASE_PROFILE", "TYPESAFE_API_KEY", "TYPESAFE_BASE_URL", "OPENAI_API_KEY",
       "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY", "QWEN_API_KEY",
   };
   for (const char* key : kKeys) {
@@ -262,7 +361,7 @@ Result<void> Supervisor::up() {
     return std::unexpected(initialized.error());
   }
 
-  auto pid_written = write_pid(child_->pid);
+  auto pid_written = write_pid(::getpid());
   if (!pid_written) {
     teardown();
     phase_ = DshPhase::Degraded;
@@ -277,6 +376,10 @@ Result<void> Supervisor::up() {
 }
 
 void Supervisor::teardown() {
+  if (paused_ && child_ && child_->pid > 0) {
+    ::kill(child_->pid, SIGCONT);
+    paused_ = false;
+  }
   if (client_) client_->stop();
   if (child_) {
     if (child_->stdin_fd >= 0) {
@@ -327,6 +430,32 @@ Status Supervisor::status() const {
 }
 
 bool Supervisor::connected() const { return phase_ == DshPhase::Ready && client_ != nullptr; }
+
+Result<void> Supervisor::pause() {
+  if (!child_ || child_->pid <= 0) {
+    return std::unexpected(Error{Layer::Process, "the kernel is not running", std::nullopt});
+  }
+  if (paused_) return {};
+  if (::kill(child_->pid, SIGSTOP) != 0) {
+    return std::unexpected(Error{Layer::Process, std::string("cannot pause the kernel: ") + std::strerror(errno),
+                                 std::nullopt});
+  }
+  paused_ = true;
+  return {};
+}
+
+Result<void> Supervisor::resume() {
+  if (!child_ || child_->pid <= 0) {
+    return std::unexpected(Error{Layer::Process, "the kernel is not running", std::nullopt});
+  }
+  if (!paused_) return {};
+  if (::kill(child_->pid, SIGCONT) != 0) {
+    return std::unexpected(Error{Layer::Process, std::string("cannot resume the kernel: ") + std::strerror(errno),
+                                 std::nullopt});
+  }
+  paused_ = false;
+  return {};
+}
 
 Result<acp::Json> Supervisor::request(std::string_view method, const acp::Json& params,
                                       std::chrono::milliseconds timeout) {

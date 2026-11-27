@@ -15,7 +15,7 @@ std::filesystem::path temp_root() {
   const auto root = std::filesystem::temp_directory_path() /
                     ("booth-skills-" + std::to_string(::getpid()));
   std::filesystem::remove_all(root);
-  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(root / ".git");  // anchor project_root() at this root
   return root;
 }
 

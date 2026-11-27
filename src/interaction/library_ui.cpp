@@ -185,13 +185,13 @@ ftxui::Element LibraryOverlay::view() const {
     }
   }
   if (kind_ == LibraryKind::Providers) {
-    rows.push_back(ftxui::text(" Configured providers · credentials stay in dsh") | ftxui::dim);
+    rows.push_back(ftxui::text(" Provider configuration · Enter edits baseURL/API key") | ftxui::dim);
   }
   rows.push_back(ftxui::text(kind_ == LibraryKind::Skills
                                  ? " Enter inserts /name · Esc closes"
                                  : kind_ == LibraryKind::Settings
                                        ? " Enter toggles · Esc closes"
-                                       : " Enter shows configuration · Esc closes")
+                                       : " Enter edits provider · Esc closes")
                      | ftxui::dim);
   return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 64) |
          ftxui::borderRounded | ftxui::center | ftxui::bgcolor(kPanel);
@@ -202,15 +202,83 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
                             const Editor& editor) {
   const std::string command = first_word(normalize_command(line));
   if (command == "/skills") {
-    load_skill_commands(cwd);
-    auto skills = scan_default_skills(cwd);
+    auto skills = load_skill_commands(cwd);
+    const auto project_first = [](const SkillInfo& skill) {
+      return skill.source.rfind("project", 0) == 0;
+    };
+    std::sort(skills.begin(), skills.end(), [&](const SkillInfo& left, const SkillInfo& right) {
+      if (project_first(left) != project_first(right)) return project_first(left);
+      return left.name < right.name;
+    });
+    const auto rest = line.size() > command.size() ? line.substr(command.size()) : std::string{};
+    const auto first = rest.find_first_not_of(" \t");
+    const auto second = first == std::string::npos ? std::string::npos : rest.find_first_of(" \t", first);
+    const std::string verb = first == std::string::npos ? std::string{} : lower(rest.substr(first, second - first));
+    const auto argument_start =
+        second == std::string::npos ? std::string::npos : rest.find_first_not_of(" \t", second);
+    const std::string argument =
+        argument_start == std::string::npos ? std::string{} : rest.substr(argument_start);
+    if (verb == "help") {
+      state.notice =
+          "Usage: /skills [search <query>|installed|install <name>|update]  (no argument opens the picker)";
+      return true;
+    }
+    if (verb == "installed") {
+      if (!argument.empty()) {
+        state.notice = "usage: /skills installed";
+        return true;
+      }
+      if (skills.empty()) {
+        state.notice = "no installed skills under the dsh roots";
+        return true;
+      }
+      std::string out = "installed skills (" + std::to_string(skills.size()) + ")";
+      constexpr std::size_t kRows = 20;
+      for (std::size_t index = 0; index < skills.size() && index < kRows; ++index) {
+        const auto& skill = skills[index];
+        out += "\n  /" + skill.name + " — " + ellipsize(skill.description, 90) + " (" + skill.source + ")";
+      }
+      if (skills.size() > kRows) out += "\n  … +" + std::to_string(skills.size() - kRows) + " more";
+      state.notice = std::move(out);
+      return true;
+    }
+    if (verb == "search") {
+      if (argument.empty()) {
+        state.notice = "usage: /skills search <query>";
+        return true;
+      }
+      const std::string needle = lower(argument);
+      std::string out;
+      std::size_t matches = 0;
+      constexpr std::size_t kRows = 20;
+      for (const auto& skill : skills) {
+        if (lower(skill.name).find(needle) == std::string::npos &&
+            lower(skill.description).find(needle) == std::string::npos) {
+          continue;
+        }
+        ++matches;
+        if (matches <= kRows) out += "\n  /" + skill.name + " — " + ellipsize(skill.description, 90);
+      }
+      if (matches > kRows) out += "\n  … +" + std::to_string(matches - kRows) + " more";
+      state.notice = matches == 0 ? "no matching skills"
+                                  : "skills matching \"" + argument + "\" (" +
+                                        std::to_string(matches) + ")" + out;
+      return true;
+    }
+    if (verb == "install" || verb == "update") {
+      state.notice =
+          "skill registry is unavailable: dsh loads skills from .dsh/skills and the user skill roots";
+      return true;
+    }
+    if (!verb.empty()) {
+      state.notice =
+          "usage: /skills [search <query>|installed|install <name>|update]  (no argument opens the picker)";
+      return true;
+    }
     if (skills.empty()) {
       state.notice = "no user-invocable skills under the dsh roots";
       return true;
     }
-    std::sort(skills.begin(), skills.end(), [](const SkillInfo& left, const SkillInfo& right) {
-      return left.name < right.name;
-    });
     std::vector<LibraryRow> rows;
     rows.reserve(skills.size());
     for (const auto& skill : skills) {
@@ -228,19 +296,12 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
       state.notice = "no models yet; send a prompt first";
       return true;
     }
-    std::map<std::string, std::pair<std::size_t, bool>> providers;
-    for (const auto& model : state.models) {
-      auto& entry = providers[model.provider];
-      ++entry.first;
-      entry.second = entry.second || model.name == state.model || model.value == state.model;
-    }
+    std::map<std::string, bool> providers;
+    for (const auto& model : state.models) providers[model.provider] = true;
     std::vector<LibraryRow> rows;
     rows.reserve(providers.size());
-    for (const auto& [provider, info] : providers) {
-      std::string detail = "configured · " + std::to_string(info.first) +
-                           (info.first == 1 ? " model" : " models");
-      if (info.second) detail += " · current";
-      rows.push_back({provider, provider, std::move(detail)});
+    for (const auto& [provider, _current] : providers) {
+      rows.push_back({provider, provider, "configure baseURL and API key"});
     }
     overlay.open(LibraryKind::Providers, "providers", std::move(rows));
     return true;
@@ -281,12 +342,8 @@ bool handle_library_event(ftxui::Event& event, AppState& state, LibraryOverlay& 
     state.composer = "/" + *chosen + " ";
     editor.SetContent(state.composer);
   } else if (kind == LibraryKind::Providers) {
-    std::size_t count = 0;
-    for (const auto& model : state.models) {
-      if (model.provider == *chosen) ++count;
-    }
-    state.notice = "provider " + *chosen + " · " + std::to_string(count) +
-                   (count == 1 ? " model" : " models") + " · credentials managed by dsh";
+    if (settings.edit_provider) settings.edit_provider(*chosen);
+    else state.notice = "provider editing is unavailable on this host";
   }
   return true;
 }

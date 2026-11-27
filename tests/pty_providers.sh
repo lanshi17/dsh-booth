@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# /providers opens the provider picker over the advertised model catalog.
+# /providers opens the provider configuration list.
 set -euo pipefail
 
 booth=$1
@@ -13,6 +13,6 @@ trap 'rm -rf "$state" "$output"' EXIT
   >"$output" 2>&1 || true
 
 grep -aq "providers" "$output"
-grep -aq "Other" "$output"
-grep -aq "Provider" "$output"
-grep -aq "configured" "$output"
+grep -aq "Provider configuration" "$output"
+grep -aq "configure baseURL" "$output"
+grep -aq "Enter edits provider" "$output"

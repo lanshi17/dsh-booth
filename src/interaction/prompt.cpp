@@ -5,7 +5,9 @@
 #include <optional>
 #include <utility>
 
+#include "interaction/mcp_config.hpp"
 #include "interaction/replay.hpp"
+#include "interaction/restart.hpp"
 #include "subagent/acp/messages.hpp"
 
 namespace booth {
@@ -50,7 +52,7 @@ std::string ensure_session(PromptContext& context) {
   }
   if (!session.empty()) return session;
   auto created =
-      context.kernel.request("session/new", acp::new_session_params(context.cwd), kSessionTimeout);
+      context.kernel.request("session/new", acp::new_session_params(context.cwd, load_mcp_servers(context.mcp_file)), kSessionTimeout);
   if (!created) {
     context.publish(Event{Problem{created.error().layer, created.error().detail}});
     return {};
@@ -70,6 +72,19 @@ std::string ensure_session(PromptContext& context) {
     context.publish(Event{SessionConfigChanged{SessionId{session}, "model", display}});
   }
   return session;
+}
+
+void ensure_session_or_restart(PromptContext& context, const std::filesystem::path& marker) {
+  if (const auto restart = take_restart_marker(marker)) {
+    SessionRow row;
+    row.id = SessionId{restart->session};
+    row.cwd = restart->cwd.empty() ? context.cwd : restart->cwd;
+    row.title = restart->title;
+    resume_session(context, row);
+    std::lock_guard<std::mutex> lock(context.mutex);
+    if (!context.session.empty()) return;
+  }
+  ensure_session(context);
 }
 
 void run_prompt(PromptContext& context, std::string text,
@@ -153,7 +168,7 @@ void list_sessions(PromptContext& context) {
 void resume_session(PromptContext& context, const SessionRow& selected) {
   acp::Json params = {{"sessionId", selected.id.value},
                       {"cwd", selected.cwd.empty() ? context.cwd : selected.cwd},
-                      {"mcpServers", acp::Json::array()}};
+                      {"mcpServers", load_mcp_servers(context.mcp_file)}};
   auto resumed = context.kernel.request("session/resume", params, std::chrono::seconds(20));
   if (!resumed) {
     context.publish(Event{Problem{resumed.error().layer, resumed.error().detail}});
@@ -196,7 +211,7 @@ void cancel_turn(PromptContext& context) {
   }
 }
 
-void close_session(PromptContext& context) {
+void close_session(PromptContext& context, std::string notice) {
   std::string session;
   {
     std::lock_guard<std::mutex> lock(context.mutex);
@@ -216,7 +231,108 @@ void close_session(PromptContext& context) {
     std::lock_guard<std::mutex> lock(context.mutex);
     context.session.clear();
   }
-  context.publish(Event{SessionClosed{}});
+  context.publish(Event{SessionClosed{std::move(notice)}});
+}
+
+void switch_session(PromptContext& context, const SessionRow& selected) {
+  std::string previous;
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    previous = context.session;
+  }
+  resume_session(context, selected);
+  std::string current;
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    current = context.session;
+  }
+  // A failed resume keeps the old session live and selected; a successful one
+  // leaves the old ACP session idle, so close it by its captured id.
+  if (!previous.empty() && current != previous) {
+    (void)context.kernel.request("session/close", acp::Json{{"sessionId", previous}},
+                                 std::chrono::seconds(10));
+  }
+}
+
+void fresh_session(PromptContext& context) {
+  std::string id;
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    id = context.session;
+  }
+  if (id.empty()) return;
+  SessionRow row;
+  row.id = SessionId{id};
+  row.cwd = context.cwd;
+  row.title = context.state.title;
+  close_session(context);
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    if (!context.session.empty()) return;
+  }
+  resume_session(context, row);
+}
+
+void move_session(PromptContext& context, ControlClient& control, const std::string& id,
+                  const std::string& path) {
+  close_session(context);
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    if (!context.session.empty()) return;
+  }
+  auto moved = control.request("session.move", {{"sessionId", id}, {"path", path}},
+                               std::chrono::seconds(120));
+  if (!moved) {
+    context.publish(Event{Problem{moved.error().layer, moved.error().detail}});
+    return;
+  }
+  SessionRow row;
+  row.id = SessionId{moved->value("sessionId", std::string{})};
+  row.cwd = moved->value("cwd", path);
+  row.title = moved->value("title", std::string{});
+  if (row.id.value.empty()) {
+    context.publish(Event{Problem{Layer::Protocol, "session.move returned no sessionId"}});
+    return;
+  }
+  switch_session(context, row);
+}
+
+void worktree_session(PromptContext& context, ControlClient& control, const std::string& id,
+                      const std::string& branch) {
+  close_session(context);
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    if (!context.session.empty()) return;
+  }
+  auto moved = control.request("session.worktree", {{"sessionId", id}, {"branch", branch}},
+                               std::chrono::seconds(120));
+  if (!moved) {
+    context.publish(Event{Problem{moved.error().layer, moved.error().detail}});
+    return;
+  }
+  SessionRow row;
+  row.id = SessionId{moved->value("sessionId", std::string{})};
+  row.cwd = moved->value("cwd", std::string{});
+  row.title = moved->value("title", std::string{});
+  if (row.id.value.empty()) {
+    context.publish(Event{Problem{Layer::Protocol, "session.worktree returned no sessionId"}});
+    return;
+  }
+  switch_session(context, row);
+}
+
+void delete_session(PromptContext& context, ControlClient& control, const std::string& id) {
+  close_session(context);
+  {
+    std::lock_guard<std::mutex> lock(context.mutex);
+    if (!context.session.empty()) return;
+  }
+  auto deleted = control.request("session.delete", {{"sessionId", id}}, std::chrono::seconds(30));
+  if (!deleted) {
+    context.publish(Event{Problem{deleted.error().layer, deleted.error().detail}});
+    return;
+  }
+  ensure_session(context);
 }
 
 void set_reasoning(PromptContext& context, const std::string& config_id,

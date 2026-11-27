@@ -5,6 +5,7 @@
 #include <string>
 
 #include "interaction/copy_picker.hpp"
+#include "interaction/link_picker.hpp"
 
 using namespace booth;
 
@@ -148,4 +149,32 @@ TEST_CASE("copy picker filters by label") {
   REQUIRE(picker.key(back, state));
   REQUIRE(picker.query().empty());
   REQUIRE(picker.matches().size() == 2);
+}
+
+TEST_CASE("copy helpers extract the last code block, shell command and link") {
+  AppState state;
+  TranscriptEntry answer;
+  answer.kind = EntryKind::Assistant;
+  answer.text = "first\n```sh\necho one\n```\nsecond\n```cpp\nint two;\n```\nhttps://example.com/a";
+  state.entries.push_back(answer);
+  TranscriptEntry tool;
+  tool.kind = EntryKind::Tool;
+  tool.tool = "bash";
+  tool.input = "echo last";
+  state.entries.push_back(tool);
+
+  REQUIRE(last_code_block(state) == "int two;\n");
+  REQUIRE(last_shell_command(state) == "echo last");
+  REQUIRE(last_link(state) == "https://example.com/a");
+}
+
+TEST_CASE("copy helpers return nullopt without matching content") {
+  AppState state;
+  TranscriptEntry answer;
+  answer.kind = EntryKind::Assistant;
+  answer.text = "plain answer";
+  state.entries.push_back(answer);
+  REQUIRE_FALSE(last_code_block(state).has_value());
+  REQUIRE_FALSE(last_shell_command(state).has_value());
+  REQUIRE_FALSE(last_link(state).has_value());
 }

@@ -1,7 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
+
+#include <unistd.h>
 
 #include <ftxui/dom/elements.hpp>
 #include <ftxui/screen/screen.hpp>
@@ -30,7 +34,7 @@ TEST_CASE("library overlay filters and selects a row") {
   REQUIRE(screen.ToString().find("skills") != std::string::npos);
 }
 
-TEST_CASE("skills selection fills the composer and providers drill into models") {
+TEST_CASE("skills selection fills the composer and providers open the editor") {
   AppState state;
   LibrarySettings settings;
   state.models = {{"alpha", "one", "a1"}, {"alpha", "two", "a2"}, {"beta", "three", "b1"}};
@@ -45,6 +49,8 @@ TEST_CASE("skills selection fills the composer and providers drill into models")
   REQUIRE(state.composer == "/review ");
   REQUIRE(content == "/review ");
 
+  std::string edited;
+  settings.edit_provider = [&](const std::string& provider) { edited = provider; };
   REQUIRE(handle_library_command("/providers", state, overlay, ".", settings, editor));
   REQUIRE(overlay.visible());
   for (const char ch : std::string("alp")) {
@@ -54,15 +60,13 @@ TEST_CASE("skills selection fills the composer and providers drill into models")
   ftxui::Event provider_enter = ftxui::Event::Return;
   REQUIRE(handle_library_event(provider_enter, state, overlay, editor, settings));
   REQUIRE_FALSE(overlay.visible());
-  REQUIRE(state.notice.find("provider alpha") == 0);
-  REQUIRE(state.notice.find("2 models") != std::string::npos);
+  REQUIRE(edited == "alpha");
 }
 
-TEST_CASE("provider overlay groups models and marks the current one") {
+TEST_CASE("provider overlay offers configuration fields") {
   AppState state;
   LibrarySettings settings;
   Editor editor(state.composer);
-  state.model = "two";
   state.models = {{"alpha", "one", "a1"}, {"alpha", "two", "a2"}, {"beta", "three", "b1"}};
   LibraryOverlay overlay;
   REQUIRE(handle_library_command("/providers", state, overlay, ".", settings, editor));
@@ -71,8 +75,8 @@ TEST_CASE("provider overlay groups models and marks the current one") {
   ftxui::Render(screen, std::move(view));
   const std::string text = screen.ToString();
   REQUIRE(text.find("alpha") != std::string::npos);
-  REQUIRE(text.find("2 models") != std::string::npos);
-  REQUIRE(text.find("current") != std::string::npos);
+  REQUIRE(text.find("configure baseURL and API key") != std::string::npos);
+  REQUIRE(text.find("Provider configuration") != std::string::npos);
 }
 
 TEST_CASE("settings overlay toggles interaction state") {
@@ -82,7 +86,7 @@ TEST_CASE("settings overlay toggles interaction state") {
   bool expanded = false;
   bool mouse = false;
   LibrarySettings settings{&thoughts, &tools_hidden, &expanded, &mouse, nullptr,
-                           std::filesystem::temp_directory_path()};
+                           std::filesystem::temp_directory_path(), nullptr};
   Editor editor(state.composer);
   LibraryOverlay overlay;
   REQUIRE(handle_library_command("/settings", state, overlay, ".", settings, editor));
@@ -102,4 +106,27 @@ TEST_CASE("settings overlay toggles interaction state") {
   }
   REQUIRE(handle_library_event(enter, state, overlay, editor, settings));
   REQUIRE(editor.VimEnabled());
+}
+
+TEST_CASE("skills subcommands describe local roots without the registry") {
+  const auto project = std::filesystem::temp_directory_path() /
+                       ("booth-skills-cmd-" + std::to_string(::getpid()));
+  std::filesystem::remove_all(project);
+  std::filesystem::create_directories(project / ".git");
+  std::filesystem::create_directories(project / ".dsh" / "skills" / "review");
+  std::ofstream(project / ".dsh" / "skills" / "review" / "SKILL.md")
+      << "---\nname: review\ndescription: review a change boothunique\n---\nReview.\n";
+  AppState state;
+  LibrarySettings settings;
+  Editor editor(state.composer);
+  LibraryOverlay overlay;
+  REQUIRE(handle_library_command("/skills installed", state, overlay, project.string(), settings, editor));
+  REQUIRE(state.notice.find("review") != std::string::npos);
+  REQUIRE(handle_library_command("/skills search boothunique", state, overlay, project.string(), settings, editor));
+  REQUIRE(state.notice.find("/review") != std::string::npos);
+  REQUIRE(handle_library_command("/skills search zzzznothing", state, overlay, project.string(), settings, editor));
+  REQUIRE(state.notice == "no matching skills");
+  REQUIRE(handle_library_command("/skills install thing", state, overlay, project.string(), settings, editor));
+  REQUIRE(state.notice.find("registry is unavailable") != std::string::npos);
+  std::filesystem::remove_all(project);
 }

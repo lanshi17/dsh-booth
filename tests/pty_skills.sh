@@ -9,7 +9,8 @@ project=$(mktemp -d)
 output=$(mktemp)
 trap 'rm -rf "$state" "$project" "$output"' EXIT
 
-mkdir -p "$project/.dsh/skills/review"
+# A `.git` marker keeps project_root() anchored here, even when TMPDIR is inside a worktree.
+mkdir -p "$project/.git" "$project/.dsh/skills/review"
 cat >"$project/.dsh/skills/review/SKILL.md" <<'MD'
 ---
 name: review

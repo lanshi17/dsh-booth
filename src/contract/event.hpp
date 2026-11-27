@@ -44,7 +44,7 @@ struct Snapshot {
   bool stale{false};
 };
 
-enum class EntryKind { User, Assistant, Thought, Tool, Notice, Image };
+enum class EntryKind { User, Assistant, Thought, Tool, Notice, Image, Command };
 
 struct TodoItem {
   std::string content;
@@ -114,7 +114,7 @@ struct TranscriptReplayed {
   std::vector<TranscriptEntry> entries;
 };
 
-struct SessionClosed {};
+struct SessionClosed { std::string notice{"session closed"}; };
 
 struct SessionConfigChanged {
   SessionId session;
@@ -142,12 +142,17 @@ struct UsageChanged {
   std::size_t size{0};
 };
 
+/// One shell condition finished for loop mode; `code` is its exit status.
+struct LoopConditionDone {
+  int code{0};
+};
+
 using EventValue = std::variant<Snapshot, TranscriptEntry, StreamDelta, PermissionRequest,
                                 SetupProgress, Problem, StreamEnd, SessionOpened,
                                 SessionConfigChanged, SessionOptionsChanged, ConfigOptionsChanged,
                                 ReasoningChanged,
                                 UsageChanged, SessionsListed, SessionSwitched, TranscriptReplayed,
-                                SessionClosed>;
+                                SessionClosed, LoopConditionDone>;
 
 struct Event {
   EventValue value;

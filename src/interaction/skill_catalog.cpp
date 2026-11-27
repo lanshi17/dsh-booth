@@ -4,10 +4,14 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <set>
 #include <sstream>
 
 namespace booth {
 namespace {
+
+/// Frontmatter is the head of the file; skills can be tens of KB of body.
+constexpr std::size_t kFrontmatterLimit = 64 * 1024;
 
 std::string trim(std::string_view text) {
   const auto first = text.find_first_not_of(" \t\r\n");
@@ -49,7 +53,7 @@ std::map<std::string, std::string> frontmatter(std::string& body) {
 }
 
 std::vector<SkillInfo> scan_root(const std::filesystem::path& root, std::string source,
-                                 std::vector<SkillInfo>& out) {
+                                 std::vector<SkillInfo>& out, std::set<std::string>& seen) {
   std::error_code error;
   for (const auto& entry : std::filesystem::directory_iterator(root, error)) {
     std::filesystem::path path;
@@ -62,9 +66,8 @@ std::vector<SkillInfo> scan_root(const std::filesystem::path& root, std::string 
     }
     auto skill = read_skill(path, source);
     if (!skill) continue;
-    const bool seen = std::any_of(out.begin(), out.end(),
-                                  [&](const SkillInfo& item) { return item.name == skill->name; });
-    if (!seen) out.push_back(std::move(*skill));
+    if (!seen.insert(skill->name).second) continue;
+    out.push_back(std::move(*skill));
   }
   return out;
 }
@@ -74,8 +77,26 @@ std::vector<SkillInfo> scan_root(const std::filesystem::path& root, std::string 
 std::optional<SkillInfo> read_skill(const std::filesystem::path& path, std::string source) {
   std::ifstream input(path);
   if (!input) return std::nullopt;
-  std::string body((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-  const auto fields = frontmatter(body);
+  std::string head;
+  std::string line;
+  const auto read_line = [&] {
+    if (!std::getline(input, line)) return false;
+    if (!line.empty() && line.back() == '\r') line.pop_back();  // CRLF checkouts
+    return true;
+  };
+  if (!read_line() || line != "---") return std::nullopt;
+  head = "---\n";
+  bool closed = false;
+  while (head.size() < kFrontmatterLimit && read_line()) {
+    head.append(line);
+    head.push_back('\n');
+    if (line == "---") {
+      closed = true;
+      break;
+    }
+  }
+  if (!closed) return std::nullopt;
+  const auto fields = frontmatter(head);
   const auto name = fields.find("name");
   const auto description = fields.find("description");
   if (name == fields.end() || description == fields.end()) return std::nullopt;
@@ -103,11 +124,12 @@ std::vector<SkillInfo> scan_skills(const std::filesystem::path& project,
                                    const std::filesystem::path& dsh_home,
                                    const std::filesystem::path& agents_home) {
   std::vector<SkillInfo> skills;
+  std::set<std::string> seen;
   const auto root = project_root(project);
-  scan_root(root / ".dsh" / "skills", "project .dsh", skills);
-  scan_root(root / ".agents" / "skills", "project .agents", skills);
-  scan_root(dsh_home / "skills", "user dsh", skills);
-  scan_root(agents_home / "skills", "user agents", skills);
+  scan_root(root / ".dsh" / "skills", "project .dsh", skills, seen);
+  scan_root(root / ".agents" / "skills", "project .agents", skills, seen);
+  scan_root(dsh_home / "skills", "user dsh", skills, seen);
+  scan_root(agents_home / "skills", "user agents", skills, seen);
   return skills;
 }
 

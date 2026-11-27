@@ -48,19 +48,39 @@ struct AppState {
   std::string composer;
   std::string session;
   std::string title;
+  std::string approvals_path;
   std::string model{"auto"};
   std::vector<ModelChoice> models;
   ReasoningOptions reasoning;
   bool busy{false};
+  bool paused{false};
   std::optional<PermissionRequest> permission;
   bool permission_expanded{false};
   bool permission_armed{false};
   std::chrono::steady_clock::time_point permission_armed_at{};
+  std::chrono::steady_clock::time_point cancel_armed_at{};
   std::vector<TodoItem> todos;
+  bool todo_expanded{false};  // `/todo expand` shows every HUD task instead of three rows.
   Notice notice;
   std::string error;
   bool help{false};
   std::vector<Attachment> attachments;
+
+  // OMP-compatible loop mode. The controller owns the transitions; the TUI
+  // only feeds prompts and turn boundaries.
+  bool loop_enabled{false};
+  bool loop_paused{false};
+  bool loop_ready{false};
+  bool loop_duration{false};
+  int loop_iterations{0};
+  std::chrono::steady_clock::time_point loop_deadline{};
+  std::string loop_prompt;
+  std::string loop_condition;
+  bool loop_until{false};
+  bool loop_condition_running{false};
+  std::string loop_pending_prompt;
+  bool restart_requested{false};
+  bool context_reset_requested{false};  // `/clear`: close the session and let the next prompt open a fresh context.
 };
 
 /// Apply one event. The only mutation point for the screen.

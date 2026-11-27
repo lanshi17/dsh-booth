@@ -12,11 +12,19 @@ keystrokes into prompts, cancels and permission answers.
                                   │ stdio JSON-RPC
                                   ▼
                           dsh --profile booth
-                                  │
-                              ACP events
-                                  ▼
-                          projection → AppState → FTXUI
+                            │            │
+                      ACP events    control.sock
+                            │            │
+                            ▼            ▼
+                     projection → AppState → FTXUI
 ```
+
+The ACP pipe carries the standard automation surface. A booth-owned profile
+plugin (`booth-control.mjs`) lives in the same dsh process and opens a private
+Unix socket for operations ACP does not expose: native slash commands,
+session rename/delete/fork, event-tree reads, the live agent roster, jobs and
+the visible tool list. Requests and replies are newline-delimited JSON; the
+client serializes them on the worker thread.
 
 ## Layers
 
@@ -42,6 +50,19 @@ config changes and usage. Non-JSON stdout lines from kernel plugins are ignored,
 protocol errors. The client never blocks the UI thread; a reader thread pushes events into the
 inbox.
 
+### Control plane
+
+`src/control/client.cpp` connects to `control.sock` and correlates one request
+at a time. The supervisor installs `booth-control.mjs` from the binary into the
+profile and keeps one managed insert row in `cordis.patch.yml`; the plugin
+injects `agents`, `commands`, `goals`, `jobs`, `planMode`, persistence, query,
+sandbox policy, session title and tools. It also relocates sessions (`/move`, `/wt`), manages
+session writable roots where the harness exposes them, and serves the loop/preset state the TUI
+keeps on the main thread. Remote failures carry their code on the transcript.
+`src/interaction/control_commands.cpp` maps booth commands to that protocol;
+`git_commands.cpp` and `extra_commands.cpp` own local git and transcript/mcp
+commands.
+
 ### Interaction
 
 `src/interaction/state.cpp` is the only mutation point: it applies one `Event` to `AppState`.
@@ -61,15 +82,16 @@ The `booth` profile is a real dsh profile (`$DSH_HOME/profiles/booth/package.jso
 ## Invariants
 
 1. Views never mutate state; only `apply(Event)` does.
-2. The UI thread never waits on the kernel, a child process, or a worker lock.
+2. The UI thread never waits on the kernel, the control socket, a child process, or a worker lock.
 3. Every wait has a visible state; failures are one `Problem` naming its layer.
 4. stdout of the kernel is protocol only; log lines are skipped.
 5. One state dir has one supervisor; the lock and pid file enforce it.
 
 ## Verification
 
-- Unit tests cover the codec, ACP projection, state reducer, keymap, process layer and profile
-  writer.
-- PTY tests drive the real TUI with a fake ACP kernel: start, prompt, permission, cancel, quit,
-  export, external editing, transcript paging and the daemon path.
+- Unit tests cover the codec, ACP projection, state reducer, keymap, process layer, profile
+  writer and the skill catalog plus slash ranking.
+- PTY tests drive the real TUI with a fake ACP kernel and a fake control socket: start, prompt,
+  permission, cancel, quit, export, external editing, transcript paging, the daemon path, and the
+  control lifecycle (rename, compact, tools, jobs, agents, tree, fork, delete).
 - `tools/gate.sh` runs the build, tests and the 600-line module limit.

@@ -146,6 +146,7 @@ void apply(AppState& state, const Event& event) {
   if (const auto* switched = std::get_if<SessionSwitched>(&event.value)) {
     state.entries.clear();
     state.todos.clear();
+    state.todo_expanded = false;
     state.attachments.clear();
     state.error.clear();
     state.streaming.clear();
@@ -165,7 +166,7 @@ void apply(AppState& state, const Event& event) {
     return;
   }
 
-  if (std::holds_alternative<SessionClosed>(event.value)) {
+  if (const auto* closed = std::get_if<SessionClosed>(&event.value)) {
     state.session.clear();
     state.title.clear();
     state.models.clear();
@@ -173,16 +174,19 @@ void apply(AppState& state, const Event& event) {
     state.attachments.clear();
     state.entries.clear();
     state.todos.clear();
+    state.todo_expanded = false;
     state.error.clear();
     state.streaming.clear();
     state.busy = false;
-    state.notice = "session closed";
+    state.notice = closed->notice;
     return;
   }
 
   if (const auto* opened = std::get_if<SessionOpened>(&event.value)) {
+    if (state.session.empty()) state.notice = "new session";
     state.session = opened->id.value;
     state.todos.clear();
+    state.todo_expanded = false;
     if (SessionRow* row = find_session(state.snapshot.sessions, opened->id)) {
       if (!opened->cwd.empty()) row->cwd = opened->cwd;
       if (!opened->model.empty()) row->model = opened->model;

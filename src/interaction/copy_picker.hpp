@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,13 @@ struct CopyItem {
   std::string label;
   std::string text;
 };
+
+/// The last fenced code block in an assistant answer, if any.
+std::optional<std::string> last_code_block(const AppState& state);
+/// The last shell tool invocation in the transcript, if any.
+std::optional<std::string> last_shell_command(const AppState& state);
+/// The last openable link in the transcript, if any.
+std::optional<std::string> last_link(const AppState& state);
 
 /// `/copy` picker over assistant answers and their fenced code blocks.
 class CopyPicker {

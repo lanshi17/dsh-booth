@@ -21,6 +21,7 @@
 #include "supervisor/logs.hpp"
 #include "supervisor/run.hpp"
 #include "interaction/tui.hpp"
+#include "interaction/recorder_play.hpp"
 #include "supervisor/supervisor.hpp"
 
 namespace booth {
@@ -51,6 +52,7 @@ std::string kind_name(EntryKind kind) {
     case EntryKind::Thought: return "thought";
     case EntryKind::Tool: return "tool";
     case EntryKind::Notice: return "notice";
+    case EntryKind::Command: return "command";
     case EntryKind::Image: return "image";
   }
   return "unknown";
@@ -278,11 +280,21 @@ int run_cli(int argc, char** argv) {
   std::size_t lines = 40;
   logs->add_option("--lines", lines, "How many trailing lines to print")->default_val(40);
 
+  auto* play = app.add_subcommand("play", "Replay a /record JSONL file");
+  std::string recording;
+  play->add_option("recording", recording, "Recording file")->required();
+  double speed = 1.0;
+  play->add_option("--speed", speed, "Playback speed; 0 disables delays")->default_val(1.0);
+
 
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& error) {
     return app.exit(error);
+  }
+
+  if (play->parsed()) {
+    return play_recording(recording, speed, std::cout, std::cerr);
   }
 
   auto config = Config::from_env(system_env());

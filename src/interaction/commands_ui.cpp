@@ -7,13 +7,17 @@
 #include <map>
 #include <string_view>
 #include <utility>
-
+#include <vector>
 #include "interaction/clipboard.hpp"
+#include "interaction/approvals.hpp"
+#include "interaction/extra_commands.hpp"
 #include "interaction/commands.hpp"
 #include "interaction/context_gauge.hpp"
+#include "interaction/copy_picker.hpp"
 #include "interaction/editor.hpp"
 #include "interaction/notify.hpp"
 #include "interaction/session_pins.hpp"
+#include "interaction/todo_commands.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
 #include "subagent/acp/messages.hpp"
@@ -35,36 +39,43 @@ std::string trim(std::string_view text) {
   return std::string(text.substr(first, last - first + 1));
 }
 
-std::string todo_markdown(const AppState& state) {
-  std::string out = "# Todos\n\n";
-  for (const auto& item : state.todos) {
-    out += item.status == "completed" ? "- [x] " : "- [ ] ";
-    out += item.content;
-    if (item.status == "in_progress") out += " (in progress)";
-    out += '\n';
-  }
-  return out;
-}
-
 std::string argument_after(const std::string& line, std::string_view command) {
   if (line.size() <= command.size()) return {};
   return trim(std::string_view(line).substr(command.size()));
 }
 
-std::string phase_name(DshPhase phase) {
-  switch (phase) {
-    case DshPhase::Down: return "down";
-    case DshPhase::Starting: return "starting";
-    case DshPhase::Ready: return "ready";
-    case DshPhase::Degraded: return "degraded";
-    case DshPhase::Paused: return "paused";
-  }
-  return "unknown";
-}
-
 std::string first_word(const std::string& line) {
   const auto end = line.find_first_of(" \t\r\n");
   return line.substr(0, end);
+}
+
+bool valid_stats_args(std::string_view text) {
+  std::vector<std::string> words;
+  std::string current;
+  for (const char ch : text) {
+    if (ch == ' ' || ch == '\t') {
+      if (!current.empty()) { words.push_back(std::move(current)); current.clear(); }
+    } else {
+      current += ch;
+    }
+  }
+  if (!current.empty()) words.push_back(std::move(current));
+  for (std::size_t index = 0; index < words.size(); ++index) {
+    if (words[index] == "--port") {
+      if (index + 1 >= words.size() ||
+          !std::all_of(words[index + 1].begin(), words[index + 1].end(),
+                       [](unsigned char ch) { return std::isdigit(ch) != 0; })) {
+        return false;
+      }
+      ++index;
+    } else if (words[index] == "--host") {
+      if (index + 1 >= words.size()) return false;
+      ++index;
+    } else {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace
@@ -168,6 +179,14 @@ void handle_permission_key(const ftxui::Event& event, AppState& state, Kernel& k
   }
 }
 
+void auto_answer_permission(Kernel& kernel, AppState& state) {
+  if (!state.permission || state.approvals_path.empty()) return;
+  const auto option = remembered_approval(state.approvals_path, *state.permission);
+  if (!option) return;
+  const PermissionRequest request = *state.permission;
+  const auto answered = kernel.answer_permission(request.id.value, *option);
+  state.permission.reset(); state.notice = answered ? "permission auto-approved" : answered.error().detail;
+}
 void answer_permission_choice(Kernel& kernel, AppState& state, const char* kind) {
   if (!state.permission || kind == nullptr) return;
   const auto& request = *state.permission;
@@ -180,6 +199,9 @@ void answer_permission_choice(Kernel& kernel, AppState& state, const char* kind)
   std::string option = pick(kind);
   if (option.empty()) {
     option = pick(std::string_view(kind).rfind("allow", 0) == 0 ? "allow_once" : "reject_once");
+  }
+  if (std::string_view(kind) == "allow_always" && !state.approvals_path.empty()) {
+    if (std::string error; !remember_approval(state.approvals_path, request, error)) state.notice = error;
   }
   const std::optional<std::string> choice =
       option.empty() ? std::nullopt : std::optional<std::string>(option);
@@ -196,32 +218,38 @@ bool local_command(const std::string& line) {
          token == "/cancel" || token == "/attach" || token == "/detach" || token == "/find" ||
          token == "/links" || token == "/mouse" || token == "/skills" || token == "/providers" || token == "/settings" ||
          token == "/todo" || token == "/tools" || token == "/usage" || token == "/git" ||
-         token == "/pin" || token == "/unpin" || token == "/paste";
-}
-
-std::string session_text(const AppState& state, std::size_t queued) {
-  std::string out = state.session.empty() ? "session: none" : "session " + state.session;
-  if (!state.title.empty()) out += " · " + state.title;
-  out += " · model " + state.model;
-  if (!state.reasoning.current_name.empty()) out += " · effort " + state.reasoning.current_name;
-  out += " · " + context_text(state);
-  if (state.busy) out += " · busy";
-  if (queued > 0) out += " · " + std::to_string(queued) + " queued";
-  return out;
-}
-
-std::string acp_text(const AppState& state, bool connected, const std::string& socket) {
-  return "acp v" + std::to_string(acp::kProtocolVersion) + " · phase " +
-         phase_name(state.snapshot.phase) + (connected ? " · connected" : " · disconnected") +
-         (socket.empty() ? "" : " · socket " + socket) +
-         (state.session.empty() ? "" : " · session " + state.session);
+         token == "/pin" || token == "/unpin" || token == "/paste" || token == "/compact" ||
+         token == "/goal" || token == "/plan" || token == "/rename" || token == "/jobs" ||
+         token == "/agents" || token == "/fork" || token == "/delete" || token == "/open" ||
+         token == "/dump" || token == "/local" || token == "/mcp" || token == "/branch" ||
+         token == "/tree" || token == "/commit" || token == "/shake" || token == "/modelpreset" ||
+         token == "/model" || token == "/loop" || token == "/add-dir" ||
+         token == "/remove-dir" || token == "/dirs" || token == "/fresh" || token == "/move" ||
+         token == "/wt" || token == "/restart" || token == "/reload-plugins" || token == "/btw" ||
+         token == "/tan" ||
+         token == "/debug" || token == "/extensions" || token == "/guided-goal" || token == "/record" || token == "/changelog" || token == "/plugins" || token == "/trace" || token == "/pause" || token == "/ssh" || token == "/forget-approvals" || token == "/memory" || token == "/marketplace" || token == "/cleanse" || token == "/security" || token == "/prewalk" || token == "/omfg" || token == "/advisor" || token == "/login" || token == "/logout" || token == "/browser" || token == "/computer" || token == "/plan-review" || token == "/force" || token == "/skillful" || token == "/extended-context" || token == "/share" ||
+         token == "/collab" || token == "/join" || token == "/leave" || token == "/fast" || token == "/slow" || token == "/vibe" || token == "/live" || token == "/ratchet";
 }
 
 bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptSearch& search,
                           std::size_t queued, const std::string& cwd,
                           const std::filesystem::path& state_dir, const std::string& line,
-                          bool show_thoughts, bool tools_hidden, Editor* editor) {
-  (void)cwd;
+                          bool show_thoughts, bool tools_hidden, Editor* editor, Kernel* kernel) {
+  if (handle_extra_command(state, line, cwd, state_dir)) return true;
+  if (line == "/pause") {
+    if (kernel == nullptr) {
+      state.notice = "pause requires a local kernel";
+      return true;
+    }
+    const auto result = state.paused ? kernel->resume() : kernel->pause();
+    if (!result) {
+      state.notice = to_string(result.error());
+      return true;
+    }
+    state.paused = !state.paused;
+    state.notice = state.paused ? "agents paused · /pause resumes" : "agents resumed";
+    return true;
+  }
   if (line == "/help") {
     state.help = true;
     return true;
@@ -264,18 +292,60 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     return true;
   }
   if (line == "/clear") {
+    if (state.busy || state.permission) {
+      state.notice = "wait for the current turn or permission prompt before clearing context";
+      return true;
+    }
     state.entries.clear();
     state.streaming.clear();
     scroll.follow();
-    state.notice = "cleared";
+    if (state.session.empty()) {
+      state.notice = "cleared";
+    } else {
+      state.context_reset_requested = true;
+      state.notice = "clearing context · the next prompt starts a fresh session";
+    }
     return true;
   }
   if (line == "/context") {
     state.notice = context_text(state);
     return true;
   }
-  if (line == "/stats") {
+  if (line == "/stats" || line.rfind("/stats ", 0) == 0) {
+    const std::string argument = argument_after(line, "/stats");
+    if (!argument.empty() && !valid_stats_args(argument)) {
+      state.notice = "usage: /stats [--port <port>] [--host <host>]";
+      return true;
+    }
     state.notice = stats_text(state, queued);
+    if (!argument.empty()) {
+      state.notice.text += " · dashboard unavailable; local counters only";
+    }
+    return true;
+  }
+  if (line == "/copy code") {
+    const auto code = last_code_block(state);
+    state.notice = code ? (copy_to_clipboard(*code) ? "copied code block" : "nothing to copy")
+                        : "no code block to copy";
+    return true;
+  }
+  if (line == "/copy cmd" || line == "/copy command") {
+    const auto command = last_shell_command(state);
+    state.notice = command ? (copy_to_clipboard(*command) ? "copied command" : "nothing to copy")
+                           : "no command to copy";
+    return true;
+  }
+  if (line == "/copy link" || line == "/copy url") {
+    const auto link = last_link(state);
+    state.notice = link ? (copy_to_clipboard(*link) ? "copied link" : "nothing to copy")
+                        : "no link to copy";
+    return true;
+  }
+  if (line == "/copy local") {
+    std::error_code error;
+    std::filesystem::create_directories(state_dir, error);
+    state.notice = copy_to_clipboard(state_dir.string()) ? "copied local directory"
+                                                         : "could not copy local directory";
     return true;
   }
   if (line == "/copy prompt") {
@@ -300,6 +370,10 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
       return true;
     }
     const auto lines = editor->Lines();
+    if (lines.empty()) {
+      state.notice = "no composer line to copy";
+      return true;
+    }
     const std::string line_text = lines[std::min(editor->CursorLine(), lines.size() - 1)];
     state.notice = copy_to_clipboard(line_text) ? "copied line" : "nothing to copy";
     return true;
@@ -308,66 +382,24 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     copy_answer(state);
     return true;
   }
-  if (line == "/usage") {
+  if (line.rfind("/copy ", 0) == 0) {
+    state.notice = "usage: /copy [code|cmd|link|local|answer|prompt|line]";
+    return true;
+  }
+  if (line == "/usage" || line == "/usage show") {
     state.notice = context_text(state) + " · " + stats_text(state, queued);
     return true;
   }
-  if (line == "/todo" || line.rfind("/todo ", 0) == 0) {
-    const std::string action = argument_after(line, "/todo");
-    if (action == "copy") {
-      const std::string text = todo_markdown(state);
-      state.notice = copy_to_clipboard(text) ? "todos copied" : "nothing to copy";
-      return true;
-    }
-    if (action == "export" || action.rfind("export ", 0) == 0) {
-      std::string target = trim(argument_after(line, "/todo export"));
-      if (target.empty()) target = "TODO.md";
-      const auto path = std::filesystem::path(cwd) / target;
-      std::ofstream output(path, std::ios::trunc);
-      if (!output) {
-        state.notice = "could not write " + path.string();
-      } else {
-        output << todo_markdown(state);
-        state.notice = "todos exported to " + path.string();
-      }
-      return true;
-    }
-    if (!action.empty()) {
-      state.notice = "usage: /todo [copy|export [path]]";
-      return true;
-    }
-    std::size_t done = 0;
-    std::string next;
-    for (const auto& item : state.todos) {
-      if (item.status == "completed") ++done;
-      else if (next.empty()) next = item.content;
-    }
-    state.notice = state.todos.empty()
-                       ? "no todo list"
-                       : "todo " + std::to_string(done) + "/" + std::to_string(state.todos.size()) +
-                             (next.empty() ? "" : " · next " + next);
+  if (line.rfind("/usage reset", 0) == 0) {
+    state.notice = "provider rate-limit reset is unavailable: dsh reports no reset credits";
     return true;
   }
-  if (line == "/tools") {
-    std::map<std::string, std::size_t> counts;
-    for (const auto& entry : state.entries) {
-      if (entry.kind == EntryKind::Tool) ++counts[entry.tool.empty() ? "tool" : entry.tool];
-    }
-    if (counts.empty()) {
-      state.notice = "no tool calls yet";
-      return true;
-    }
-    std::vector<std::pair<std::size_t, std::string>> ranked;
-    for (const auto& [name, count] : counts) ranked.push_back({count, name});
-    std::sort(ranked.begin(), ranked.end(), [](const auto& left, const auto& right) {
-      return left.first != right.first ? left.first > right.first : left.second < right.second;
-    });
-    std::string out = "tools " + std::to_string(counts.size());
-    for (std::size_t index = 0; index < ranked.size() && index < 5; ++index) {
-      out += " · " + ranked[index].second + " " + std::to_string(ranked[index].first);
-    }
-    state.notice = std::move(out);
+  if (line.rfind("/usage ", 0) == 0) {
+    state.notice = "usage: /usage [show|reset [provider/credential-id|provider/active]]";
     return true;
+  }
+  if (line == "/todo" || line.rfind("/todo ", 0) == 0) {
+    return handle_todo_local(state, line, cwd, state.notice);
   }
   if (line == "/pin" || line == "/unpin" || line.rfind("/pin ", 0) == 0 || line.rfind("/unpin ", 0) == 0) {
     std::string id = line.rfind("/pin", 0) == 0 ? argument_after(line, "/pin") : argument_after(line, "/unpin");
@@ -383,17 +415,6 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
     state.notice = set_session_pin(path, id, pinned)
                        ? (pinned ? "session pinned" : "session unpinned")
                        : "could not write session pins";
-    return true;
-  }
-  if (line == "/git") {
-    const auto git = read_git(cwd);
-    if (!git.valid) {
-      state.notice = "not a git repository";
-    } else {
-      state.notice = "git " + git.branch + " · modified " + std::to_string(git.modified) +
-                     " · staged " + std::to_string(git.staged) + " · untracked " +
-                     std::to_string(git.untracked);
-    }
     return true;
   }
   if (line == "/session" || line == "/session info") {
@@ -547,49 +568,6 @@ bool start_new_session(AppState& state, TranscriptScroll& scroll, bool& close_af
   scroll.follow();
   state.notice = "new session";
   return false;
-}
-
-std::string context_text(const AppState& state) {
-  if (state.session.empty()) return "context: no active session";
-  for (const auto& row : state.snapshot.sessions) {
-    if (row.id.value != state.session) continue;
-    if (row.context_size == 0) return "context: not reported yet";
-    const auto percent = row.context_used * 100 / row.context_size;
-    return "context: " + std::to_string(row.context_used) + " / " +
-           std::to_string(row.context_size) + " (" + std::to_string(percent) + "%) " +
-           context_bar(percent, 10) + " · " +
-           std::to_string(row.context_size - row.context_used) + " left";
-  }
-  return "context: not reported yet";
-}
-
-std::string stats_text(const AppState& state, std::size_t queued) {
-  std::size_t user = 0;
-  std::size_t assistant = 0;
-  std::size_t tools = 0;
-  std::size_t thoughts = 0;
-  std::size_t images = 0;
-  std::size_t failed = 0;
-  for (const auto& entry : state.entries) {
-    switch (entry.kind) {
-      case EntryKind::User: ++user; break;
-      case EntryKind::Assistant: ++assistant; break;
-      case EntryKind::Tool:
-        ++tools;
-        if (entry.status == "failed") ++failed;
-        break;
-      case EntryKind::Thought: ++thoughts; break;
-      case EntryKind::Notice: break;
-      case EntryKind::Image: ++images; break;
-    }
-  }
-  std::string out = "entries " + std::to_string(state.entries.size()) + " · you " +
-                    std::to_string(user) + " · assistant " + std::to_string(assistant) +
-                    " · tools " + std::to_string(tools) + " · thoughts " +
-                    std::to_string(thoughts);
-  if (images > 0) out += " · images " + std::to_string(images);
-  if (failed > 0) out += " · failed " + std::to_string(failed);
-  return out + " · queued " + std::to_string(queued);
 }
 
 }  // namespace booth

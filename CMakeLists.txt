@@ -41,6 +41,18 @@ FetchContent_MakeAvailable(CLI11 nlohmann_json Catch2 ftxui)
 find_package(Threads REQUIRED)
 find_package(ICU COMPONENTS uc REQUIRED)
 
+# The control plugin ships inside the binary so an installed booth always
+# matches the profile it writes. CMake rejects a payload that would close the
+# raw-string delimiter early.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/plugins/booth-control.mjs")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/plugins/booth-control.mjs" BOOTH_CONTROL_JS)
+if(BOOTH_CONTROL_JS MATCHES "\\)BOOTH_CONTROL_JS")
+  message(FATAL_ERROR "plugins/booth-control.mjs contains the raw-string delimiter")
+endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/booth_control_plugin.hpp"
+"#pragma once\n#include <string_view>\nnamespace booth {\ninline constexpr std::string_view kControlPlugin = R\"BOOTH_CONTROL_JS(\n${BOOTH_CONTROL_JS}\n)BOOTH_CONTROL_JS\";\n}\n")
+
 function(booth_warnings target)
   target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow -Wnon-virtual-dtor)
   if(BOOTH_WERROR)
@@ -65,6 +77,14 @@ add_library(booth_subagent STATIC
 target_link_libraries(booth_subagent PUBLIC booth_contract nlohmann_json::nlohmann_json Threads::Threads)
 booth_warnings(booth_subagent)
 
+add_library(booth_control STATIC
+  src/control/client.cpp
+  src/control/plugin.cpp
+)
+target_link_libraries(booth_control PUBLIC booth_contract nlohmann_json::nlohmann_json Threads::Threads)
+target_include_directories(booth_control PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+booth_warnings(booth_control)
+
 add_library(booth_supervisor STATIC
   src/supervisor/config.cpp
   src/supervisor/logs.cpp
@@ -73,14 +93,34 @@ add_library(booth_supervisor STATIC
   src/supervisor/run.cpp
   src/supervisor/daemon.cpp
 )
-target_link_libraries(booth_supervisor PUBLIC booth_subagent nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(booth_supervisor PUBLIC booth_subagent booth_control nlohmann_json::nlohmann_json Threads::Threads)
 booth_warnings(booth_supervisor)
 
 add_library(booth_interaction STATIC
   src/interaction/state.cpp
+  src/interaction/changelog.cpp
+  src/interaction/trace_report.cpp
+  src/interaction/ssh_config.cpp
+  src/interaction/approvals.cpp
+  src/interaction/recorder.cpp
+  src/interaction/recorder_play.cpp
+  src/interaction/provider_edit.cpp
   src/interaction/command_args.cpp
   src/interaction/commands.cpp
+  src/interaction/control_commands.cpp
+  src/interaction/btw_history.cpp
+  src/interaction/command_parsing.cpp
+  src/interaction/control_views.cpp
+  src/interaction/todo_commands.cpp
+  src/interaction/inbox.cpp
+  src/interaction/loop_controller.cpp
+  src/interaction/extra_commands.cpp
+  src/interaction/git_commands.cpp
+  src/interaction/mcp_config.cpp
+  src/interaction/preset_store.cpp
+  src/interaction/restart.cpp
   src/interaction/commands_ui.cpp
+  src/interaction/command_views.cpp
   src/interaction/context_gauge.cpp
   src/interaction/text_util.cpp
   src/interaction/help_scroll.cpp

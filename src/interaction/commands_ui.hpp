@@ -49,7 +49,10 @@ bool handle_local_command(AppState& state, TranscriptScroll& scroll, TranscriptS
                           std::size_t queued, const std::string& cwd,
                           const std::filesystem::path& state_dir, const std::string& line,
                           bool show_thoughts = true, bool tools_hidden = false,
-                          Editor* editor = nullptr);
+                          Editor* editor = nullptr, Kernel* kernel = nullptr);
+
+/// Auto-answer a stored allow-always grant, if one matches.
+void auto_answer_permission(Kernel& kernel, AppState& state);
 
 /// Moves the newest queued prompt back into the composer; false when the queue is empty.
 bool dequeue_prompt(AppState& state, std::deque<std::string>& queued);

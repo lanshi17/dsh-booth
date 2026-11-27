@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,7 @@ struct LibrarySettings {
   bool* mouse_enabled{nullptr};
   ftxui::ScreenInteractive* screen{nullptr};
   std::filesystem::path state_dir;
+  std::function<void(const std::string&)> edit_provider;
 };
 
 /// Full-screen `/skills` and `/providers` list with filtering and keyboard selection.

@@ -3,12 +3,15 @@
 
 #include <ftxui/component/screen_interactive.hpp>
 
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <mutex>
 #include <string>
 
+#include "control/client.hpp"
 #include "interaction/mouse_mode.hpp"
+#include "interaction/restart.hpp"
 #include "interaction/state.hpp"
 #include "interaction/theme.hpp"
 #include "interaction/view.hpp"
@@ -48,10 +51,14 @@ int run_tui(const Config& config, const Env& env) {
     }
     screen.PostEvent(ftxui::Event::Custom);
   };
+  ControlClient control;
+  control.set_path(config.control_socket);
   if (const int fd = connect_daemon(config.socket_file); fd >= 0) {
     RemoteKernel kernel(fd, sink);
     if (inline_mode) booth::print_splash();
-    return tui_loop(screen, kernel, state, inbox, config);
+    const int remote_code = tui_loop(screen, kernel, state, inbox, config, control);
+    if (state.restart_requested) booth::exec_restart();
+    return remote_code;
   }
   Supervisor supervisor(config, env, sink, BOOTH_VERSION);
   auto up = supervisor.up();
@@ -61,11 +68,12 @@ int run_tui(const Config& config, const Env& env) {
   }
   state.snapshot.phase = DshPhase::Ready;
   if (inline_mode) booth::print_splash();
-  const int code = tui_loop(screen, supervisor, state, inbox, config);
+  const int code = tui_loop(screen, supervisor, state, inbox, config, control);
   auto down = supervisor.down();
   if (!down) {
     std::cerr << "booth: " << to_string(down.error()) << '\n'; return 1;
   }
+  if (state.restart_requested) booth::exec_restart();
   return code;
 }
 }  // namespace booth

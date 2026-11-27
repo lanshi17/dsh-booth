@@ -90,8 +90,8 @@ Json initialize_params(std::string_view client_version) {
               {"clientInfo", Json{{"name", "booth"}, {"version", std::string(client_version)}}}};
 }
 
-Json new_session_params(std::string_view cwd) {
-  return Json{{"cwd", std::string(cwd)}, {"mcpServers", Json::array()}};
+Json new_session_params(std::string_view cwd, const Json& mcp_servers) {
+  return Json{{"cwd", std::string(cwd)}, {"mcpServers", mcp_servers}};
 }
 
 Json prompt_params(std::string_view session, std::string_view text,

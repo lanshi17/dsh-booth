@@ -30,6 +30,8 @@
 #include <utility>
 #include <vector>
 #include "interaction/help_scroll.hpp"
+#include "interaction/recorder.hpp"
+#include "interaction/provider_edit.hpp"
 #include "interaction/keymap.hpp"
 #include "interaction/editor.hpp"
 #include "interaction/emoji.hpp"
@@ -51,6 +53,9 @@
 #include "interaction/commands_ui.hpp"
 #include "interaction/error_view.hpp"
 #include "interaction/copy_picker.hpp"
+#include "interaction/control_commands.hpp"
+#include "interaction/loop_controller.hpp"
+#include "control/client.hpp"
 #include "interaction/draft.hpp"
 #include "interaction/recall.hpp"
 #include "interaction/state.hpp"
@@ -74,43 +79,36 @@ class Root : public ComponentBase {
   Root(ScreenInteractive& screen, Kernel& supervisor, AppState& state, Inbox& inbox,
        Worker& worker, std::string cwd, std::filesystem::path history_file,
        std::filesystem::path sessions_dir, std::filesystem::path draft_file,
-       std::filesystem::path socket_file, KeyBindings keys)
-      : screen_(screen),
-        supervisor_(supervisor),
-        state_(state),
-        inbox_(inbox),
-        worker_(worker),
-        editor_(state.composer),
-        cwd_(std::move(cwd)),
-        history_file_(std::move(history_file)),
-        sessions_dir_(std::move(sessions_dir)),
-        draft_file_(std::move(draft_file)),
-        socket_file_(std::move(socket_file)),
-        keys_(keys) {
-    state_.composer = booth::load_draft(draft_file_); editor_.SetContent(state_.composer);
+       std::filesystem::path socket_file, ControlClient& control, KeyBindings keys)
+      : screen_(screen), supervisor_(supervisor), control_(control), state_(state),
+        inbox_(inbox), worker_(worker), editor_(state.composer), cwd_(std::move(cwd)),
+        history_file_(std::move(history_file)), sessions_dir_(std::move(sessions_dir)),
+        draft_file_(std::move(draft_file)), socket_file_(std::move(socket_file)), keys_(keys) {
+    state_.composer = booth::load_draft(draft_file_); state_.approvals_path = (draft_file_.parent_path() / "approvals.json").string(); editor_.SetContent(state_.composer);
     mouse_enabled_ = booth::load_mouse_enabled(draft_file_.parent_path());
     if (const char* vim = ::getenv("BOOTH_VIM"); vim != nullptr && *vim != '\0' && *vim != '0') editor_.EnableVim(true);
     history_ = booth::load_history(history_file_); booth::load_file_commands(cwd_, draft_file_.parent_path()); booth::load_skill_commands(cwd_);
     git_ = booth::read_git(cwd_);
     ticker_ = booth::start_ticker(screen_, animate_, alive_);
-    worker_.post([this, ctx = context()]() mutable { booth::ensure_session(ctx); });
+    worker_.post([this, ctx = context()]() mutable { booth::ensure_session_or_restart(ctx, draft_file_.parent_path() / "restart.json"); });
   }
-  void shutdown() { booth::save_draft(draft_file_, editor_.Expanded(state_.composer)); cancel(); animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
-  Element OnRender() override {
-    mouse_.begin_frame();
-    if (library_.visible()) return library_.view();
-    if (model_picker_.visible()) return booth::model_picker_view(state_.models, model_picker_.matches(), model_picker_.index(), state_.model, model_picker_.query(), model_picker_.provider(), model_picker_.model_focus(), &mouse_) | ftxui::center;
-    if (state_.help) return booth::help_view(help_scroll_.offset(), keys_, &mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center;
-    return main_view();
-  }
+  void shutdown() { booth::save_draft(draft_file_, editor_.Expanded(state_.composer)); cancel(); if (state_.restart_requested && !state_.session.empty()) { auto ctx = context(); booth::close_session(ctx); } animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
+  Element OnRender() override { mouse_.begin_frame(); Element rendered = library_.visible() ? library_.view()
+        : model_picker_.visible() ? booth::model_picker_view(state_.models, model_picker_.matches(), model_picker_.index(), state_.model, model_picker_.query(), model_picker_.provider(), model_picker_.model_focus(), &mouse_) | ftxui::center
+        : state_.help ? booth::help_view(help_scroll_.offset(), keys_, &mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center : main_view();
+    booth::record_frame(rendered); return rendered; }
   bool OnEvent(ftxui::Event event) override {
+    if (matches_chord(keys_.quit, event)) { screen_.Exit(); return true; }
     if (event == ftxui::Event::Custom) { drain(); return true; }
+    if (!matches_chord(keys_.cancel, event)) state_.cancel_armed_at = {};
     if (paste_.feed(event, editor_)) return true;
     if (matches_chord(keys_.cancel, event)) {
+      const auto now = std::chrono::steady_clock::now();
+      const bool twice = state_.cancel_armed_at.time_since_epoch().count() != 0 && now - state_.cancel_armed_at <= std::chrono::milliseconds(1500);
+      if (twice) { screen_.Exit(); return true; } state_.cancel_armed_at = now;
       if (!state_.busy && !state_.permission && !state_.composer.empty()) {
-        recall_.clear(state_.composer); state_.composer.clear(); editor_.Reset(); booth::save_draft(draft_file_, {});
-        state_.notice = "draft cleared · Up recalls it";
-      } else cancel();
+        recall_.clear(state_.composer); state_.composer.clear(); editor_.Reset(); booth::save_draft(draft_file_, {}); state_.notice = "draft cleared · Up recalls it · Ctrl+C again to quit";
+      } else { cancel(); state_.notice = "cancelled · Ctrl+C again to quit"; }
       return true;
     }
     if (event.is_mouse() && !mouse_enabled_) return true;
@@ -136,18 +134,13 @@ class Root : public ComponentBase {
       return true;
     }
     if (state_.permission) { booth::handle_permission_key(event, state_, supervisor_, keys_); return true; }
-    if (library_.visible()) return booth::handle_library_event(event, state_, library_, editor_, {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path()});
+    if (library_.visible()) return booth::handle_library_event(event, state_, library_, editor_, {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { booth::edit_provider(control_, screen_, state_, provider); }});
     if (matches_chord(keys_.model_next, event)) { if (auto choice = booth::cycle_model(state_, 1)) apply_model(*choice); return true; }
     if (matches_chord(keys_.retry, event)) { if (!state_.busy && !history_.empty()) send_prompt(history_.back()); return true; }
     if (matches_chord(keys_.reasoning, event)) {
       const auto choice = booth::next_reasoning(state_.reasoning);
-      if (!choice) {
-        state_.notice = "no reasoning options";
-        return true;
-      }
-      worker_.post([this, ctx = context(), id = state_.reasoning.id, choice = *choice]() mutable {
-        booth::set_reasoning(ctx, id, choice);
-      });
+      if (!choice) { state_.notice = "no reasoning options"; return true; }
+      worker_.post([this, ctx = context(), id = state_.reasoning.id, choice = *choice]() mutable { booth::set_reasoning(ctx, id, choice); });
       state_.notice = "reasoning " + choice->name;
       return true;
     }
@@ -163,9 +156,7 @@ class Root : public ComponentBase {
         case booth::SessionPicker::Action::Resume: {
           const auto selected = state_.history[sessions_.matches()[sessions_.index()]];
           state_.notice = "resuming…";
-          worker_.post([this, ctx = context(), selected]() mutable {
-            booth::resume_session(ctx, selected);
-          });
+          worker_.post([this, ctx = context(), selected]() mutable { booth::resume_session(ctx, selected); });
           break;
         }
         case booth::SessionPicker::Action::None:
@@ -219,16 +210,7 @@ class Root : public ComponentBase {
     if (matches_chord(keys_.page_up, event)) { scroll_.page_up(state_.entries.size()); return true; }
     if (matches_chord(keys_.page_down, event)) { scroll_.page_down(); return true; }
     if (matches_chord(keys_.paste_image, event)) { booth::paste_clipboard(editor_, images_, state_); return true; }
-    if (matches_chord(keys_.editor, event)) {
-      if (booth::edit_in_screen(screen_, state_.composer, state_.notice)) {
-        editor_.SetContent(state_.composer);
-      }
-      return true;
-    }
-    if (matches_chord(keys_.quit, event)) {
-      screen_.Exit();
-      return true;
-    }
+    if (matches_chord(keys_.editor, event)) { if (booth::edit_in_screen(screen_, state_.composer, state_.notice)) editor_.SetContent(state_.composer); return true; }
     if (matches_chord(keys_.dequeue, event) && booth::dequeue_prompt(state_, queued_)) {
       editor_.SetContent(state_.composer);
       return true;
@@ -276,7 +258,7 @@ class Root : public ComponentBase {
                                  " entries back · PageDown to follow") |
                      ftxui::color(ftxui::Color::RGB(150, 150, 150)));
     }
-    if (auto hud = booth::todo_hud(state_.todos)) view.push_back(std::move(*hud));
+    if (auto hud = booth::todo_hud(state_.todos, state_.todo_expanded)) view.push_back(std::move(*hud));
     if (!state_.error.empty()) view.push_back(booth::error_banner_view(state_.error));
     if (!queued_.empty()) view.push_back(booth::queued_view(queued_));
     if (copy_picker_.visible()) view.push_back(booth::copy_picker_view(copy_picker_.items(), copy_picker_.matches(),
@@ -321,6 +303,7 @@ class Root : public ComponentBase {
     const std::size_t before = state_.entries.size();
     for (auto& result : shell_job_.take_completed()) state_.entries.push_back(local_python_ ? booth::python_tool_entry(result, "local-shell-" + std::to_string(++shell_id_)) : booth::shell_tool_entry(result, "local-shell-" + std::to_string(++shell_id_)));
     bool switched = false;
+    std::optional<booth::LoopStep> loop_step;
     for (auto& event : events) {
       if (std::holds_alternative<SessionSwitched>(event.value)) switched = true;
       const bool turn_done = std::holds_alternative<StreamEnd>(event.value);
@@ -337,10 +320,12 @@ class Root : public ComponentBase {
         turn_failed_ = false;
       }
       const bool closed = std::holds_alternative<SessionClosed>(event.value);
-      apply(state_, event);
+      apply(state_, event); booth::auto_answer_permission(supervisor_, state_);
+      if (const auto* done = std::get_if<LoopConditionDone>(&event.value)) loop_step = booth::loop_condition_result(state_, done->code);
       if (listed) sessions_.loaded(state_.history);
       if (std::holds_alternative<Problem>(event.value)) new_after_close_ = false;
       if (closed) {
+        booth::loop_reset(state_);
         session_title_.clear();
         queued_.clear();
         mention_registry_.clear();
@@ -350,11 +335,13 @@ class Root : public ComponentBase {
         }
       }
       if (turn_done) {
+        booth::loop_turn_finished(state_);
         animate_ = false;
         git_ = booth::read_git(cwd_);
       }
     }
     if (switched) {
+      booth::loop_reset(state_);
       scroll_.follow();
       queued_.clear();
       const auto path = mention_path(state_.session.empty() ? std::string{"none"} : state_.session);
@@ -367,15 +354,14 @@ class Root : public ComponentBase {
       auto next = std::move(queued_.front());
       queued_.pop_front();
       send_prompt(std::move(next));
+    } else if (!state_.busy && !state_.permission) {
+      const auto step = loop_step ? *loop_step : booth::loop_next(state_);
+      if (!step.notice.empty()) state_.notice = step.notice;
+      if (step.condition) worker_.post([this, command = *step.condition, ctx = context()]() mutable { publish(Event{LoopConditionDone{booth::run_shell_status(command, ctx.cwd)}}); });
+      else if (step.prompt) send_prompt(*step.prompt);
     }
   }
-  void publish(Event event) {
-    {
-      std::lock_guard<std::mutex> lock(inbox_.mutex);
-      inbox_.events.push_back(std::move(event));
-    }
-    screen_.PostEvent(ftxui::Event::Custom);
-  }
+  void publish(Event event) { booth::post_event(inbox_, screen_, std::move(event)); }
   void submit() {
     std::string text = editor_.Expanded(state_.composer);
     const auto first = text.find_first_not_of(" \t\r\n");
@@ -410,6 +396,7 @@ class Root : public ComponentBase {
       state_.notice = "could not start local command";
   }
   void send_prompt(std::string text) {
+    booth::loop_note_prompt(state_, text);
     turn_failed_ = false;
     state_.notice.clear(); state_.error.clear(); state_.busy = true; animate_ = true;
     text = booth::expand_emojis(text);
@@ -434,13 +421,33 @@ class Root : public ComponentBase {
   }
   void handle_command(std::string line) {
     line = booth::normalize_command(std::move(line));
+    if (booth::is_control_command(line) &&
+        booth::handle_control_command(booth::ControlHooks{&control_, cwd_, draft_file_.parent_path(), &state_, [this](booth::TranscriptEntry entry) { publish(Event{std::move(entry)}); },
+            [this](std::function<void()> job) { worker_.post(std::move(job)); },
+            [this](const booth::SessionRow& row) { auto ctx = context(); worker_.post([this, ctx, row]() mutable { booth::switch_session(ctx, row); }); },
+            [this](const std::string& id) { auto ctx = context(); worker_.post([this, ctx, id]() mutable { booth::delete_session(ctx, control_, id); }); },
+            [this] { auto ctx = context(); worker_.post([this, ctx]() mutable { booth::fresh_session(ctx); }); },
+            [this](const std::string& id, const std::string& path) { auto ctx = context(); worker_.post([this, ctx, id, path]() mutable { booth::move_session(ctx, control_, id, path); }); },
+            [this](const std::string& id, const std::string& branch) { auto ctx = context(); worker_.post([this, ctx, id, branch]() mutable { booth::worktree_session(ctx, control_, id, branch); }); },
+            [this](const std::string& title) { publish(Event{SessionConfigChanged{SessionId{}, "title", title}}); },
+            [this](const std::string& value, const std::string& name) {
+              booth::ModelChoice choice{"", name, value};
+              for (const auto& candidate : state_.models) if (candidate.value == value || candidate.name == name) { choice = candidate; break; }
+              apply_model(choice);
+            },
+            [this](const std::string& id, const ModelChoice& choice) { worker_.post([this, ctx = context(), id, choice]() mutable { booth::set_reasoning(ctx, id, choice); }); },
+            [this](const std::string& seed) -> std::optional<std::string> { std::string text = seed; bool ok = false; screen_.WithRestoredIO([&] { if (auto edited = booth::edit_externally(text)) { text = *edited; ok = true; } })(); return ok ? std::optional<std::string>(text) : std::nullopt; }}, line, state_.session)) return;
     if (auto prompt = booth::file_command_prompt(line)) { send_prompt(std::move(*prompt)); return; }
+    if (line.rfind("/providers edit", 0) == 0) { booth::edit_provider(control_, screen_, state_, line.substr(15)); return; }
     if (booth::handle_library_command(line, state_, library_, cwd_,
-                                      {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path()}, editor_)) return;
+                                      {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { booth::edit_provider(control_, screen_, state_, provider); }}, editor_)) return;
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
-                                    draft_file_.parent_path(), line, show_thoughts_, tools_hidden_, &editor_)) {
+                                    draft_file_.parent_path(), line, show_thoughts_, tools_hidden_, &editor_, &supervisor_)) {
+      if (state_.context_reset_requested) { state_.context_reset_requested = false; if (!state_.session.empty()) worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx, "context cleared · the next prompt starts a fresh session"); }); }
       if (line == "/help") help_scroll_.reset();
       if (line == "/theme" || line.rfind("/theme ", 0) == 0) screen_.PostEvent(ftxui::Event::Custom);
+      if (!state_.loop_pending_prompt.empty()) { auto prompt = std::move(state_.loop_pending_prompt); state_.loop_pending_prompt.clear(); send_prompt(std::move(prompt)); }
+      if (state_.restart_requested) screen_.Exit();
       return;
     }
     if (line == "/acp") { state_.notice = booth::acp_text(state_, supervisor_.connected(), socket_file_.string()); return; }
@@ -458,12 +465,8 @@ class Root : public ComponentBase {
     if (line == "/new") { if (booth::start_new_session(state_, scroll_, new_after_close_)) worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx); }); return; }
     const auto argument = [&](std::string_view prefix) -> std::optional<std::string> {
       if (line.rfind(prefix, 0) != 0) return std::nullopt;
-      std::string rest = line.substr(prefix.size());
-      const auto first = rest.find_first_not_of(" \t");
-      if (first == std::string::npos) return std::string{};
-      rest = rest.substr(first);
-      const auto last = rest.find_last_not_of(" \t");
-      return rest.substr(0, last + 1);
+      std::string rest = line.substr(prefix.size()); rest.erase(0, rest.find_first_not_of(" \t"));
+      const auto last = rest.find_last_not_of(" \t"); return last == std::string::npos ? std::string{} : rest.substr(0, last + 1);
     };
     if (line == "/quit") { screen_.Exit(); return; }
     if (line == "/retry") { if (history_.empty()) { state_.notice = "nothing to retry"; return; } send_prompt(history_.back()); return; }
@@ -514,12 +517,8 @@ class Root : public ComponentBase {
   std::filesystem::path mention_path(const std::string& session) const { return draft_file_.parent_path() / ("mentions-" + session + ".json"); }
   std::vector<std::string> efforts() const { std::vector<std::string> out; for (const auto& choice : state_.reasoning.choices) out.push_back(choice.value); return out; }
   PromptContext context() {
-    return PromptContext{supervisor_,
-                         state_,
-                         session_mutex_,
-                         session_,
-                         cwd_,
-                         sessions_dir_,
+    return PromptContext{supervisor_, state_, session_mutex_, session_, cwd_, sessions_dir_,
+                         draft_file_.parent_path() / "mcp.json",
                          [this](Event event) { publish(std::move(event)); }};
   }
   void run_prompt(std::string text,
@@ -528,9 +527,10 @@ class Root : public ComponentBase {
     auto ctx = context(); booth::run_prompt(ctx, std::move(text), resources, images);
   }
   void apply_model(const booth::ModelChoice& choice) { worker_.post([this, ctx = context(), choice]() mutable { booth::apply_model(ctx, choice); }); }
-  void cancel() { auto ctx = context(); booth::cancel_turn(ctx); }
+  void cancel() { booth::loop_pause(state_, state_.notice); auto ctx = context(); booth::cancel_turn(ctx); }
   ScreenInteractive& screen_;
   Kernel& supervisor_;
+  ControlClient& control_;
   AppState& state_;
   Inbox& inbox_;
   Worker& worker_;
@@ -580,7 +580,7 @@ class Root : public ComponentBase {
 }  // namespace
 
 int tui_loop(ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& inbox,
-             const Config& config) {
+             const Config& config, ControlClient& control) {
   auto bindings = load_keybindings(config.state_dir / "keybindings.yml");
   if (!bindings) {
     std::cerr << "booth: " << to_string(bindings.error()) << " (using defaults)\n";
@@ -592,7 +592,7 @@ int tui_loop(ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& 
   auto root = ftxui::Make<Root>(screen, kernel, state, inbox, worker,
                                 std::filesystem::current_path().string(), config.history_file,
                                 config.dsh_home / "sessions", config.state_dir / "draft",
-                                config.socket_file, *bindings);
+                                config.socket_file, control, *bindings);
   std::cout << "\x1b[?2004h" << std::flush; screen.Loop(root); std::cout << "\x1b[?2004l" << std::flush;
   root->shutdown();
   return 0;

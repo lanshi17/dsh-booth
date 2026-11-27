@@ -21,6 +21,29 @@ std::string lower(std::string_view text) {
   return out;
 }
 
+#if !defined(_WIN32)
+bool launch_detached(const std::string& target) {
+  const pid_t pid = ::fork();
+  if (pid < 0) return false;
+  if (pid == 0) {
+    const pid_t grandchild = ::fork();
+    if (grandchild != 0) ::_exit(grandchild < 0 ? 1 : 0);
+    ::setsid();
+#if defined(__APPLE__)
+    ::execlp("open", "open", target.c_str(), static_cast<char*>(nullptr));
+#else
+    ::execlp("xdg-open", "xdg-open", target.c_str(), static_cast<char*>(nullptr));
+#endif
+    ::_exit(127);
+  }
+  int status = 0;
+  while (::waitpid(pid, &status, 0) < 0) {
+    if (errno != EINTR) return false;
+  }
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
+
 }  // namespace
 
 bool is_openable_url(std::string_view url) {
@@ -42,27 +65,17 @@ bool open_url(std::string_view url) {
 #if defined(_WIN32)
   return false;
 #else
-  const std::string target(url);
-  const pid_t pid = ::fork();
-  if (pid < 0) return false;
-  if (pid == 0) {
-    // Double-fork so the browser's lifetime is independent of booth and the
-    // root only reaps the immediate child.
-    const pid_t grandchild = ::fork();
-    if (grandchild != 0) ::_exit(grandchild < 0 ? 1 : 0);
-    ::setsid();
-#if defined(__APPLE__)
-    ::execlp("open", "open", target.c_str(), static_cast<char*>(nullptr));
-#else
-    ::execlp("xdg-open", "xdg-open", target.c_str(), static_cast<char*>(nullptr));
+  return launch_detached(std::string(url));
 #endif
-    ::_exit(127);
-  }
-  int status = 0;
-  while (::waitpid(pid, &status, 0) < 0) {
-    if (errno != EINTR) return false;
-  }
-  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+bool open_path(const std::filesystem::path& path) {
+#if defined(_WIN32)
+  (void)path;
+  return false;
+#else
+  if (path.empty()) return false;
+  return launch_detached(path.string());
 #endif
 }
 

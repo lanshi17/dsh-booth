@@ -21,6 +21,13 @@ class Kernel {
   virtual Result<void> answer_permission(std::string_view request_id,
                                          const std::optional<std::string>& option_id) = 0;
   [[nodiscard]] virtual bool connected() const = 0;
+  virtual Result<void> pause() {
+    return std::unexpected(Error{Layer::Process, "pause is not supported by this kernel", std::nullopt});
+  }
+  virtual Result<void> resume() {
+    return std::unexpected(Error{Layer::Process, "resume is not supported by this kernel", std::nullopt});
+  }
+  [[nodiscard]] virtual bool paused() const { return false; }
 };
 
 /// A kernel reached over the daemon's Unix socket.

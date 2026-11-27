@@ -61,6 +61,10 @@ std::vector<ArgumentHint> matching_arguments(const ArgumentQuery& query, const A
     append(all, "raw", "paste without collapsing markers");
   } else if (query.command == "/copy") {
     append(all, "answer", "copy the last assistant answer");
+    append(all, "code", "copy the last fenced code block");
+    append(all, "cmd", "copy the last shell command");
+    append(all, "link", "copy the last transcript link");
+    append(all, "local", "copy the local state directory");
     append(all, "prompt", "copy the current composer");
     append(all, "line", "copy the current composer line");
   } else if (query.command == "/model") {

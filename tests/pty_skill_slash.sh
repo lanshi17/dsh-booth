@@ -9,7 +9,8 @@ project=$(mktemp -d)
 output=$(mktemp)
 trap 'rm -rf "$state" "$project" "$output"' EXIT
 
-mkdir -p "$project/.dsh/skills/review"
+# A `.git` marker keeps project_root() anchored here, even when TMPDIR is inside a worktree.
+mkdir -p "$project/.git" "$project/.dsh/skills/review"
 cat >"$project/.dsh/skills/review/SKILL.md" <<'MD'
 ---
 name: review
@@ -27,5 +28,10 @@ MD
 grep -aq "review a change" "$output"
 if grep -aq "unknown command /review" "$output"; then
   echo "skill was treated as an unknown local command" >&2
+  exit 1
+fi
+# The fake kernel answers every prompt with "hello": only a submitted prompt produces it.
+if ! grep -aq "hello" "$output"; then
+  echo "the skill token never reached the kernel as a prompt" >&2
   exit 1
 fi

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <string_view>
 
 namespace booth {
@@ -13,5 +14,9 @@ bool is_openable_url(std::string_view url);
 /// reaped instead. Returns false for rejected URLs or when the launcher cannot
 /// be created.
 bool open_url(std::string_view url);
+
+/// Opens one already-validated local path with the platform opener. The caller
+/// owns confinement (for example, inside the booth state directory).
+bool open_path(const std::filesystem::path& path);
 
 }  // namespace booth

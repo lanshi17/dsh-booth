@@ -13,7 +13,7 @@
 
 namespace booth {
 
-std::optional<ftxui::Element> todo_hud(const std::vector<TodoItem>& todos) {
+std::optional<ftxui::Element> todo_hud(const std::vector<TodoItem>& todos, bool expanded) {
   if (todos.empty()) return std::nullopt;
   const std::size_t done =
       static_cast<std::size_t>(std::count_if(todos.begin(), todos.end(), [](const TodoItem& item) {
@@ -24,7 +24,7 @@ std::optional<ftxui::Element> todo_hud(const std::vector<TodoItem>& todos) {
         return item.status == "in_progress";
       }));
   const std::size_t pending = todos.size() - done - active;
-  if (active == 0 && pending == 0) return std::nullopt;
+  if (active == 0 && pending == 0 && !expanded) return std::nullopt;
 
   const auto accent = theme_color("accent", ftxui::Color::RGB(0, 175, 255));
   const auto dim = theme_color("dim", ftxui::Color::RGB(118, 118, 118));
@@ -38,15 +38,16 @@ std::optional<ftxui::Element> todo_hud(const std::vector<TodoItem>& todos) {
                      : " · " + std::to_string(pending) + " pending";
   rows.push_back(ftxui::text(head) | ftxui::color(accent) | ftxui::bold);
 
-  constexpr std::size_t kRows = 3;
+  const std::size_t kRows = expanded ? todos.size() : 3;
   std::size_t shown = 0;
   std::size_t open = active + pending;
   const auto add_rows = [&](const std::string& status) {
     for (const auto& item : todos) {
       if (shown >= kRows || item.status != status) continue;
       const bool current = status == "in_progress";
+      const bool completed_row = status == "completed";
       rows.push_back(ftxui::hbox({
-          ftxui::text("  ☐ ") | ftxui::color(current ? accent : dim),
+          ftxui::text(completed_row ? "  ☑ " : "  ☐ ") | ftxui::color(current ? accent : dim),
           ftxui::text(ellipsize(item.content, width - 6)) |
               ftxui::color(current ? text : dim) | (current ? ftxui::bold : ftxui::nothing),
       }));
@@ -56,6 +57,7 @@ std::optional<ftxui::Element> todo_hud(const std::vector<TodoItem>& todos) {
   };
   add_rows("in_progress");
   add_rows("pending");
+  if (expanded) add_rows("completed");
   if (open > 0) {
     rows.push_back(ftxui::text("  … +" + std::to_string(open) + " open") | ftxui::dim);
   }

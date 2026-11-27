@@ -15,6 +15,7 @@ trap cleanup EXIT
 
 export BOOTH_STATE_DIR="$state"
 export BOOTH_DSH_BIN="$kernel"
+export DSH_HOME="$state/dsh"
 
 "$booth" up >/dev/null
 

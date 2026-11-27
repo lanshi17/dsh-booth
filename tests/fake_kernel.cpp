@@ -1,9 +1,19 @@
 // A minimal ACP peer for tests: answers the calls booth makes and streams one message.
 #include <nlohmann/json.hpp>
 
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <optional>
 #include <string>
+#include <thread>
+#include <atomic>
 
 namespace {
 
@@ -49,9 +59,257 @@ std::string prompt_resource(const json& message) {
   return {};
 }
 
+std::atomic<bool> deleted_requested{false};
+
+json control_reply(const std::string& method, const json& params) {
+  const std::string session = params.value("sessionId", std::string{"s-1"});
+  if (method == "hello") {
+    return {{"protocol", 1}, {"sessions", json::array({session})}};
+  }
+  if (method == "plugins.set") {
+    const std::string name = params.value("name", std::string{});
+    const bool enabled = params.value("enabled", false);
+    return {{"text", "plugin " + name + (enabled ? " enabled" : " disabled")}};
+  }
+  if (method == "command.execute") {
+    const std::string line = params.value("line", std::string{});
+    if (line.rfind("/compact", 0) == 0) {
+      return {{"commandId", "c-compact"},
+              {"result", {{"kind", "success"}, {"text", "Compacted 3 history items (~120 tokens)."}}}};
+    }
+    if (line.rfind("/goal", 0) == 0) {
+      return {{"commandId", "c-goal"},
+              {"result", {{"kind", "success"},
+                          {"text", "Goal\nStatus: active\nObjective: control parity"}}}};
+    }
+    return {{"commandId", "c-plan"},
+            {"result", {{"kind", "success"}, {"text", "Plan mode updated."}}}};
+  }
+  if (method == "session.delete") {
+    deleted_requested = true;
+    return {{"deleted", true}, {"sessionId", params.value("sessionId", std::string{})}};
+  }
+  if (method == "session.fork") {
+    return {{"sessionId", "s-fork"}, {"atSeq", 3}, {"title", "forked title"}, {"cwd", "/tmp"}};
+  }
+  if (method == "dirs.list") {
+    return {{"cwd", "/tmp"}, {"roots", json::array({"/tmp"})}};
+  }
+  if (method == "dirs.add") {
+    return {{"path", params.value("path", std::string{})}, {"roots", json::array({"/tmp"})}};
+  }
+  if (method == "dirs.remove") {
+    return {{"path", params.value("path", std::string{})}, {"roots", json::array()}};
+  }
+  if (method == "providers.get") {
+    return {{"provider", "mock"}, {"baseURL", "https://old.example/v1"}, {"apiKeyConfigured", false}, {"apiKeyMasked", ""}};
+  }
+  if (method == "providers.update") {
+    return {{"provider", "mock"}, {"baseURL", params.value("baseURL", std::string{})}, {"text", "Updated mock."}};
+  }
+  if (method == "vibe") {
+    return {{"text", "vibe worker report"}};
+  }
+  if (method == "fast") {
+    return {{"text", "Fast mode enabled (service_tier=priority)."}};
+  }
+  if (method == "slow") {
+    return {{"text", "Slow mode enabled (service_tier=flex)."}};
+  }
+  if (method == "share") {
+    return {{"url", "http://127.0.0.1:1234/s/test"}, {"text", "Sharing this session at http://127.0.0.1:1234/s/test"}};
+  }
+  if (method == "collab") {
+    return {{"text", "Collaboration: write. http://127.0.0.1:1234/s/test"}};
+  }
+  if (method == "join") {
+    return {{"url", "http://127.0.0.1:1234/s/test"}, {"text", "Joining http://127.0.0.1:1234/s/test"}};
+  }
+  if (method == "leave") {
+    return {{"text", "Stopped sharing this session."}};
+  }
+  if (method == "extended-context") {
+    return {{"text", "Extended context on: using mock/long (1000000 tokens)."}};
+  }
+  if (method == "skillful") {
+    return {{"text", "Skill listing disabled for this session."}};
+  }
+  if (method == "force") {
+    return {{"text", "Force armed: only \"read\" will be visible at the next user turn."}};
+  }
+  if (method == "plan-review") {
+    return {{"text", "Plan review: add a verification step."}};
+  }
+  if (method == "browser") {
+    return {{"text", "browser: on · headless · installed: yes"}};
+  }
+  if (method == "computer") {
+    return {{"text", "computer: off · installed: no"}};
+  }
+  if (method == "login") {
+    return {{"text", "login requested"}};
+  }
+  if (method == "logout") {
+    return {{"text", "Signed out of the DeepSeek account."}};
+  }
+  if (method == "advisor") {
+    return {{"text", "Advisor enabled."}};
+  }
+  if (method == "omfg") {
+    return {{"text", "Rule added: stop repeating that behavior"}};
+  }
+  if (method == "prewalk") {
+    return {{"text", "Prewalk armed: mock/model at the next user turn."}};
+  }
+  if (method == "security") {
+    return {{"text", "Security scan started: scan-1"}};
+  }
+  if (method == "cleanse") {
+    return {{"text", "cleanse report\nDiagnostics: 1\nVerification: passed"}};
+  }
+  if (method == "marketplace") {
+    return {{"text", "No marketplaces configured."}};
+  }
+  if (method == "memory") {
+    const std::string args = params.value("args", std::string{});
+    return {{"text", args.empty() ? "memory local\nnotes: 1" : "memory: " + args}};
+  }
+  if (method == "goal.guided") {
+    return {{"started", true}};
+  }
+  if (method == "side.ask") {
+    return {{"childId", "s-btw"}, {"output", "side answer"}, {"stopReason", "completed"}};
+  }
+  if (method == "side.background") {
+    return {{"childId", "s-tan"}};
+  }
+  if (method == "session.move") {
+    return {{"sessionId", "s-moved"},
+            {"cwd", params.value("path", std::string{})},
+            {"title", "moved title"}};
+  }
+  if (method == "session.worktree") {
+    return {{"sessionId", "s-wt"},
+            {"cwd", "/tmp/wt"},
+            {"title", "wt title"},
+            {"branch", params.value("branch", std::string{"wt/test"})}};
+  }
+  if (method == "session.shake") {
+    return {{"pruned", 2}, {"charsRemoved", 512}};
+  }
+  if (method == "todos.commit") {
+    if (const char* state = std::getenv("BOOTH_STATE_DIR"); state != nullptr && *state != '\0') {
+      std::ofstream output(std::filesystem::path(state) / "todos.log", std::ios::app);
+      output << params.dump() << '\n';
+    }
+    return {{"count", params.value("todos", json::array()).size()}};
+  }
+  if (method == "session.events") {
+    return json::array({json{{"seq", 0}, {"type", "user/message"}, {"text", "first question"}},
+                        json{{"seq", 1}, {"type", "turn/end"}},
+                        json{{"seq", 2}, {"type", "assistant/message"}, {"text", "answer"}}});
+  }
+  if (method == "session.rename") {
+    const std::string title = params.value("title", std::string{});
+    return {{"title", title.empty() ? "generated title" : title}, {"seq", 4}};
+  }
+  if (method == "tools.list") {
+    return json::array({json{{"name", "read"}, {"description", "Read a file"}},
+                        json{{"name", "bash"}, {"description", "Run a command"}}});
+  }
+  if (method == "jobs.list") {
+    return json::array({json{{"id", "job-1"},
+                             {"kind", "bash"},
+                             {"status", "running"},
+                             {"label", "tests"},
+                             {"startedAt", 1}}});
+  }
+  if (method == "jobs.kill") {
+    return {{"killed", json::array({params.value("id", std::string{})})}};
+  }
+  if (method == "agents.list") {
+    return json::array({json{{"sessionId", session},
+                             {"title", "main"},
+                             {"status", "idle"},
+                             {"busy", false},
+                             {"finished", false}},
+                        json{{"sessionId", "s-child"},
+                             {"title", "child"},
+                             {"status", "finished"},
+                             {"busy", false},
+                             {"finished", true}}});
+  }
+  if (method == "plan.status") return {{"active", false}};
+  if (method == "plan.set") return {{"result", "committed"}, {"state", {{"active", true}}}};
+  if (method == "session.info") {
+    return {{"sessionId", session}, {"title", "main"}, {"cwd", "/tmp"}, {"status", "idle"}};
+  }
+  return json::object();
+}
+
+void serve_control_connection(int client) {
+  std::string buffer;
+  char chunk[4096];
+  for (;;) {
+    const ssize_t size = ::recv(client, chunk, sizeof(chunk), 0);
+    if (size <= 0) break;
+    buffer.append(chunk, static_cast<std::size_t>(size));
+    for (;;) {
+      const auto newline = buffer.find('\n');
+      if (newline == std::string::npos) break;
+      const std::string line = buffer.substr(0, newline);
+      buffer.erase(0, newline + 1);
+      if (line.empty()) continue;
+      auto request = json::parse(line, nullptr, false);
+      if (request.is_discarded() || !request.is_object()) continue;
+      json response = {{"id", request.value("id", 0)}};
+      try {
+        response["result"] = control_reply(request.value("method", std::string{}),
+                                           request.value("params", json::object()));
+      } catch (const std::exception& error) {
+        response["error"] = {{"code", "control/internal"}, {"message", error.what()}};
+      }
+      const std::string out = response.dump() + "\n";
+      (void)::send(client, out.data(), out.size(), MSG_NOSIGNAL);
+    }
+  }
+  ::close(client);
+}
+
+/// Run a small control server beside the fake ACP peer, when the test set a
+/// state directory. The TUI's control commands then exercise a real socket.
+void start_control_server() {
+  const char* state = std::getenv("BOOTH_STATE_DIR");
+  if (state == nullptr || *state == '\0') return;
+  const std::string path = std::string(state) + "/control.sock";
+  ::unlink(path.c_str());
+  const int listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+  if (listener < 0) return;
+  sockaddr_un address{};
+  address.sun_family = AF_UNIX;
+  if (path.size() >= sizeof(address.sun_path)) {
+    ::close(listener);
+    return;
+  }
+  std::memcpy(address.sun_path, path.c_str(), path.size());
+  if (::bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0 ||
+      ::listen(listener, 4) != 0) {
+    ::close(listener);
+    return;
+  }
+  std::thread([listener] {
+    for (;;) {
+      const int client = ::accept(listener, nullptr, nullptr);
+      if (client < 0) break;
+      std::thread(serve_control_connection, client).detach();
+    }
+  }).detach();
+}
+
 }  // namespace
 
 int main() {
+  start_control_server();
   std::optional<json> waiting_for_cancel;
   std::optional<json> waiting_for_permission;
 
@@ -91,6 +349,7 @@ int main() {
     if (method == "initialize") {
       reply(id, {{"protocolVersion", 1}});
     } else if (method == "session/new") {
+      const std::string new_id = deleted_requested.exchange(false) ? "s-2" : "s-1";
       const json config_options = json::parse(R"([
         {"id":"model","name":"Model","category":"model",
          "currentValue":"[\"provider\",\"model-one\"]",
@@ -103,7 +362,7 @@ int main() {
          "currentValue":"high",
          "options":[{"value":"low","name":"Low"},{"value":"high","name":"High"}]}
       ])");
-      reply(id, {{"sessionId", "s-1"}, {"configOptions", config_options}});
+      reply(id, {{"sessionId", new_id}, {"configOptions", config_options}});
     } else if (method == "session/set_config_option") {
       const auto params = message.value("params", json::object());
       const std::string config_id = params.value("configId", std::string{});
@@ -173,6 +432,12 @@ int main() {
       if (!image.empty()) stream_text("image:" + image);
       if (text.find("<model agent=") != std::string::npos) stream_text("mention-tag");
       if (!resource.empty()) stream_text("resource:" + resource);
+      static int loop_calls = 0;
+      if (text.find("loopcount") != std::string::npos) {
+        stream_text("loop-" + std::to_string(++loop_calls));
+        reply(id, {{"stopReason", "end_turn"}});
+        continue;
+      }
       if (text.find("usage") != std::string::npos) {
         const std::string prompt_session =
             message.value("params", json::object()).value("sessionId", std::string{"s-1"});

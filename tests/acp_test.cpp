@@ -63,6 +63,11 @@ TEST_CASE("message builders match the ACP shapes") {
   REQUIRE(session["cwd"] == "/tmp/work");
   REQUIRE(session["mcpServers"].is_array());
 
+  const auto with_mcp = new_session_params(
+      "/tmp/work", nlohmann::json::array({nlohmann::json{{"name", "files"}, {"command", "npx"}}}));
+  REQUIRE(with_mcp["mcpServers"][0]["name"] == "files");
+  REQUIRE(with_mcp["mcpServers"][0]["command"] == "npx");
+
   const auto prompt = prompt_params("s-1", "hello");
   REQUIRE(prompt["sessionId"] == "s-1");
   REQUIRE(prompt["prompt"][0]["type"] == "text");

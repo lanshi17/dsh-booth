@@ -15,7 +15,7 @@ namespace booth::acp {
 inline constexpr int kProtocolVersion = 1;
 
 Json initialize_params(std::string_view client_version);
-Json new_session_params(std::string_view cwd);
+Json new_session_params(std::string_view cwd, const Json& mcp_servers = Json::array());
 struct ImageAttachment {
   std::string mime_type;
   std::string data;

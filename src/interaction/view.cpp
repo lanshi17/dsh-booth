@@ -402,6 +402,14 @@ ftxui::Element entry_element(const TranscriptEntry& entry, bool expand_tools) {
     }
     case EntryKind::Notice:
       return ftxui::vbox({ftxui::paragraph(entry.text) | ftxui::color(kRed), ftxui::text(" ")});
+    case EntryKind::Command:
+      return ftxui::vbox({
+          ftxui::hbox({ftxui::text("  "),
+                       ftxui::text(entry.tool.empty() ? "command" : entry.tool) | ftxui::color(kAccent) |
+                           ftxui::dim}),
+          ftxui::paragraph(entry.text.empty() ? "(no output)" : entry.text) | ftxui::color(kDim),
+          ftxui::text(" "),
+      });
   }
   return ftxui::text(entry.text);
 }

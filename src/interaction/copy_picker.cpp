@@ -4,8 +4,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 
 #include "interaction/clipboard.hpp"
+#include "interaction/link_picker.hpp"
 #include "interaction/tool_parse.hpp"
 #include "interaction/view.hpp"
 
@@ -68,6 +70,30 @@ std::string lower_copy(const std::string& text) {
 }
 
 }  // namespace
+
+std::optional<std::string> last_code_block(const AppState& state) {
+  for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
+    if (entry->kind != EntryKind::Assistant) continue;
+    std::vector<CopyItem> items;
+    collect_code(entry->text, items);
+    if (!items.empty()) return items.back().text;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> last_shell_command(const AppState& state) {
+  for (auto entry = state.entries.rbegin(); entry != state.entries.rend(); ++entry) {
+    if (entry->kind != EntryKind::Tool || entry->input.empty()) continue;
+    if (is_shell_tool(entry->tool)) return entry->input;
+  }
+  return std::nullopt;
+}
+
+std::optional<std::string> last_link(const AppState& state) {
+  const auto links = collect_transcript_links(state.entries);
+  if (links.empty()) return std::nullopt;
+  return links.back().url;
+}
 
 void CopyPicker::rebuild() {
   matches_.clear();
