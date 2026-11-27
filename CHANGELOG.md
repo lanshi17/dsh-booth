@@ -24,6 +24,19 @@
 - `/open` validates its optional link argument, and login/logout forward provider
   arguments.
 - Disabled MCP rows remain listed while excluded from the next session.
+- `/providers` reads the dsh `llm-pi-ai` provider list instead of the current model
+  set, so provider setup works before the first session; OMP's `models.yml` +
+  SQLite credential storage is documented as the mapping.
+- The external provider editor requests a full repaint and a synthetic frame after
+  exiting `$EDITOR`, removing the gray alternate-screen state.
+- `/clear` closes the live session so the next prompt starts a genuinely fresh
+  dsh context, with a context-specific notice; `/btw` history is session-scoped,
+  capped, and user-only readable.
+- `/plugins` lists live plugin/bundle state from dsh's `pluginManager`, and
+  `enable`/`disable` apply through it; `/todo expand` shows completed rows and
+  resets per session; `/skills` results are project-first and capped.
+- `/stats` validates flag values and `/session` rejects unexpected subcommand
+  arguments; `/jobs kill` reports the backend outcome.
 
 ## [0.5.0] — 2026-11-26
 

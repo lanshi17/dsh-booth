@@ -104,6 +104,10 @@ bool edit_in_screen(ftxui::ScreenInteractive& screen, std::string& content,
     content = *edited;
     ok = true;
   })();
+  // Re-entering the alternate screen after $EDITOR starts from a blank buffer;
+  // request a full frame so the TUI repaints instead of leaving a gray screen.
+  screen.RequestAnimationFrame();
+  screen.PostEvent(ftxui::Event::Custom);
   return ok;
 }
 

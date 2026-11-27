@@ -13,6 +13,8 @@ trap 'rm -rf "$state" "$output"' EXIT
   >"$output" 2>&1 || true
 
 grep -aq "providers" "$output"
+grep -aq "mock" "$output"
+grep -aq "https://old.example/v1" "$output"
+grep -aq "no key" "$output"
 grep -aq "Provider configuration" "$output"
-grep -aq "configure baseURL" "$output"
 grep -aq "Enter edits provider" "$output"

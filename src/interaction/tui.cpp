@@ -440,7 +440,7 @@ class Root : public ComponentBase {
     if (auto prompt = booth::file_command_prompt(line)) { send_prompt(std::move(*prompt)); return; }
     if (line.rfind("/providers edit", 0) == 0) { booth::edit_provider(control_, screen_, state_, line.substr(15)); return; }
     if (booth::handle_library_command(line, state_, library_, cwd_,
-                                      {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { booth::edit_provider(control_, screen_, state_, provider); }}, editor_)) return;
+                                      {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { booth::edit_provider(control_, screen_, state_, provider); }, &control_}, editor_)) return;
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
                                     draft_file_.parent_path(), line, show_thoughts_, tools_hidden_, &editor_, &supervisor_)) {
       if (state_.context_reset_requested) { state_.context_reset_requested = false; if (!state_.session.empty()) worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx, "context cleared · the next prompt starts a fresh session"); }); }

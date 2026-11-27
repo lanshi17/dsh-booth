@@ -11,6 +11,7 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
+#include "control/client.hpp"
 #include "interaction/state.hpp"
 
 namespace booth {
@@ -35,6 +36,7 @@ struct LibrarySettings {
   ftxui::ScreenInteractive* screen{nullptr};
   std::filesystem::path state_dir;
   std::function<void(const std::string&)> edit_provider;
+  ControlClient* control{nullptr};
 };
 
 /// Full-screen `/skills` and `/providers` list with filtering and keyboard selection.

@@ -108,9 +108,12 @@ Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
-`/providers` opens the provider configuration list: choose a provider, then edit its `baseURL`
-and API key. `/providers edit <provider>` opens that editor directly. Saving writes `llm-pi-ai`
-settings and stores the key through dsh credentials; a blank `apiKey` keeps the current key. `/model` is separate and opens the two-pane provider/model browser.
+`/providers` opens the provider configuration list read from dsh's `llm-pi-ai` settings, so it
+works before any session or model exists: choose a provider, then edit its `baseURL` and API key.
+`/providers edit <provider>` opens that editor directly. Saving writes `llm-pi-ai` settings and
+stores the key through dsh credentials; a blank `apiKey` keeps the current key. OMP instead writes
+provider routes to `~/.omp/agent/models.yml` and credentials to its SQLite auth store; booth keeps
+dsh as the owner. `/model` is separate and opens the two-pane provider/model browser.
 `/settings` opens a full-screen toggle list for thinking, tool cards, tool output, notifications,
 mouse capture and Vim mode; notification and mouse changes persist.
 `/skills` registers user-invocable skills in the slash menu, so typing `/rev` finds `/review`;

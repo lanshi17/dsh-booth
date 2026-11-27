@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <map>
 #include <utility>
 
@@ -292,16 +293,34 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
     return true;
   }
   if (command == "/providers") {
-    if (state.models.empty()) {
-      state.notice = "no models yet; send a prompt first";
-      return true;
-    }
-    std::map<std::string, bool> providers;
-    for (const auto& model : state.models) providers[model.provider] = true;
     std::vector<LibraryRow> rows;
-    rows.reserve(providers.size());
-    for (const auto& [provider, _current] : providers) {
-      rows.push_back({provider, provider, "configure baseURL and API key"});
+    if (settings.control != nullptr) {
+      auto listed = settings.control->request("providers.list", nlohmann::json::object(),
+                                              std::chrono::seconds(10));
+      if (listed && listed->contains("providers") && (*listed)["providers"].is_array()) {
+        for (const auto& provider : (*listed)["providers"]) {
+          if (!provider.is_object()) continue;
+          const std::string name = provider.value("provider", std::string{});
+          if (name.empty()) continue;
+          const std::string base = provider.value("baseURL", std::string{});
+          const bool key = provider.value("apiKeyConfigured", false);
+          const std::string masked = provider.value("apiKeyMasked", std::string{});
+          std::string detail = base.empty() ? "configure baseURL" : base;
+          detail += key ? " · key " + masked : " · no key";
+          rows.push_back({name, name, std::move(detail)});
+        }
+      }
+    }
+    if (rows.empty()) {
+      std::map<std::string, bool> providers;
+      for (const auto& model : state.models) providers[model.provider] = true;
+      for (const auto& [provider, _current] : providers) {
+        rows.push_back({provider, provider, "configure baseURL and API key"});
+      }
+    }
+    if (rows.empty()) {
+      state.notice = "no providers configured; use /providers edit <provider>";
+      return true;
     }
     overlay.open(LibraryKind::Providers, "providers", std::move(rows));
     return true;

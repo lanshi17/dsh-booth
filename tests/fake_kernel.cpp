@@ -101,6 +101,12 @@ json control_reply(const std::string& method, const json& params) {
   if (method == "dirs.remove") {
     return {{"path", params.value("path", std::string{})}, {"roots", json::array()}};
   }
+  if (method == "providers.list") {
+    return {{"providers", json::array({
+      {{"provider", "mock"}, {"baseURL", "https://old.example/v1"},
+       {"apiKeyConfigured", false}, {"apiKeyMasked", ""}}
+    })}};
+  }
   if (method == "providers.get") {
     return {{"provider", "mock"}, {"baseURL", "https://old.example/v1"}, {"apiKeyConfigured", false}, {"apiKeyMasked", ""}};
   }

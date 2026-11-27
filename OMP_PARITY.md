@@ -93,6 +93,18 @@ The surfaces below still have no harness capability behind them, so booth does n
 
 LSP, DAP, Python/Bun execution, web tools, skills, subagents, and provider catalogs run in dsh. booth renders their tool events and model/config options; it does not reimplement them.
 
+## Provider storage
+
+OMP stores provider definitions in `~/.omp/agent/models.yml` (route, `baseUrl`, `api`,
+`models`, compatibility) and credentials in the local SQLite auth store
+(`~/.omp/agent/agent.db`, `auth_credentials`); `config.yml` holds settings, not
+provider routes. booth does not write those files. Providers remain owned by dsh:
+the `llm-pi-ai` settings namespace stores `providers.<route>.baseURL`, `apiKeyEnv`,
+`api`, `models` and `compat`, while the secret is written through the dsh
+credential store under that reference. `/providers` reads `providers.list` from
+that namespace, so configuration works before any model or session exists, and
+baseURL/API-key edits are visible to the next request without restarting booth.
+
 ## Verification
 
 ```sh
