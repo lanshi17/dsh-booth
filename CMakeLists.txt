@@ -104,7 +104,7 @@ add_library(booth_interaction STATIC
   src/interaction/approvals.cpp
   src/interaction/recorder.cpp
   src/interaction/recorder_play.cpp
-  src/interaction/provider_edit.cpp
+  src/interaction/provider_page.cpp
   src/interaction/command_args.cpp
   src/interaction/commands.cpp
   src/interaction/control_commands.cpp

@@ -31,7 +31,7 @@
 #include <vector>
 #include "interaction/help_scroll.hpp"
 #include "interaction/recorder.hpp"
-#include "interaction/provider_edit.hpp"
+#include "interaction/provider_page.hpp"
 #include "interaction/keymap.hpp"
 #include "interaction/editor.hpp"
 #include "interaction/emoji.hpp"
@@ -93,7 +93,7 @@ class Root : public ComponentBase {
     worker_.post([this, ctx = context()]() mutable { booth::ensure_session_or_restart(ctx, draft_file_.parent_path() / "restart.json"); });
   }
   void shutdown() { booth::save_draft(draft_file_, editor_.Expanded(state_.composer)); cancel(); if (state_.restart_requested && !state_.session.empty()) { auto ctx = context(); booth::close_session(ctx); } animate_ = false; alive_ = false; shell_job_.join(); if (ticker_.joinable()) ticker_.join(); worker_.stop(); }
-  Element OnRender() override { mouse_.begin_frame(); Element rendered = library_.visible() ? library_.view()
+  Element OnRender() override { mouse_.begin_frame(); Element rendered = provider_page_.visible() ? provider_page_.view() : library_.visible() ? library_.view()
         : model_picker_.visible() ? booth::model_picker_view(state_.models, model_picker_.matches(), model_picker_.index(), state_.model, model_picker_.query(), model_picker_.provider(), model_picker_.model_focus(), &mouse_) | ftxui::center
         : state_.help ? booth::help_view(help_scroll_.offset(), keys_, &mouse_) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 62) | ftxui::borderRounded | ftxui::center : main_view();
     booth::record_frame(rendered); return rendered; }
@@ -134,7 +134,8 @@ class Root : public ComponentBase {
       return true;
     }
     if (state_.permission) { booth::handle_permission_key(event, state_, supervisor_, keys_); return true; }
-    if (library_.visible()) return booth::handle_library_event(event, state_, library_, editor_, {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { booth::edit_provider(control_, screen_, state_, provider); }});
+    if (provider_page_.visible()) { provider_page_.key(event, control_, state_); return true; }
+    if (library_.visible()) return booth::handle_library_event(event, state_, library_, editor_, {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { if (provider == "\x01new") provider_page_.open(control_, state_, "", true); else provider_page_.open(control_, state_, provider, false); }});
     if (matches_chord(keys_.model_next, event)) { if (auto choice = booth::cycle_model(state_, 1)) apply_model(*choice); return true; }
     if (matches_chord(keys_.retry, event)) { if (!state_.busy && !history_.empty()) send_prompt(history_.back()); return true; }
     if (matches_chord(keys_.reasoning, event)) {
@@ -438,9 +439,8 @@ class Root : public ComponentBase {
             [this](const std::string& id, const ModelChoice& choice) { worker_.post([this, ctx = context(), id, choice]() mutable { booth::set_reasoning(ctx, id, choice); }); },
             [this](const std::string& seed) -> std::optional<std::string> { std::string text = seed; bool ok = false; screen_.WithRestoredIO([&] { if (auto edited = booth::edit_externally(text)) { text = *edited; ok = true; } })(); return ok ? std::optional<std::string>(text) : std::nullopt; }}, line, state_.session)) return;
     if (auto prompt = booth::file_command_prompt(line)) { send_prompt(std::move(*prompt)); return; }
-    if (booth::handle_provider_command(control_, screen_, state_, line)) return;
     if (booth::handle_library_command(line, state_, library_, cwd_,
-                                      {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { booth::edit_provider(control_, screen_, state_, provider); }, &control_}, editor_)) return;
+                                      {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { if (provider == "\x01new") provider_page_.open(control_, state_, "", true); else provider_page_.open(control_, state_, provider, false); }, &control_}, editor_)) return;
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
                                     draft_file_.parent_path(), line, show_thoughts_, tools_hidden_, &editor_, &supervisor_)) {
       if (state_.context_reset_requested) { state_.context_reset_requested = false; if (!state_.session.empty()) worker_.post([this, ctx = context()]() mutable { booth::close_session(ctx, "context cleared · the next prompt starts a fresh session"); }); }
@@ -564,6 +564,7 @@ class Root : public ComponentBase {
   booth::LinkPicker links_;
   booth::FileMenu files_;
   booth::LibraryOverlay library_;
+  booth::ProviderPage provider_page_;
   booth::TranscriptSearch transcript_search_;
   bool tools_expanded_{false}, tools_hidden_{false}; booth::PasteBuffer paste_;
   bool show_thoughts_{false};
@@ -578,7 +579,6 @@ class Root : public ComponentBase {
   std::string session_;
 };
 }  // namespace
-
 int tui_loop(ScreenInteractive& screen, Kernel& kernel, AppState& state, Inbox& inbox,
              const Config& config, ControlClient& control) {
   auto bindings = load_keybindings(config.state_dir / "keybindings.yml");

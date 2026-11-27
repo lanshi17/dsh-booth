@@ -27,13 +27,12 @@
 - `/providers` reads the dsh `llm-pi-ai` provider directory instead of the current
   model set, so provider setup works before the first session; OMP's `models.yml` +
   SQLite credential storage is documented as the mapping.
-- `/providers add|edit|remove` round-trips `displayName`, `api`, `models`, `baseURL`
-  and `apiKey`, with removal scoped to the user settings layer and optional key
-  deletion. Unconfigured catalog rows are listed and can be configured in place.
-- `/providers models <name>` asks dsh's model discovery for the route's catalog
-  or endpoint listing, so custom providers can be populated before saving.
-- Provider edits accept `apiKey=!clear` to delete the stored key without removing
-  the route, and model-list edits retain existing per-model metadata.
+- `/providers` Enter opens an in-TUI provider page (`name`, `displayName`, `api`,
+  `baseURL`, `models`, `apiKey`) with Ctrl+S save, Ctrl+F discovery, Ctrl+X remove
+  and a final `＋ new provider` row; no external editor or `/providers edit`.
+- Unconfigured catalog rows are listed and can be configured in place; blank
+  `apiKey` keeps the current key and `apiKey=!clear` removes it. Model-list edits
+  retain existing per-model metadata.
 - `/providers` retries the control directory during startup instead of silently
   showing model-derived rows with a misleading edit hint.
 - Clipboard copy now falls back to `wl-copy`/`xclip`/`pbcopy` locally, while

@@ -92,7 +92,7 @@ enforces that every OMP name and alias resolves.
 | `/hotkeys` | all keyboard shortcuts | `/help` renders live bindings; aliases `keys` | same |
 | `/extensions` | Extension Control Center (OMP aliases it as `status`) | profile bundles, dependencies and patch rows. booth keeps `/status` for its phase/session summary instead of shadowing it | adapted |
 | `/settings` | settings menu | filterable toggles: thinking, tool cards, output, notifications, mouse, Vim | adapted |
-| `/setup`, `/providers` | provider setup | list comes from the dsh `llm-pi-ai` directory even before a session/model exists; `⏎` edits displayName/api/models/baseURL/key; `/providers add <p>` creates, `/providers models <p>` discovers the advertised models, `/providers remove <p> [--key]` removes the user layer | same |
+| `/setup`, `/providers` | provider setup | list comes from the dsh `llm-pi-ai` directory even before a session/model exists; `⏎` opens an in-TUI page for displayName/api/baseURL/models/key with Ctrl+S save, Ctrl+F discovery and Ctrl+X removal; the last row creates a new route | same |
 | `/debug` | debug tools selector | phase/session/model/effort/entry/tool/thought/todo counters | adapted |
 | `/local [name]` | edit a `local://` file; picker when empty | lists/opens files in the booth state directory | adapted |
 | `/git [revision]` | split diff viewer, staging, commit composer | `/git` opens the working tree, a revision shows its patch, and status/diff/stage/unstage/commit run without a shell | adapted |

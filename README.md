@@ -110,16 +110,15 @@ Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
-`/providers` opens the provider configuration list read from dsh's `llm-pi-ai` directory, so it
-works before any session or model exists. `Enter` edits the selected route; `/providers add <name>`
-creates one, `/providers edit <name>` edits directly, `/providers models <name>` discovers the
-models the route advertises, and `/providers remove <name> [--key]` removes the user layer (and
-optionally the stored key). The editor exposes `displayName`, `api`,
-`models` (comma-separated), `baseURL` and `apiKey`; blank `apiKey` keeps the current key, while
-`models`/`api`/`baseURL` blank restore catalog/default values, and `apiKey=!clear` removes the
-stored key. Saving writes `llm-pi-ai` settings
-and stores the key through dsh credentials. OMP instead writes routes to `~/.omp/agent/models.yml`
-and credentials to its SQLite auth store; booth keeps dsh as the owner. `/model` is separate and
+`/providers` opens the provider list from dsh's `llm-pi-ai` directory, so it works before any
+session or model exists. `Enter` opens an in-TUI provider page with `name`, `displayName`, `api`,
+`baseURL`, comma-separated `models` and `apiKey`; `Tab`/arrows move fields, `Ctrl+S` saves,
+`Ctrl+F` discovers endpoint models, `Ctrl+X` removes the user layer and its key, and `Esc` cancels.
+The last row, `＋ new provider`, creates a route. Blank `apiKey` keeps the current key,
+`apiKey=!clear` removes it, and blank `api`/`models`/`baseURL` restore catalog defaults. Saving
+writes `llm-pi-ai` settings and stores keys through dsh credentials. OMP instead writes routes to
+`~/.omp/agent/models.yml` and credentials to its SQLite auth store; booth keeps dsh as the owner.
+`/model` is separate and
 opens the two-pane provider/model browser.
 `/settings` opens a full-screen toggle list for thinking, tool cards, tool output, notifications,
 mouse capture and Vim mode; notification and mouse changes persist.

@@ -32,6 +32,12 @@ std::string lower(std::string_view text) {
 }
 
 
+std::string trim(std::string_view text) {
+  while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0) text.remove_prefix(1);
+  while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0) text.remove_suffix(1);
+  return std::string(text);
+}
+
 std::string first_word(const std::string& line) {
   const auto first = line.find_first_not_of(" \t");
   if (first == std::string::npos) return {};
@@ -187,13 +193,13 @@ ftxui::Element LibraryOverlay::view() const {
     }
   }
   if (kind_ == LibraryKind::Providers) {
-    rows.push_back(ftxui::text(" Provider configuration · Enter edits · /providers add|remove") | ftxui::dim);
+    rows.push_back(ftxui::text(" Provider configuration · Enter opens the edit page · ↓ reaches new provider") | ftxui::dim);
   }
   rows.push_back(ftxui::text(kind_ == LibraryKind::Skills
                                  ? " Enter inserts /name · Esc closes"
                                  : kind_ == LibraryKind::Settings
                                        ? " Enter toggles · Esc closes"
-                                       : " Enter edits provider · Esc closes")
+                                       : " Enter opens provider page · Esc closes")
                      | ftxui::dim);
   return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 64) |
          ftxui::borderRounded | ftxui::center | ftxui::bgcolor(kPanel);
@@ -294,6 +300,11 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
     return true;
   }
   if (command == "/providers") {
+    const std::string provider_args = trim(line.size() > command.size() ? line.substr(command.size()) : std::string{});
+    if (!provider_args.empty()) {
+      state.notice = "provider editing is on the list page: run /providers, then press Enter";
+      return true;
+    }
     std::vector<LibraryRow> rows;
     std::string directory_error;
     if (settings.control != nullptr) {
@@ -343,12 +354,7 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
         rows.push_back({provider, provider, "model-derived · live directory unavailable"});
       }
     }
-    if (rows.empty()) {
-      state.notice = directory_error.empty()
-                         ? "no providers configured; use /providers edit <provider>"
-                         : "provider directory unavailable: " + directory_error + " · retry /providers";
-      return true;
-    }
+    rows.push_back({"\x01new", "＋ new provider", "create a provider route"});
     overlay.open(LibraryKind::Providers,
                  directory_error.empty() ? "providers" : "providers · live directory unavailable",
                  std::move(rows));
