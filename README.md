@@ -58,8 +58,10 @@ gutter, generic JSON tool output pretty-prints as an indented tree, and a diff s
 numbers, stopping at 40 lines until `Ctrl+O`; edit/write cards title the path with +/− stats, and
 `apply_patch` cards split per file with A/M/D labels and per-file +/− stats. `/copy` opens a
 filterable picker over prompts, answers, fenced code, blockquotes, tool
-output and shell commands, copying with OSC 52 (tmux passthrough included). Over SSH, if the
-terminal blocks OSC 52, run inline (`BOOTH_INLINE=1`) with `/mouse off` and select/copy through the
+output and shell commands, copying with OSC 52 (tmux passthrough included) and, on a local
+session, through `wl-copy`/`xclip`/`pbcopy` as a fallback. Over SSH native clipboard reads are
+skipped because they belong to the remote host; use the terminal's paste chord. If the terminal
+blocks OSC 52, run inline (`BOOTH_INLINE=1`) with `/mouse off` and select/copy through the
 terminal's native scrollback. `/export [--themes] [path]` writes a self-contained HTML
 transcript (default: `$BOOTH_STATE_DIR/transcript-<timestamp>.html`); a `.md` or `.markdown`
 path writes Markdown instead. `Enter` sends, `Alt+Enter` inserts a newline, `Tab` completes the word at the caret from prompt history and committed user/assistant transcript text (unless a command, file, or model-mention menu is open), `ArrowUp`/`ArrowDown` walk cleared drafts and prompt history,
@@ -247,8 +249,9 @@ session, history, copy and model-mention rows, place the composer caret, open OS
 permission buttons and dismiss help; moving the pointer paints a hover band. Bracketed multi-line pastes are inserted as one edit and newlines never submit. Pastes longer than
 1000 bytes or 10 lines collapse to `[Paste #N, +L lines]` / `[Paste #N, C chars]`; Backspace or
 Delete removes the whole marker, and sending expands it back to the original text.
-`Ctrl+V` prefers a clipboard raster, then a clipboard path to a PNG/JPEG/WebP/GIF file, then
-clipboard text (shown as an `image N` chip for images);
+`Ctrl+V` prefers a valid clipboard raster (magic bytes checked, so text returned for an image
+target is not attached), then a clipboard path to a PNG/JPEG/WebP/GIF file, then clipboard text
+(shown as an `image N` chip for images);
 `:smile:`-style shortcodes expand when the prompt is sent. Set
 `BOOTH_VIM=1` for OMP-parity modal editing: insert/normal/visual/visual-line/replace, counts,
 `h j k l 0 ^ $ w b e f F t T ; , gg G % { }`, `d/y/c/>/<`, `dd/yy/cc`, `D/C/x`, `p/P`, `u`,

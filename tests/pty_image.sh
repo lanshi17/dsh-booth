@@ -9,7 +9,7 @@ bin=$(mktemp -d)
 output=$(mktemp)
 trap 'rm -rf "$state" "$bin" "$output"' EXIT
 
-printf '#!/bin/sh\nprintf PNG\n' >"$bin/wl-paste"
+printf '#!/bin/sh\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==' | base64 -d\n' >"$bin/wl-paste"
 chmod +x "$bin/wl-paste"
 
 ( sleep 1; printf '\026'; sleep 0.3; printf 'look\r'; sleep 0.8; printf '\004' ) |

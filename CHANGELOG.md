@@ -34,6 +34,11 @@
   or endpoint listing, so custom providers can be populated before saving.
 - Provider edits accept `apiKey=!clear` to delete the stored key without removing
   the route, and model-list edits retain existing per-model metadata.
+- `/providers` retries the control directory during startup instead of silently
+  showing model-derived rows with a misleading edit hint.
+- Clipboard copy now falls back to `wl-copy`/`xclip`/`pbcopy` locally, while
+  Ctrl+V validates image magic so xclip text no longer attaches as an image;
+  SSH pastes explain that the terminal owns the clipboard.
 - Provider edits skip unchanged `api`/`models`/`baseURL` fields, preserving rich
   model entries such as per-model context windows and reasoning capabilities.
 - The external provider editor requests a full repaint and a synthetic frame after

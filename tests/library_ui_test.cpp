@@ -75,7 +75,7 @@ TEST_CASE("provider overlay offers configuration fields") {
   ftxui::Render(screen, std::move(view));
   const std::string text = screen.ToString();
   REQUIRE(text.find("alpha") != std::string::npos);
-  REQUIRE(text.find("configure baseURL and API key") != std::string::npos);
+  REQUIRE(text.find("live directory unavailable") != std::string::npos);
   REQUIRE(text.find("Provider configuration") != std::string::npos);
 }
 

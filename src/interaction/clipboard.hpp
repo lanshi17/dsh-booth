@@ -26,6 +26,9 @@ void copy_answer(AppState& state);
 /// Reads a clipboard raster and returns it base64-encoded, or nullopt when none exists.
 std::optional<acp::ImageAttachment> clipboard_image();
 
+/// True when the native clipboard belongs to the remote host, not the terminal.
+bool clipboard_is_remote();
+
 /// Reads clipboard text (wl-paste first, then xclip), or nullopt when empty.
 std::optional<std::string> clipboard_text();
 

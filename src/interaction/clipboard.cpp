@@ -60,6 +60,49 @@ std::string capture(const std::string& command) {
   return output;
 }
 
+bool feed(const std::string& command, const std::string& text) {
+  FILE* pipe = ::popen(command.c_str(), "w");
+  if (pipe == nullptr) return false;
+  std::size_t offset = 0;
+  while (offset < text.size()) {
+    const std::size_t written = std::fwrite(text.data() + offset, 1, text.size() - offset, pipe);
+    if (written == 0) {
+      ::pclose(pipe);
+      return false;
+    }
+    offset += written;
+  }
+  return ::pclose(pipe) == 0;
+}
+
+bool ssh_session() {
+  return std::getenv("SSH_CONNECTION") != nullptr || std::getenv("SSH_TTY") != nullptr ||
+         std::getenv("SSH_CLIENT") != nullptr;
+}
+
+/// Copy through the desktop clipboard before relying on OSC 52. Over SSH the
+/// readable/writable clipboard belongs to the remote host, so only OSC 52 can
+/// reach the user's terminal.
+bool copy_native(const std::string& text) {
+  if (ssh_session()) return false;
+  if (const char* termux = std::getenv("TERMUX_VERSION"); termux != nullptr && *termux != '\0') {
+    if (feed("termux-clipboard-set 2>/dev/null", text)) return true;
+  }
+#if defined(__APPLE__)
+  if (feed("pbcopy 2>/dev/null", text)) return true;
+#endif
+  const char* wayland = std::getenv("WAYLAND_DISPLAY");
+  if (wayland != nullptr && *wayland != '\0') {
+    if (feed("wl-copy --type 'text/plain;charset=utf-8' 2>/dev/null", text)) return true;
+  }
+  const char* display = std::getenv("DISPLAY");
+  if (display != nullptr && *display != '\0') {
+    if (feed("xclip -selection clipboard -in 2>/dev/null", text)) return true;
+    if (feed("xsel --clipboard --input 2>/dev/null", text)) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 std::optional<acp::ImageAttachment> clipboard_image_from_path(std::string_view path_text) {
@@ -89,7 +132,21 @@ std::optional<acp::ImageAttachment> clipboard_image_from_path(std::string_view p
   return acp::ImageAttachment{media, base64(data), std::filesystem::path(path).filename().string()};
 }
 
+bool looks_like_image(std::string_view media, const std::string& data) {
+  const auto starts = [&](std::string_view magic) {
+    return data.size() >= magic.size() && data.compare(0, magic.size(), magic) == 0;
+  };
+  if (media == "image/png") return starts("\x89PNG\r\n\x1a\n");
+  if (media == "image/jpeg") return starts("\xff\xd8\xff");
+  if (media == "image/gif") return starts("GIF87a") || starts("GIF89a");
+  if (media == "image/webp") {
+    return data.size() >= 12 && data.compare(0, 4, "RIFF") == 0 && data.compare(8, 4, "WEBP") == 0;
+  }
+  return false;
+}
+
 std::optional<acp::ImageAttachment> clipboard_image() {
+  if (ssh_session()) return std::nullopt;
   static constexpr std::array<const char*, 4> kMedia{
       "image/png", "image/jpeg", "image/webp", "image/gif"};
   static constexpr std::array<const char*, 4> kSuffix{".png", ".jpg", ".webp", ".gif"};
@@ -101,19 +158,36 @@ std::optional<acp::ImageAttachment> clipboard_image() {
                                 : std::string{};
     const std::string& data = !wayland.empty() ? wayland : x11;
     if (data.empty() || data.size() > 32 * 1024 * 1024) continue;
+    // xclip can answer an image target with the clipboard's text bytes. Validate
+    // the magic so Ctrl+V pastes that text instead of attaching garbage.
+    if (!looks_like_image(media, data)) continue;
     return acp::ImageAttachment{media, base64(data), "clipboard" + std::string(kSuffix[index])};
   }
   return std::nullopt;
 }
 
+bool clipboard_is_remote() { return ssh_session(); }
+
 std::optional<std::string> clipboard_text() {
-  std::string text = capture("wl-paste --no-newline 2>/dev/null");
-  if (text.empty()) text = capture("xclip -selection clipboard -o 2>/dev/null");
+  if (ssh_session()) return std::nullopt;
+  std::string text;
+  const char* wayland = std::getenv("WAYLAND_DISPLAY");
+  if (wayland != nullptr && *wayland != '\0') {
+    text = capture("wl-paste --no-newline 2>/dev/null");
+  }
+  const char* display = std::getenv("DISPLAY");
+  if (text.empty() && display != nullptr && *display != '\0') {
+    text = capture("xclip -selection clipboard -o 2>/dev/null");
+  }
   if (text.empty() || text.size() > 1024 * 1024) return std::nullopt;
   return text;
 }
 
 void paste_clipboard(Editor& editor, std::vector<acp::ImageAttachment>& images, AppState& state) {
+  if (clipboard_is_remote()) {
+    state.notice = "clipboard is remote over SSH; use your terminal's paste (Ctrl+Shift+V)";
+    return;
+  }
   if (auto image = clipboard_image()) {
     images.push_back(std::move(*image));
     state.notice = "image attached";
@@ -156,6 +230,7 @@ std::string clipboard_sequence(const std::string& text) {
 bool copy_to_clipboard(const std::string& text) {
   if (text.empty()) return false;
   std::cout << clipboard_sequence(text) << std::flush;
+  copy_native(text);  // best-effort local clipboard; OSC 52 already emitted above
   return true;
 }
 

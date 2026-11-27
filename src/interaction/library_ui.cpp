@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <thread>
 #include <map>
 #include <utility>
 
@@ -294,11 +295,23 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
   }
   if (command == "/providers") {
     std::vector<LibraryRow> rows;
+    std::string directory_error;
     if (settings.control != nullptr) {
-      auto listed = settings.control->request("providers.list", nlohmann::json::object(),
-                                              std::chrono::seconds(10));
-      if (listed && listed->contains("providers") && (*listed)["providers"].is_array()) {
-        for (const auto& provider : (*listed)["providers"]) {
+      bool have_listing = false;
+      nlohmann::json listing;
+      for (int attempt = 0; attempt < 3 && !have_listing; ++attempt) {
+        if (attempt > 0) std::this_thread::sleep_for(std::chrono::milliseconds(400));
+        auto result = settings.control->request("providers.list", nlohmann::json::object(),
+                                                std::chrono::seconds(10));
+        if (result) {
+          listing = std::move(*result);
+          have_listing = true;
+        } else if (attempt == 2) {
+          directory_error = result.error().detail;
+        }
+      }
+      if (have_listing && listing.contains("providers") && listing["providers"].is_array()) {
+        for (const auto& provider : listing["providers"]) {
           if (!provider.is_object()) continue;
           const std::string name = provider.value("provider", std::string{});
           if (name.empty()) continue;
@@ -327,14 +340,21 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
       std::map<std::string, bool> providers;
       for (const auto& model : state.models) providers[model.provider] = true;
       for (const auto& [provider, _current] : providers) {
-        rows.push_back({provider, provider, "configure baseURL and API key"});
+        rows.push_back({provider, provider, "model-derived · live directory unavailable"});
       }
     }
     if (rows.empty()) {
-      state.notice = "no providers configured; use /providers edit <provider>";
+      state.notice = directory_error.empty()
+                         ? "no providers configured; use /providers edit <provider>"
+                         : "provider directory unavailable: " + directory_error + " · retry /providers";
       return true;
     }
-    overlay.open(LibraryKind::Providers, "providers", std::move(rows));
+    overlay.open(LibraryKind::Providers,
+                 directory_error.empty() ? "providers" : "providers · live directory unavailable",
+                 std::move(rows));
+    if (!directory_error.empty()) {
+      state.notice = "provider directory unavailable: " + directory_error + " · showing model-derived rows";
+    }
     return true;
   }
   return false;

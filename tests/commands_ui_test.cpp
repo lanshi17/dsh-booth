@@ -429,7 +429,10 @@ TEST_CASE("paste raw inserts clipboard text without collapsing") {
                                          std::filesystem::perms::others_exec,
                                std::filesystem::perm_options::add);
   const std::string old_path = ::getenv("PATH") == nullptr ? "" : ::getenv("PATH");
+  const char* old_wayland = ::getenv("WAYLAND_DISPLAY");
+  const std::string wayland = old_wayland == nullptr ? "" : old_wayland;
   ::setenv("PATH", (dir.string() + ":" + old_path).c_str(), 1);
+  ::setenv("WAYLAND_DISPLAY", "test", 1);
 
   AppState state;
   TranscriptScroll scroll;
@@ -440,6 +443,7 @@ TEST_CASE("paste raw inserts clipboard text without collapsing") {
   REQUIRE(handle_local_command(state, scroll, search, 0, cwd.string(), cwd, "/paste raw",
                                false, false, &editor));
   ::setenv("PATH", old_path.c_str(), 1);
+  if (old_wayland != nullptr) ::setenv("WAYLAND_DISPLAY", wayland.c_str(), 1); else ::unsetenv("WAYLAND_DISPLAY");
   std::filesystem::remove_all(dir);
   REQUIRE(content == "raw\ntext");
   REQUIRE(state.notice == "raw text pasted");

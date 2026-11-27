@@ -53,7 +53,7 @@ TEST_CASE("clipboard images become base64 attachments") {
   const auto tool = dir / "wl-paste";
   {
     std::ofstream out(tool);
-    out << "#!/bin/sh\nprintf 'PNG'\n";
+    out << "#!/bin/sh\nprintf '%s' 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==' | base64 -d\n";
   }
   std::filesystem::permissions(tool, std::filesystem::perms::owner_exec |
                                          std::filesystem::perms::group_exec |
@@ -66,7 +66,8 @@ TEST_CASE("clipboard images become base64 attachments") {
   std::filesystem::remove_all(dir);
   REQUIRE(image.has_value());
   REQUIRE(image->mime_type == "image/png");
-  REQUIRE(image->data == "UE5H");
+  REQUIRE(image->data ==
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6ZQAAAABJRU5ErkJggg==");
 }
 
 TEST_CASE("a copied image path becomes an attachment") {
@@ -85,4 +86,34 @@ TEST_CASE("a copied image path becomes an attachment") {
   REQUIRE(image->name == "shot.png");
   REQUIRE_FALSE(clipboard_image_from_path((dir / "notes.txt").string()));
   std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("text returned for an image target is not attached as an image") {
+  const auto dir = std::filesystem::temp_directory_path() /
+                   ("booth-clip-text-" + std::to_string(::getpid()));
+  std::filesystem::create_directories(dir);
+  const auto tool = dir / "xclip";
+  {
+    std::ofstream out(tool);
+    out << "#!/bin/sh\nprintf 'clipboard text'\n";
+  }
+  std::filesystem::permissions(tool, std::filesystem::perms::owner_exec |
+                                         std::filesystem::perms::group_exec |
+                                         std::filesystem::perms::others_exec,
+                               std::filesystem::perm_options::add);
+  const std::string old_path = ::getenv("PATH") == nullptr ? "" : ::getenv("PATH");
+  const char* old_display = ::getenv("DISPLAY");
+  const char* old_ssh = ::getenv("SSH_CONNECTION");
+  const std::string display = old_display == nullptr ? "" : old_display;
+  ::unsetenv("SSH_CONNECTION");
+  ::setenv("DISPLAY", ":test", 1);
+  ::setenv("PATH", (dir.string() + ":" + old_path).c_str(), 1);
+  REQUIRE_FALSE(clipboard_image().has_value());
+  const auto text = clipboard_text();
+  ::setenv("PATH", old_path.c_str(), 1);
+  if (old_display != nullptr) ::setenv("DISPLAY", display.c_str(), 1); else ::unsetenv("DISPLAY");
+  if (old_ssh != nullptr) ::setenv("SSH_CONNECTION", old_ssh, 1); else ::unsetenv("SSH_CONNECTION");
+  std::filesystem::remove_all(dir);
+  REQUIRE(text.has_value());
+  REQUIRE(*text == "clipboard text");
 }
