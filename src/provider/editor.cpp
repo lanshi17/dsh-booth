@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iostream>
 #include <string_view>
 #include <utility>
 
@@ -292,6 +293,7 @@ int run_editor(ControlClient& control, Listing listing, std::string provider, bo
   auto screen = ftxui::ScreenInteractive::Fullscreen();
   screen.TrackMouse(true);
   auto editor = ftxui::Make<Editor>(screen, control, std::move(listing), std::move(provider), create);
+  std::cout << "\x1b[2J\x1b[H" << std::flush;
   screen.Loop(editor);
   return 0;
 }
