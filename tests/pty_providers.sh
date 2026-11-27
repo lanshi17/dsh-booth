@@ -1,22 +1,21 @@
 #!/usr/bin/env bash
-# /providers opens the provider configuration list.
+# /providers launches the standalone booth-provider editor; Esc returns to booth.
 set -euo pipefail
 
 booth=$1
 kernel=$2
+provider=$3
 state=$(mktemp -d)
 output=$(mktemp)
 trap 'rm -rf "$state" "$output"' EXIT
 
-( printf '/providers\n'; sleep 1; printf '\x1b'; sleep 0.3; printf '\x04' ) |
-  timeout 20 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' '$booth'" /dev/null \
+( printf '/providers\n'; sleep 2; printf '\x1b'; sleep 2; printf '\x04' ) |
+  timeout 25 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' DSH_HOME='$state/dsh' BOOTH_PROVIDER_BIN='$provider' '$booth'" /dev/null \
   >"$output" 2>&1 || true
 
-grep -aq "providers" "$output"
+grep -aq "booth-provider" "$output"
+grep -aq "provider routes" "$output"
 grep -aq "Mock" "$output"
 grep -aq "https://old.example/v1" "$output"
-grep -aq "no key" "$output"
 grep -aq "not configured" "$output"
-grep -aq "Enter to configure" "$output"
-grep -aq "Provider configuration" "$output"
-grep -aq "Enter opens provider page" "$output"
+grep -aq "Enter send" "$output"

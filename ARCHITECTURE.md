@@ -73,6 +73,15 @@ screen by default; `BOOTH_INLINE=1` switches to FTXUI's inline `TerminalOutput` 
 splash is printed once into the scrollback. Either way the component is the transcript plus omp's
 two-row composer (status chips on the top border, input merged into the bottom border).
 
+### Provider editor
+
+`src/provider` builds `booth-provider`, a separate FTXUI program with its own
+list and form. `booth` launches it for `/providers` inside `WithRestoredIO`, so
+the child owns the terminal while editing; on exit booth redraws. The editor
+talks to the same `control.sock` through `providers.list|get|update|remove|
+discover` and starts a short-lived in-process supervisor when no live kernel is
+available. Provider routes and credentials stay owned by dsh.
+
 ### Profile
 
 The `booth` profile is a real dsh profile (`$DSH_HOME/profiles/booth/package.json`) with the

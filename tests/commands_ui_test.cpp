@@ -31,6 +31,7 @@ TEST_CASE("command aliases normalize to canonical names") {
   REQUIRE(normalize_command("/reasoning high") == "/effort high");
   REQUIRE(normalize_command("/exit") == "/quit");
   REQUIRE(normalize_command("/setup") == "/providers");
+  REQUIRE(normalize_command("/provider") == "/providers");
   REQUIRE(normalize_command("/q") == "/quit");
   REQUIRE(normalize_command("/hub") == "/agents");
   REQUIRE(normalize_command("/plugin") == "/plugins");

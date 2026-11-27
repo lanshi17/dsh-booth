@@ -104,7 +104,7 @@ add_library(booth_interaction STATIC
   src/interaction/approvals.cpp
   src/interaction/recorder.cpp
   src/interaction/recorder_play.cpp
-  src/interaction/provider_page.cpp
+  src/interaction/provider_launch.cpp
   src/interaction/command_args.cpp
   src/interaction/commands.cpp
   src/interaction/control_commands.cpp
@@ -193,6 +193,22 @@ add_library(booth_interaction STATIC
 target_link_libraries(booth_interaction PUBLIC booth_supervisor ftxui::component ftxui::dom ftxui::screen ICU::uc)
 target_compile_definitions(booth_interaction PRIVATE BOOTH_VERSION="${PROJECT_VERSION}")
 booth_warnings(booth_interaction)
+
+add_library(booth_provider STATIC
+  src/provider/model.cpp
+  src/provider/editor.cpp
+  src/interaction/theme.cpp
+  src/interaction/text_util.cpp
+)
+target_link_libraries(booth_provider PUBLIC booth_control booth_supervisor nlohmann_json::nlohmann_json ftxui::component ftxui::dom ftxui::screen)
+booth_warnings(booth_provider)
+
+add_executable(booth-provider
+  src/provider/main.cpp
+)
+target_link_libraries(booth-provider PRIVATE booth_provider CLI11::CLI11)
+target_compile_definitions(booth-provider PRIVATE BOOTH_VERSION="${PROJECT_VERSION}")
+booth_warnings(booth-provider)
 
 add_executable(booth
   src/main.cpp

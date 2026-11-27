@@ -24,7 +24,7 @@ cmake --build build
 ./install.sh
 ```
 
-`install.sh` installs the binary. On first start `booth` creates the `booth` dsh profile (the
+`install.sh` installs `booth` and `booth-provider`. On first start `booth` creates the `booth` dsh profile (the
 `dsh-base` and `dsh-acp-app` bundles) under `$DSH_HOME/profiles/booth` if it is missing.
 
 ## Use
@@ -80,7 +80,7 @@ stays above the composer with the transcript visible, reuses the matching tool c
 input, and shows only the choices dsh advertised
 (`y` once, `a` always, `n` deny, `d` deny always when offered). `Enter` arms an allow and requires a
 second press after half a second; `Ctrl+O` expands the full diff.
-Commands: `/status`, `/model`, `/switch`, `/providers` (`/setup`), `/skills`, `/settings`, `/sessions`, `/new`, `/close`,
+Commands: `/status`, `/model`, `/switch`, `/providers` (`/setup`, standalone `booth-provider`), `/skills`, `/settings`, `/sessions`, `/new`, `/close`,
 `/copy`, `/clear`, `/retry`, `/export`, `/effort`, `/theme`, `/notify`, `/links`, `/mouse`,
 `/context`, `/usage`, `/stats`, `/todo`, `/tools`, `/agents`, `/jobs`, `/git`, `/pin`, `/unpin`,
 `/queue`, `/session`, `/acp`, `/cancel`, `/find`, `/attach`, `/detach`, `/help`, `/quit`,
@@ -111,14 +111,17 @@ Aliases: `/resume`, `/models`, `/reasoning`, `/hotkeys`, `/keys`, `/exit`, `/q`.
 while a turn is running; a plain prompt typed during a run is queued, shown above the composer,
 and sent when the run ends. An open `todo_write` list stays above the composer as a bounded
 `Todo done/total` HUD and disappears once every item is complete.
-`/providers` opens the provider list from dsh's `llm-pi-ai` directory, so it works before any
-session or model exists. `Enter` opens an in-TUI provider page with `name`, `displayName`, `api`,
-`baseURL`, comma-separated `models` and `apiKey`; `Tab`/arrows move fields, `Ctrl+S` saves,
-`Ctrl+F` discovers endpoint models, `Ctrl+X` removes the user layer and its key, and `Esc` cancels.
-The last row, `＋ new provider`, creates a route. Blank `apiKey` keeps the current key,
+`/providers` launches `booth-provider`, a standalone provider editor, with the terminal restored;
+when it exits, booth redraws. The editor lists routes from dsh's `llm-pi-ai` directory, so it works
+before any session or model exists. `Enter` edits a route (`name`, `displayName`, `api`, `baseURL`,
+comma-separated `models`, `apiKey`), `n` creates one, `r` refreshes, `q` quits. In a form,
+`Tab`/arrows move fields, `Ctrl+S` saves, `Ctrl+F` discovers endpoint models, `Ctrl+X` removes the
+user layer and its key, and `Esc` returns to the list. Blank `apiKey` keeps the current key,
 `apiKey=!clear` removes it, and blank `api`/`models`/`baseURL` restore catalog defaults. Saving
-writes `llm-pi-ai` settings and stores keys through dsh credentials. OMP instead writes routes to
-`~/.omp/agent/models.yml` and credentials to its SQLite auth store; booth keeps dsh as the owner.
+writes `llm-pi-ai` settings and stores keys through dsh credentials. Run `booth-provider` directly
+when no booth session is open; it starts a short-lived dsh profile for the edit. OMP instead writes
+routes to `~/.omp/agent/models.yml` and credentials to its SQLite auth store; booth keeps dsh as the
+owner.
 `/model` is separate and
 opens the two-pane provider/model browser.
 `/settings` opens a full-screen toggle list for thinking, tool cards, tool output, notifications,

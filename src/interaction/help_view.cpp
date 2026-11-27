@@ -56,7 +56,7 @@ std::vector<HelpLine> help_lines(const KeyBindings& keys) {
       {"/copy [answer|code|cmd|link|local|prompt|line] · /paste raw · /clear clear transcript"},
       {"/retry last prompt · /export [--themes] [path] HTML; .md writes Markdown"},
       {"/sessions resume · /new fresh · /close stop"},
-      {"/skills [search|installed|install|update] or /<skill> · /providers (or /setup) provider configuration"},
+      {"/skills [search|installed|install|update] or /<skill> · /providers (or /setup) opens the provider editor"},
       {"/settings toggle thinking, tools, notifications, mouse and Vim"},
       {"/todo [edit|append|start|done|drop|rm|expand|collapse|copy|export|import] · /tools · /usage [show|reset]"},
       {"/agents (/subagents, /hub) live and finished sessions · /jobs [full|kill id|kill all]"},

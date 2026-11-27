@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Installs the booth binary. The booth dsh profile is created on first start.
+# Installs booth and the standalone provider editor.
 set -eu
 
 root=$(cd "$(dirname "$0")" && pwd)
@@ -19,12 +19,20 @@ if [ ! -x "$binary" ]; then
   exit 1
 fi
 
+provider=${BOOTH_PROVIDER_BINARY:-$(dirname "$binary")/booth-provider}
+if [ ! -x "$provider" ]; then
+  echo "no provider editor at $provider; build the booth-provider target" >&2
+  exit 1
+fi
+
 mkdir -p "$prefix"
 install -m 0755 "$binary" "$prefix/booth"
+install -m 0755 "$provider" "$prefix/booth-provider"
 share=$(cd "$prefix/.." && pwd)/share/booth
 install -d "$share"
 install -m 0644 "$root/CHANGELOG.md" "$share/CHANGELOG.md"
 echo "installed $prefix/booth from $binary"
+echo "installed $prefix/booth-provider from $provider"
 if command -v python3 >/dev/null 2>&1 && command -v dsh >/dev/null 2>&1; then
   python3 "$root/tools/patch_dsh_model_mentions.py" || echo "warning: could not patch installed dsh model mentions" >&2
   python3 "$root/tools/patch_dsh_service_tier.py" || echo "warning: could not patch installed dsh service tier" >&2

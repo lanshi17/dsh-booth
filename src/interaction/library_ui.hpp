@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <filesystem>
-#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -11,15 +10,12 @@
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 
-#include "control/client.hpp"
 #include "interaction/state.hpp"
 
 namespace booth {
 
 class Editor;
-class ModelPicker;
-
-enum class LibraryKind { None, Skills, Providers, Settings };
+enum class LibraryKind { None, Skills, Settings };
 
 struct LibraryRow {
   std::string value;
@@ -35,11 +31,9 @@ struct LibrarySettings {
   bool* mouse_enabled{nullptr};
   ftxui::ScreenInteractive* screen{nullptr};
   std::filesystem::path state_dir;
-  std::function<void(const std::string&)> edit_provider;
-  ControlClient* control{nullptr};
 };
 
-/// Full-screen `/skills` and `/providers` list with filtering and keyboard selection.
+/// Full-screen `/skills` and `/settings` list with filtering and keyboard selection.
 class LibraryOverlay {
  public:
   void open(LibraryKind kind, std::string title, std::vector<LibraryRow> rows);

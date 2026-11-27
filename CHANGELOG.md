@@ -27,9 +27,10 @@
 - `/providers` reads the dsh `llm-pi-ai` provider directory instead of the current
   model set, so provider setup works before the first session; OMP's `models.yml` +
   SQLite credential storage is documented as the mapping.
-- `/providers` Enter opens an in-TUI provider page (`name`, `displayName`, `api`,
-  `baseURL`, `models`, `apiKey`) with Ctrl+S save, Ctrl+F discovery, Ctrl+X remove
-  and a final `＋ new provider` row; no external editor or `/providers edit`.
+- `/providers` now launches the standalone `booth-provider` executable. Its list
+  edits routes with Enter, `n`, `r` and `q`; the form keeps Ctrl+S save, Ctrl+F
+  discovery and Ctrl+X removal. `booth-provider` can also run without a live
+  booth session by starting a short-lived dsh profile.
 - Unconfigured catalog rows are listed and can be configured in place; blank
   `apiKey` keeps the current key and `apiKey=!clear` removes it. Model-list edits
   retain existing per-model metadata.

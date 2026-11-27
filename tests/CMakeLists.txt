@@ -286,7 +286,7 @@ add_test(NAME pty_skills
 )
 
 add_test(NAME pty_providers
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_providers.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_providers.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel> $<TARGET_FILE:booth-provider>
 )
 
 add_test(NAME pty_file_command
@@ -423,7 +423,7 @@ add_test(NAME pty_vibe
 )
 
 add_test(NAME pty_provider_edit
-  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_provider_edit.sh $<TARGET_FILE:booth> $<TARGET_FILE:fake_kernel>
+  COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/pty_provider_edit.sh $<TARGET_FILE:booth-provider> $<TARGET_FILE:fake_kernel>
 )
 
 add_test(NAME pty_double_cancel

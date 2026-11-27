@@ -2,9 +2,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <chrono>
-#include <thread>
-#include <map>
 #include <utility>
 
 #include "interaction/commands.hpp"
@@ -31,12 +28,6 @@ std::string lower(std::string_view text) {
   return out;
 }
 
-
-std::string trim(std::string_view text) {
-  while (!text.empty() && std::isspace(static_cast<unsigned char>(text.front())) != 0) text.remove_prefix(1);
-  while (!text.empty() && std::isspace(static_cast<unsigned char>(text.back())) != 0) text.remove_suffix(1);
-  return std::string(text);
-}
 
 std::string first_word(const std::string& line) {
   const auto first = line.find_first_not_of(" \t");
@@ -192,14 +183,9 @@ ftxui::Element LibraryOverlay::view() const {
       rows.push_back(ftxui::text("   ↓ " + std::to_string(matches_.size() - end) + " more") | ftxui::dim);
     }
   }
-  if (kind_ == LibraryKind::Providers) {
-    rows.push_back(ftxui::text(" Provider configuration · Enter opens the edit page · ↓ reaches new provider") | ftxui::dim);
-  }
   rows.push_back(ftxui::text(kind_ == LibraryKind::Skills
                                  ? " Enter inserts /name · Esc closes"
-                                 : kind_ == LibraryKind::Settings
-                                       ? " Enter toggles · Esc closes"
-                                       : " Enter opens provider page · Esc closes")
+                                 : " Enter toggles · Esc closes")
                      | ftxui::dim);
   return ftxui::vbox(std::move(rows)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, 64) |
          ftxui::borderRounded | ftxui::center | ftxui::bgcolor(kPanel);
@@ -299,70 +285,6 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
     overlay.open(LibraryKind::Settings, "settings", settings_rows(settings, editor));
     return true;
   }
-  if (command == "/providers") {
-    const std::string provider_args = trim(line.size() > command.size() ? line.substr(command.size()) : std::string{});
-    if (!provider_args.empty()) {
-      state.notice = "provider editing is on the list page: run /providers, then press Enter";
-      return true;
-    }
-    std::vector<LibraryRow> rows;
-    std::string directory_error;
-    if (settings.control != nullptr) {
-      bool have_listing = false;
-      nlohmann::json listing;
-      for (int attempt = 0; attempt < 3 && !have_listing; ++attempt) {
-        if (attempt > 0) std::this_thread::sleep_for(std::chrono::milliseconds(400));
-        auto result = settings.control->request("providers.list", nlohmann::json::object(),
-                                                std::chrono::seconds(10));
-        if (result) {
-          listing = std::move(*result);
-          have_listing = true;
-        } else if (attempt == 2) {
-          directory_error = result.error().detail;
-        }
-      }
-      if (have_listing && listing.contains("providers") && listing["providers"].is_array()) {
-        for (const auto& provider : listing["providers"]) {
-          if (!provider.is_object()) continue;
-          const std::string name = provider.value("provider", std::string{});
-          if (name.empty()) continue;
-          const bool configured = provider.value("configured", true);
-          const std::string label = provider.value("displayName", name);
-          const std::string base = provider.value("baseURL", std::string{});
-          const std::string fallback_base = provider.value("defaultBaseURL", std::string{});
-          const bool key = provider.value("apiKeyConfigured", false);
-          const std::string masked = provider.value("apiKeyMasked", std::string{});
-          std::string detail;
-          if (!configured) {
-            detail = "not configured · Enter to configure";
-          } else {
-            detail = base.empty() ? "configured" : base;
-            detail += key ? " · key " + masked : " · no key";
-            if (!provider.value("removable", true)) detail += " · base";
-          }
-          if (!configured && !fallback_base.empty()) detail += " · default " + fallback_base;
-          const std::string error = provider.value("error", std::string{});
-          if (!error.empty()) detail += " · error: " + error;
-          rows.push_back({name, label, std::move(detail)});
-        }
-      }
-    }
-    if (rows.empty()) {
-      std::map<std::string, bool> providers;
-      for (const auto& model : state.models) providers[model.provider] = true;
-      for (const auto& [provider, _current] : providers) {
-        rows.push_back({provider, provider, "model-derived · live directory unavailable"});
-      }
-    }
-    rows.push_back({"\x01new", "＋ new provider", "create a provider route"});
-    overlay.open(LibraryKind::Providers,
-                 directory_error.empty() ? "providers" : "providers · live directory unavailable",
-                 std::move(rows));
-    if (!directory_error.empty()) {
-      state.notice = "provider directory unavailable: " + directory_error + " · showing model-derived rows";
-    }
-    return true;
-  }
   return false;
 }
 
@@ -398,9 +320,6 @@ bool handle_library_event(ftxui::Event& event, AppState& state, LibraryOverlay& 
   if (kind == LibraryKind::Skills) {
     state.composer = "/" + *chosen + " ";
     editor.SetContent(state.composer);
-  } else if (kind == LibraryKind::Providers) {
-    if (settings.edit_provider) settings.edit_provider(*chosen);
-    else state.notice = "provider editing is unavailable on this host";
   }
   return true;
 }
