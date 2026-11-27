@@ -841,17 +841,30 @@ refresh();setInterval(refresh,1500);
 			if (descriptor === undefined) fail("providers/unavailable", "this profile exposes no llm-pi-ai settings");
 			return descriptor;
 		};
+		const providerDirectory = () => {
+			try {
+				const rows = ctx.llm?.listConfigurableProviders?.() ?? [];
+				return rows.filter(row => row.settingsNs === "llm-pi-ai");
+			} catch {
+				return [];
+			}
+		};
 		const providerProfile = (descriptor, provider) => {
 			const providers = descriptor.value && typeof descriptor.value === "object" ? descriptor.value.providers : undefined;
 			const profile = providers && typeof providers === "object" ? providers[provider] : undefined;
-			if (!profile || typeof profile !== "object") fail("providers/not-found", `provider "${provider}" is not configured`);
-			return profile;
+			return profile && typeof profile === "object" ? profile : undefined;
+		};
+		const providerUserProfile = (descriptor, provider) => {
+			const providers = descriptor.user && typeof descriptor.user === "object" ? descriptor.user.providers : undefined;
+			const profile = providers && typeof providers === "object" ? providers[provider] : undefined;
+			return profile && typeof profile === "object" ? profile : undefined;
 		};
 		const apiKeyRef = provider => `${String(provider).toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_API_KEY`;
 		const providerView = async provider => {
 			const descriptor = providerDescriptor();
 			const profile = providerProfile(descriptor, provider);
-			const ref = typeof profile.apiKeyEnv === "string" && profile.apiKeyEnv.length > 0 ? profile.apiKeyEnv : apiKeyRef(provider);
+			const directory = providerDirectory().find(row => row.provider === provider);
+			const ref = typeof profile?.apiKeyEnv === "string" && profile.apiKeyEnv.length > 0 ? profile.apiKeyEnv : apiKeyRef(provider);
 			let key = { configured: false, writable: true };
 			try {
 				key = await ctx.credentials.describe(ref);
@@ -860,7 +873,19 @@ refresh();setInterval(refresh,1500);
 			}
 			return {
 				provider,
-				baseURL: typeof profile.baseURL === "string" ? profile.baseURL : "",
+				displayName: typeof profile?.displayName === "string" && profile.displayName.length > 0
+					? profile.displayName
+					: directory?.displayName ?? provider,
+				baseURL: typeof profile?.baseURL === "string" ? profile.baseURL : "",
+				defaultBaseURL: typeof directory?.defaultBaseURL === "string" ? directory.defaultBaseURL : "",
+				api: typeof profile?.api === "string" ? profile.api : "",
+				models: Array.isArray(profile?.models)
+					? profile.models.map(model => typeof model === "string" ? model : model?.id).filter(id => typeof id === "string")
+					: [],
+				configured: profile !== undefined,
+				declared: directory?.declared === true,
+				removable: providerUserProfile(descriptor, provider) !== undefined,
+				error: typeof directory?.error === "string" ? directory.error : "",
 				apiKeyEnv: ref,
 				apiKeyConfigured: key.configured === true,
 				apiKeyWritable: key.writable !== false,
@@ -1620,16 +1645,25 @@ refresh();setInterval(refresh,1500);
 		async "providers.list"(params) {
 			const descriptor = providerDescriptor();
 			const providers = descriptor.value && typeof descriptor.value === "object" ? descriptor.value.providers : {};
+			const names = new Set(Object.keys(providers ?? {}));
+			for (const row of providerDirectory()) names.add(row.provider);
 			const rows = [];
-			for (const provider of Object.keys(providers ?? {})) rows.push(await providerView(provider));
+			for (const provider of names) rows.push(await providerView(provider));
+			rows.sort((left, right) => left.provider.localeCompare(right.provider));
 			return { providers: rows };
 		},
 
 		async "providers.update"(params) {
-			const provider = String(params.provider ?? "");
+			const provider = String(params.provider ?? "").trim();
+			if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(provider)) fail("providers/bad-name", "provider name must use letters, digits, dot, underscore or hyphen");
 			const descriptor = providerDescriptor();
 			const profile = providerProfile(descriptor, provider);
 			const ops = [];
+			const setOrUnset = (field, value) => {
+				if (value === undefined) return;
+				if (value === "") ops.push({ op: "unset", path: ["providers", provider, field] });
+				else ops.push({ op: "set", path: ["providers", provider, field], value });
+			};
 			if (typeof params.baseURL === "string") {
 				const value = params.baseURL.trim();
 				if (value.length > 0) {
@@ -1641,18 +1675,52 @@ refresh();setInterval(refresh,1500);
 					}
 					if (parsed.protocol !== "http:" && parsed.protocol !== "https:") fail("providers/bad-url", "baseURL must use http or https");
 				}
-				ops.push({ op: "set", path: ["providers", provider, "baseURL"], value });
+				setOrUnset("baseURL", value);
+			}
+			if (typeof params.api === "string") setOrUnset("api", params.api.trim());
+			if (typeof params.displayName === "string") setOrUnset("displayName", params.displayName.trim());
+			if (Array.isArray(params.models)) {
+				const models = [];
+				const seen = new Set();
+				for (const entry of params.models) {
+					const id = typeof entry === "string" ? entry.trim() : typeof entry?.id === "string" ? entry.id.trim() : "";
+					if (id.length === 0 || seen.has(id)) continue;
+					seen.add(id);
+					models.push(typeof entry === "object" && entry !== null ? { ...entry, id } : { id });
+				}
+				if (models.length === 0) ops.push({ op: "unset", path: ["providers", provider, "models"] });
+				else ops.push({ op: "set", path: ["providers", provider, "models"], value: models });
 			}
 			let keyRef;
 			if (typeof params.apiKey === "string" && params.apiKey.trim().length > 0) {
 				const key = params.apiKey.trim();
 				if (/[\s\x00-\x1f]/.test(key)) fail("providers/bad-key", "API key must not contain whitespace or control characters");
-				keyRef = typeof profile.apiKeyEnv === "string" && profile.apiKeyEnv.length > 0 ? profile.apiKeyEnv : apiKeyRef(provider);
-				if (profile.apiKeyEnv === undefined) ops.push({ op: "set", path: ["providers", provider, "apiKeyEnv"], value: keyRef });
+				keyRef = typeof profile?.apiKeyEnv === "string" && profile.apiKeyEnv.length > 0 ? profile.apiKeyEnv : apiKeyRef(provider);
+				if (profile?.apiKeyEnv === undefined) ops.push({ op: "set", path: ["providers", provider, "apiKeyEnv"], value: keyRef });
 			}
 			if (ops.length > 0) await ctx.settings.mutate("llm-pi-ai", ops, descriptor.revision);
 			if (keyRef !== undefined) await ctx.credentials.set(keyRef, params.apiKey.trim());
+			if (ops.length === 0 && keyRef === undefined) return { ...(await providerView(provider)), text: `No changes for ${provider}.` };
 			return { ...(await providerView(provider)), text: `Updated ${provider}.` };
+		},
+
+		async "providers.remove"(params) {
+			const provider = String(params.provider ?? "").trim();
+			const descriptor = providerDescriptor();
+			const profile = providerUserProfile(descriptor, provider);
+			if (profile === undefined) return { text: `${provider} has no user-level configuration to remove.` };
+			const ref = typeof profile.apiKeyEnv === "string" && profile.apiKeyEnv.length > 0 ? profile.apiKeyEnv : apiKeyRef(provider);
+			await ctx.settings.mutate("llm-pi-ai", [{ op: "unset", path: ["providers", provider] }], descriptor.revision);
+			let removedKey = false;
+			if (params.removeKey === true) {
+				try {
+					await ctx.credentials.unset(ref);
+					removedKey = true;
+				} catch (error) {
+					return { text: `Removed ${provider}, but could not delete ${ref}: ${messageOf(error)}` };
+				}
+			}
+			return { text: `Removed user configuration for ${provider}${removedKey ? ` and key ${ref}` : ""}; profile defaults remain.` };
 		},
 
 		async "fast"(params) {

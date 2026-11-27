@@ -101,9 +101,12 @@ OMP stores provider definitions in `~/.omp/agent/models.yml` (route, `baseUrl`, 
 provider routes. booth does not write those files. Providers remain owned by dsh:
 the `llm-pi-ai` settings namespace stores `providers.<route>.baseURL`, `apiKeyEnv`,
 `api`, `models` and `compat`, while the secret is written through the dsh
-credential store under that reference. `/providers` reads `providers.list` from
-that namespace, so configuration works before any model or session exists, and
-baseURL/API-key edits are visible to the next request without restarting booth.
+credential store under that reference. `/providers` reads the configurable
+provider directory plus `providers.list`, so configuration works before any model
+or session exists. `add`/`edit` write displayName, api, models, baseURL and the
+credential reference; `remove [--key]` unsets the user-level route (profile
+defaults remain) and optionally deletes the stored credential. Changes are
+visible to the next request without restarting booth.
 
 ## Verification
 

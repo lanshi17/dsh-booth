@@ -103,15 +103,29 @@ json control_reply(const std::string& method, const json& params) {
   }
   if (method == "providers.list") {
     return {{"providers", json::array({
-      {{"provider", "mock"}, {"baseURL", "https://old.example/v1"},
-       {"apiKeyConfigured", false}, {"apiKeyMasked", ""}}
+      {{"provider", "mock"}, {"displayName", "Mock"}, {"baseURL", "https://old.example/v1"},
+       {"configured", true}, {"removable", true}, {"apiKeyConfigured", false}, {"apiKeyMasked", ""}},
+      {{"provider", "other"}, {"displayName", "Other"}, {"configured", false},
+       {"removable", false}, {"apiKeyConfigured", false}, {"apiKeyMasked", ""}}
     })}};
   }
   if (method == "providers.get") {
-    return {{"provider", "mock"}, {"baseURL", "https://old.example/v1"}, {"apiKeyConfigured", false}, {"apiKeyMasked", ""}};
+    const std::string provider = params.value("provider", std::string{"mock"});
+    if (provider == "mock") {
+      return {{"provider", "mock"}, {"displayName", "Mock"}, {"baseURL", "https://old.example/v1"},
+              {"configured", true}, {"apiKeyConfigured", false}, {"apiKeyMasked", ""}};
+    }
+    return {{"provider", provider}, {"displayName", provider}, {"baseURL", ""},
+            {"configured", false}, {"apiKeyConfigured", false}, {"apiKeyMasked", ""}};
   }
   if (method == "providers.update") {
-    return {{"provider", "mock"}, {"baseURL", params.value("baseURL", std::string{})}, {"text", "Updated mock."}};
+    const std::string provider = params.value("provider", std::string{"mock"});
+    return {{"provider", provider}, {"baseURL", params.value("baseURL", std::string{})},
+            {"text", "Updated " + provider + "."}};
+  }
+  if (method == "providers.remove") {
+    const std::string provider = params.value("provider", std::string{"mock"});
+    return {{"text", "Removed user configuration for " + provider + "; profile defaults remain."}};
   }
   if (method == "vibe") {
     return {{"text", "vibe worker report"}};

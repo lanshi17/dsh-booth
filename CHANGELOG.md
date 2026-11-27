@@ -24,9 +24,12 @@
 - `/open` validates its optional link argument, and login/logout forward provider
   arguments.
 - Disabled MCP rows remain listed while excluded from the next session.
-- `/providers` reads the dsh `llm-pi-ai` provider list instead of the current model
-  set, so provider setup works before the first session; OMP's `models.yml` +
+- `/providers` reads the dsh `llm-pi-ai` provider directory instead of the current
+  model set, so provider setup works before the first session; OMP's `models.yml` +
   SQLite credential storage is documented as the mapping.
+- `/providers add|edit|remove` round-trips `displayName`, `api`, `models`, `baseURL`
+  and `apiKey`, with removal scoped to the user settings layer and optional key
+  deletion. Unconfigured catalog rows are listed and can be configured in place.
 - The external provider editor requests a full repaint and a synthetic frame after
   exiting `$EDITOR`, removing the gray alternate-screen state.
 - `/clear` closes the live session so the next prompt starts a genuinely fresh

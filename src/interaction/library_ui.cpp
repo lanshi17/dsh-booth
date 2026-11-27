@@ -186,7 +186,7 @@ ftxui::Element LibraryOverlay::view() const {
     }
   }
   if (kind_ == LibraryKind::Providers) {
-    rows.push_back(ftxui::text(" Provider configuration · Enter edits baseURL/API key") | ftxui::dim);
+    rows.push_back(ftxui::text(" Provider configuration · Enter edits · /providers add|remove") | ftxui::dim);
   }
   rows.push_back(ftxui::text(kind_ == LibraryKind::Skills
                                  ? " Enter inserts /name · Esc closes"
@@ -302,12 +302,24 @@ bool handle_library_command(const std::string& line, AppState& state, LibraryOve
           if (!provider.is_object()) continue;
           const std::string name = provider.value("provider", std::string{});
           if (name.empty()) continue;
+          const bool configured = provider.value("configured", true);
+          const std::string label = provider.value("displayName", name);
           const std::string base = provider.value("baseURL", std::string{});
+          const std::string fallback_base = provider.value("defaultBaseURL", std::string{});
           const bool key = provider.value("apiKeyConfigured", false);
           const std::string masked = provider.value("apiKeyMasked", std::string{});
-          std::string detail = base.empty() ? "configure baseURL" : base;
-          detail += key ? " · key " + masked : " · no key";
-          rows.push_back({name, name, std::move(detail)});
+          std::string detail;
+          if (!configured) {
+            detail = "not configured · Enter to configure";
+          } else {
+            detail = base.empty() ? "configured" : base;
+            detail += key ? " · key " + masked : " · no key";
+            if (!provider.value("removable", true)) detail += " · base";
+          }
+          if (!configured && !fallback_base.empty()) detail += " · default " + fallback_base;
+          const std::string error = provider.value("error", std::string{});
+          if (!error.empty()) detail += " · error: " + error;
+          rows.push_back({name, label, std::move(detail)});
         }
       }
     }

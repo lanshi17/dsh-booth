@@ -438,7 +438,7 @@ class Root : public ComponentBase {
             [this](const std::string& id, const ModelChoice& choice) { worker_.post([this, ctx = context(), id, choice]() mutable { booth::set_reasoning(ctx, id, choice); }); },
             [this](const std::string& seed) -> std::optional<std::string> { std::string text = seed; bool ok = false; screen_.WithRestoredIO([&] { if (auto edited = booth::edit_externally(text)) { text = *edited; ok = true; } })(); return ok ? std::optional<std::string>(text) : std::nullopt; }}, line, state_.session)) return;
     if (auto prompt = booth::file_command_prompt(line)) { send_prompt(std::move(*prompt)); return; }
-    if (line.rfind("/providers edit", 0) == 0) { booth::edit_provider(control_, screen_, state_, line.substr(15)); return; }
+    if (booth::handle_provider_command(control_, screen_, state_, line)) return;
     if (booth::handle_library_command(line, state_, library_, cwd_,
                                       {&show_thoughts_, &tools_hidden_, &tools_expanded_, &mouse_enabled_, &screen_, draft_file_.parent_path(), [this](const std::string& provider) { booth::edit_provider(control_, screen_, state_, provider); }, &control_}, editor_)) return;
     if (booth::handle_local_command(state_, scroll_, transcript_search_, queued_.size(), cwd_,
