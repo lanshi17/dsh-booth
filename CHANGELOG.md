@@ -28,9 +28,10 @@
   model set, so provider setup works before the first session; OMP's `models.yml` +
   SQLite credential storage is documented as the mapping.
 - `/providers` now launches the standalone `booth-provider` executable. Its list
-  edits routes with Enter, `n`, `r` and `q`; the form keeps Ctrl+S save, Ctrl+F
-  discovery and Ctrl+X removal. `booth-provider` can also run without a live
-  booth session by starting a short-lived dsh profile.
+  follows omp's provider picker (type-to-search, arrows, Enter, Ctrl+N, Ctrl+R,
+  Esc); the form keeps Ctrl+S save, Ctrl+F discovery and Ctrl+X removal.
+  `booth-provider` can also run without a live booth session by starting a
+  short-lived dsh profile.
 - Unconfigured catalog rows are listed and can be configured in place; blank
   `apiKey` keeps the current key and `apiKey=!clear` removes it. Model-list edits
   retain existing per-model metadata.

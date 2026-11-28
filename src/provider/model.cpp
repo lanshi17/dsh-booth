@@ -66,6 +66,7 @@ Listing list(ControlClient& control) {
       row.name = provider.value("provider", std::string{});
       if (row.name.empty()) continue;
       row.configured = provider.value("configured", true);
+      row.has_key = provider.value("apiKeyConfigured", false);
       row.label = provider.value("displayName", row.name);
       const std::string base = provider.value("baseURL", std::string{});
       const std::string fallback_base = provider.value("defaultBaseURL", std::string{});
@@ -127,6 +128,7 @@ Result<Form> load(ControlClient& control, std::string provider, bool create) {
   form.initial.reserve(form.fields.size());
   for (const auto& field : form.fields) form.initial.push_back(field.value);
   while (form.active < form.fields.size() && form.fields[form.active].read_only) ++form.active;
+  if (!form.fields.empty()) form.cursor = form.fields[form.active].value.size();
   form.status = create ? "new provider · name it, fill the endpoint, then Ctrl+S"
                        : (form.configured ? "editing user configuration"
                                           : "this catalog route is not configured yet");

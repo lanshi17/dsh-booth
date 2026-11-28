@@ -28,7 +28,8 @@ class Editor : public ftxui::ComponentBase {
 
   void reload();
   void open_form(std::string provider, bool create);
-  void set_form_status(std::string text, bool error);
+  [[nodiscard]] std::vector<std::size_t> visible_rows() const;
+  void clamp_selection();
   void move_form(int step);
   void erase_form_last();
   bool last_editable() const;
@@ -39,6 +40,7 @@ class Editor : public ftxui::ComponentBase {
   ftxui::ScreenInteractive& screen_;
   ControlClient& control_;
   std::vector<Row> rows_;
+  std::string query_;
   std::size_t selected_{0};
   Mode mode_{Mode::List};
   Form form_;

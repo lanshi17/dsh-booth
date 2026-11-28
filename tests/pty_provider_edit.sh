@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The standalone provider editor removes, creates and saves routes.
+# The standalone provider editor removes, creates and saves routes (Ctrl+N new).
 set -euo pipefail
 
 provider=$1
@@ -12,12 +12,12 @@ trap 'rm -rf "$state" "$output"' EXIT
   sleep 8
   printf '\r'; sleep 2
   printf '\030'; sleep 2
-  printf 'n'; sleep 2
+  printf '\016'; sleep 2
   printf 'fresh'; sleep 1
   printf '\t'; sleep 0.5
   printf 'Fresh'; sleep 0.5
   printf '\023'; sleep 2
-  printf 'q'
+  printf '\033'
 ) | timeout 40 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' DSH_HOME='$state/dsh' '$provider'" /dev/null \
   >"$output" 2>&1 || true
 

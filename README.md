@@ -113,10 +113,11 @@ and sent when the run ends. An open `todo_write` list stays above the composer a
 `Todo done/total` HUD and disappears once every item is complete.
 `/providers` launches `booth-provider`, a standalone provider editor, with the terminal restored;
 when it exits, booth redraws. The editor lists routes from dsh's `llm-pi-ai` directory, so it works
-before any session or model exists. `Enter` edits a route (`name`, `displayName`, `api`, `baseURL`,
-comma-separated `models`, `apiKey`), `n` creates one, `r` refreshes, `q` quits. In a form,
-`Tab`/arrows move fields, `Ctrl+S` saves, `Ctrl+F` discovers endpoint models, `Ctrl+X` removes the
-user layer and its key, and `Esc` returns to the list. Blank `apiKey` keeps the current key,
+before any session or model exists. The list follows omp's provider picker: up/down selects,
+`Enter` edits, typing filters (type to search), `Ctrl+N` creates one, `Ctrl+R` refreshes and `Esc`
+quits. In a form, `Tab`/up/down move fields, left/right moves the cursor, `Enter` next/save,
+`Ctrl+S` saves, `Ctrl+F` discovers endpoint models, `Ctrl+X` removes the user layer and its
+key, and `Esc` returns to the list. Blank `apiKey` keeps the current key,
 `apiKey=!clear` removes it, and blank `api`/`models`/`baseURL` restore catalog defaults. Saving
 writes `llm-pi-ai` settings and stores keys through dsh credentials. Run `booth-provider` directly
 when no booth session is open; it starts a short-lived dsh profile for the edit. OMP instead writes

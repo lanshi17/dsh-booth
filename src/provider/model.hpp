@@ -23,6 +23,7 @@ struct Row {
   std::string label;
   std::string detail;
   bool configured{false};
+  bool has_key{false};
 };
 
 struct Listing {
@@ -42,6 +43,7 @@ struct Form {
   std::vector<Field> fields;
   std::vector<std::string> initial;
   std::size_t active{0};
+  std::size_t cursor{0};
   std::string status;
   bool status_error{false};
 };

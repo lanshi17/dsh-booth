@@ -9,13 +9,14 @@ state=$(mktemp -d)
 output=$(mktemp)
 trap 'rm -rf "$state" "$output"' EXIT
 
-( printf '/providers\n'; sleep 2; printf '\x1b'; sleep 2; printf '\x04' ) |
+( printf '/providers\n'; sleep 2; printf 'm'; sleep 1; printf '\x1b'; sleep 2; printf '\x04' ) |
   timeout 25 script -qec "BOOTH_DSH_BIN='$kernel' BOOTH_STATE_DIR='$state' DSH_HOME='$state/dsh' BOOTH_PROVIDER_BIN='$provider' '$booth'" /dev/null \
   >"$output" 2>&1 || true
 
 grep -aq "booth-provider" "$output"
 grep -aq "provider routes" "$output"
+grep -aq "Select provider to edit" "$output"
 grep -aq "Mock" "$output"
-grep -aq "https://old.example/v1" "$output"
-grep -aq "not configured" "$output"
+grep -aq "Type to search" "$output"
+grep -aq "Search: m" "$output"
 grep -aq "Enter send" "$output"
